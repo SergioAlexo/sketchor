@@ -16,6 +16,7 @@ import { ImportReportBanner } from "./dxf/ImportReportBanner";
 import { LayerPanel } from "./layers/LayerPanel";
 import { PropertiesPanel } from "./properties/PropertiesPanel";
 import { ConstraintPanel } from "./constraints/ConstraintPanel";
+import { VariablesPanel } from "./constraints/VariablesPanel";
 import { PatternPanel } from "./pattern/PatternPanel";
 import { HatchPanel } from "./fill/HatchPanel";
 import { BlockPanel } from "./blocks/BlockPanel";
@@ -595,6 +596,7 @@ export function App() {
   const [showLayers, setShowLayers] = useState(true);
   const [showProps, setShowProps] = useState(false);
   const [showConstraints, setShowConstraints] = useState(false);
+  const [showVariables, setShowVariables] = useState(false);
   const [showBlocks, setShowBlocks] = useState(false);
   const [showDiag, setShowDiag] = useState(false);
   const [showDup, setShowDup] = useState(false);
@@ -1124,6 +1126,14 @@ export function App() {
             </svg>
           </button>
           <button
+            className={`action ${showVariables ? "toggled" : ""}`}
+            title="Toggle variables panel — named parameters that dimensions can use in expressions"
+            data-testid="toggle-variables"
+            onClick={() => setShowVariables((v) => !v)}
+          >
+            <span style={{ fontWeight: 700, fontSize: 13 }}>x=</span>
+          </button>
+          <button
             className={`action ${showLayers ? "toggled" : ""}`}
             title={withKey(
               modelTab ? "Toggle structure panel — right-click to add a shortcut" : "Toggle layers panel — right-click to add a shortcut",
@@ -1441,6 +1451,7 @@ export function App() {
         {showCode && <CodePanel />}
         {showProps && !modelTab && <PropertiesPanel onClose={() => setShowProps(false)} />}
         {showConstraints && !modelTab && <ConstraintPanel onClose={() => setShowConstraints(false)} />}
+        {showVariables && !modelTab && <VariablesPanel onClose={() => setShowVariables(false)} />}
         {showBlocks && !modelTab && <BlockLibraryPanel onClose={() => setShowBlocks(false)} />}
         {/* Rightmost panel: layers for a drawing, the assembly structure for a model. */}
         {showLayers &&

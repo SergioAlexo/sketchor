@@ -3409,3 +3409,10 @@ kbd.shortcut-key-fixed {
 .dimstyle-reset { border: 0; background: transparent; color: var(--text-dim); cursor: pointer; }
 .dimstyle-diff { font-size: 12px; border-collapse: collapse; width: 100%; }
 .dimstyle-diff th, .dimstyle-diff td { text-align: left; padding: 2px 8px; border-bottom: 1px solid var(--border); }
+
+/* T-45 Variables panel */
+.variable-row { display: flex; gap: 6px; align-items: center; padding: 2px 10px; }
+.variable-row .propspanel-input { flex: 1; min-width: 0; }
+.variable-name { font-family: monospace; min-width: 48px; }
+.variable-value { opacity: 0.7; font-size: 11px; min-width: 40px; }
+.variable-row input[aria-invalid="true"] { outline: 1px solid #e5484d; }
