@@ -1,4 +1,5 @@
 import { parseDxfHatch } from "./hatch/hatchDxf";
+import { hatchArt } from "./hatch/render";
 import type { Entity, InsertEntity, SplineEntity } from "./entities";
 import type { AttributeDef, BlockDefinition } from "./blocks/types";
 import { blockWouldCycle } from "./blocks/evaluate";
@@ -1069,6 +1070,25 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
         }
         break;
       }
+      case "DIMENSION": {
+        // F-04: with blocks expanded (thumbnails), a DIMENSION is drawn from the anonymous `*D` block that
+        // holds its already-laid-out lines, arrows and text, at world position (no INSERT transform).
+        const dimBlock = ctx.keep ? undefined : ctx.blocks.get(str(raw, 2, ""));
+        if (dimBlock && !ctx.stack.has(str(raw, 2, "")) && ctx.depth < MAX_BLOCK_DEPTH) {
+          const body = convertRecords(dimBlock.body, {
+            ...ctx,
+            depth: ctx.depth + 1,
+            stack: new Set([...ctx.stack, str(raw, 2, "")]),
+            insertLayer: layer,
+            usedIds: undefined,
+          });
+          for (const e of body) entities.push(placeEntity(e, dimBlock.base, dimBlock.base, 1, 1, 0, (m) => warnings.push(m)));
+          break;
+        }
+        warnings.push(`unsupported entity: ${raw.type}`);
+        if (ctx.depth === 0) ctx.foreign?.push(raw);
+        break;
+      }
       // POLYLINE / VERTEX / SEQEND are handled in the legacy second pass below.
       default:
         if (!KNOWN_IGNORED.has(raw.type)) {
@@ -1496,6 +1516,13 @@ export function entitiesToSvg(entities: Entity[], opts: ThumbnailOptions = {}): 
           d.push(`${i === 0 ? "M" : "L"}${f(sx(p.x))} ${f(sy(p.y))}`);
         }
         body.push(`<path d="${d.join(" ")}" fill="none"/>`);
+      } else if (e.type === "hatch") {
+        // F-04: thumbnails tint the region (even-odd, so islands stay empty) instead of drawing every pattern line.
+        const art = hatchArt(e);
+        if (art && art.rings.length) {
+          const d = art.rings.map((ring) => ring.map((q, i) => `${i === 0 ? "M" : "L"}${f(sx(q.x))} ${f(sy(q.y))}`).join(" ") + " Z").join(" ");
+          body.push(`<path d="${d}" fill="${stroke}" fill-opacity="0.28" fill-rule="evenodd" stroke="none"/>`);
+        }
       } else if (e.type !== "polyline") {
         // A kind outside the built-in seven: its tessellation, drawn as open paths.
         for (const run of kindTessellate(e)) {

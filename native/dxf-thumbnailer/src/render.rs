@@ -5,7 +5,7 @@
 //! size.
 
 use dxf_parse::{bounds, Shape};
-use windows::Win32::Foundation::{COLORREF, HANDLE, HWND, RECT};
+use windows::Win32::Foundation::{COLORREF, HANDLE, HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::*;
 
 fn rgb(r: u8, g: u8, b: u8) -> u32 {
@@ -38,8 +38,32 @@ unsafe fn paint(dc: HDC, shapes: &[Shape], size: i32) {
     let old_pen = SelectObject(dc, pen);
     let old_brush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
 
+    // F-04: hatch regions first (so outlines draw over them): an even-odd tint, ~28% of the stroke colour over the background.
+    let tint = CreateSolidBrush(COLORREF(rgb(77, 80, 87)));
+    let null_pen = GetStockObject(NULL_PEN);
+    SelectObject(dc, null_pen);
+    SelectObject(dc, tint);
+    SetPolyFillMode(dc, ALTERNATE);
+    for s in shapes {
+        if let Shape::Fill(rings) = s {
+            let mut pts: Vec<POINT> = Vec::new();
+            let mut counts: Vec<i32> = Vec::new();
+            for r in rings {
+                counts.push(r.len() as i32);
+                pts.extend(r.iter().map(|p| POINT { x: sx(p.x), y: sy(p.y) }));
+            }
+            if !counts.is_empty() {
+                let _ = PolyPolygon(dc, pts.as_ptr(), &counts);
+            }
+        }
+    }
+    SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
+    SelectObject(dc, pen);
+    let _ = DeleteObject(tint);
+
     for s in shapes {
         match s {
+            Shape::Fill(_) => {}
             Shape::Line(a, c) => {
                 let _ = MoveToEx(dc, sx(a.x), sy(a.y), None);
                 let _ = LineTo(dc, sx(c.x), sy(c.y));
