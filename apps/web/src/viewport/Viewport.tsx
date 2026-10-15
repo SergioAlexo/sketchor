@@ -71,6 +71,7 @@ import {
 } from "../state/store";
 import { openDrawing, saveCurrent } from "../io/drawingFile";
 import { downloadText } from "../blocks/download";
+import { useDimStyleUi } from "../dimstyles/dimStyleUi";
 import { matchesBinding, matchesModifier } from "../keybindings";
 import { printDrawing } from "../print/printDrawing";
 import { formatArea, formatLength } from "../units";
@@ -1895,6 +1896,9 @@ export function Viewport() {
         app.setAttedit(sel.id);
         return "editing attributes";
       }
+      case "dimStyles":
+        useDimStyleUi.getState().setOpen(true);
+        return "dimension styles";
       case "attExport": {
         const table = attributeTable(doc, argument ? { blocks: [argument] } : {});
         if (table.rows.length === 0) return "no inserts to extract";

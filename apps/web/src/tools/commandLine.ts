@@ -34,7 +34,8 @@ export type AppCommandId =
   | "blockSave"
   | "blockClose"
   | "attEdit"
-  | "attExport";
+  | "attExport"
+  | "dimStyles";
 
 export type ParsedCommand =
   /** Activate a tool; `argument` is the rest of the line (a radius, a distance), passed on as typed input. */
@@ -193,6 +194,9 @@ export const APP_ALIASES: Record<string, AppCommandId> = {
   ate: "attEdit",
   attout: "attExport",
   eattext: "attExport",
+  dimstyle: "dimStyles",
+  ddim: "dimStyles",
+  dimstyles: "dimStyles",
 };
 
 /** Anything that looks like a coordinate or a measurement rather than a word. */

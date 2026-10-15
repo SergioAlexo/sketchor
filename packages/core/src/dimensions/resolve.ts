@@ -43,7 +43,7 @@ export function resolveGeometry(e: DimensionEntity, lookup?: Lookup): DimGeometr
 
 export function dimStyleFor(e: DimensionEntity, host?: Pick<DimHost, "getRecord"> | null): DimStyle {
   const rec = e.style && host ? host.getRecord("dimStyles", e.style) : undefined;
-  return dimStyleOf(rec, e.overrides);
+  return dimStyleOf(rec, e.overrides, e.kind);
 }
 
 /** Layout of `e` against a host (default: the active document). */

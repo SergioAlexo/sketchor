@@ -3390,3 +3390,22 @@ kbd.shortcut-key-fixed {
   display: flex;
   gap: 8px;
 }
+
+/* Dimension style manager (D-03) */
+.dimstyle-panel { width: min(1040px, 96vw); max-height: 88vh; }
+.dimstyle-body { display: flex; gap: 12px; padding: 10px 16px 16px; overflow: hidden; min-height: 0; }
+.dimstyle-list { display: flex; flex-direction: column; gap: 4px; width: 200px; flex: none; overflow-y: auto; }
+.dimstyle-item { text-align: left; padding: 4px 8px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text); cursor: pointer; }
+.dimstyle-item.on { background: rgba(80, 140, 255, 0.18); border-color: #4c8dff; }
+.dimstyle-current { color: var(--text-dim); font-size: 11px; }
+.dimstyle-actions { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.dimstyle-main { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.dimstyle-preview { width: 100%; max-height: 220px; color: var(--text); background: rgba(0, 0, 0, 0.15); border-radius: 8px; }
+.dimstyle-scope, .dimstyle-tabs, .dimstyle-compare { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.dimstyle-scope button.on, .dimstyle-tabs button.on { background: #4c8dff; color: #fff; }
+.dimstyle-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 4px 16px; }
+.dimstyle-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 12px; }
+.dimstyle-row input[type="number"], .dimstyle-row input[type="text"], .dimstyle-row select { width: 110px; }
+.dimstyle-reset { border: 0; background: transparent; color: var(--text-dim); cursor: pointer; }
+.dimstyle-diff { font-size: 12px; border-collapse: collapse; width: 100%; }
+.dimstyle-diff th, .dimstyle-diff td { text-align: left; padding: 2px 8px; border-bottom: 1px solid var(--border); }

@@ -60,7 +60,7 @@ round-trips. New entity fields that sketch code cannot express must be carried
 in `diffToCommands`. Dimension *creation* is pure too (`dimensions/build.ts`:
 smart-DIM classification, baseline/continue, QDIM); `tools/dimTools.ts` only
 collects picks (tool `dim` = smart DIM; DLI/DAL/DAN/DRA/DDI/DAR/DOR/DJO/DBA/DCO/QDIM
-on the command line).
+on the command line). D-03: `DimStyle` is the full DIMVAR set (`style.ts`; the manager form is data in `styleFields.ts`, edits go through `styleOps.ts` + `put-table-record`; `dimstyle`/`ddim` opens `dimstyles/DimStyleManager.tsx`); child styles via `dimStyleOf(rec, overrides, kind)`.
 
 ## Hatching (`packages/core/src/hatch/`, plan §6)
 

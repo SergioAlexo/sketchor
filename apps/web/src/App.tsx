@@ -28,6 +28,7 @@ import { TextPanel } from "./text/TextPanel";
 import { printDrawing } from "./print/printDrawing";
 import { PluginCommandPalette } from "./plugins/PluginCommandPalette";
 import { ShortcutsPanel } from "./ShortcutsPanel";
+import { DimStyleManager } from "./dimstyles/DimStyleManager";
 import { RebindPopover } from "./RebindPopover";
 import { bindingLabel, matchesBinding, useKeybindings } from "./keybindings";
 import { PluginPanels } from "./plugins/PluginPanels";
@@ -1637,6 +1638,7 @@ export function App() {
       </footer>
 
       <PluginCommandPalette open={showPalette} onClose={() => setShowPalette(false)} />
+      <DimStyleManager />
       <ShortcutsPanel open={showShortcuts} onClose={() => setShowShortcuts(false)} />
       {rebindTarget && (
         <RebindPopover

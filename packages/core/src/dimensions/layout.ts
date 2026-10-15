@@ -1,8 +1,8 @@
 import type { DimensionEntity } from "../entities";
 import type { Point } from "../geometry";
-import { arrowShape } from "./arrows";
+import { arrowShape, isStrokeArrow } from "./arrows";
 import { formatDimText } from "./format";
-import type { DimStyle } from "./style";
+import type { ArrowKind, DimStyle } from "./style";
 
 /**
  * Pure dimension layout (D-02a): the resolved measured geometry plus a style
@@ -61,6 +61,10 @@ const unit = (a: Point): Point => {
 };
 const polar = (c: Point, r: number, a: number): Point => ({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) });
 const estWidth = (text: string, h: number): number => text.length * h * 0.55;
+/** The text sits in the dimension line's gap (neither above nor below it), or is forced horizontal. */
+const textOnLine = (st: DimStyle): boolean => (!st.textAbove && !st.textBelow) || st.textHorizontal;
+/** +1 puts the text on the left of the line direction (above a left-to-right line), -1 below. */
+const textSide = (st: DimStyle): 1 | -1 => (st.textBelow ? -1 : 1);
 
 /** Reading direction: keep text upright (angle in (-90°, 90°]). */
 export function upright(a: number): number {
@@ -84,8 +88,13 @@ class Builder {
   line(...pts: Point[]): void {
     if (pts.length >= 2) this.lines.push(pts);
   }
-  arrow(tip: Point, dir: Point): void {
-    const shape = arrowShape(this.st.arrow, tip, unit(dir), this.st.arrowSize * this.k, this.st.arrowAngle);
+  /** Arrow kind for an end: 1 / 2 are the dimension line's ends, "leader" the radial / ordinate leader. */
+  kindOf(which: 1 | 2 | "leader"): ArrowKind {
+    const st = this.st;
+    return (which === 1 ? st.arrow1 : which === 2 ? st.arrow2 : st.leaderArrow) || st.arrow;
+  }
+  arrow(tip: Point, dir: Point, which: 1 | 2 | "leader" = 1): void {
+    const shape = arrowShape(this.kindOf(which), tip, unit(dir), this.st.arrowSize * this.k, this.st.arrowAngle);
     this.lines.push(...shape.lines);
     this.fills.push(...shape.fills);
   }
@@ -103,35 +112,59 @@ function dimensionLine(b: Builder, A: Point, B: Point, u: Point, label: string, 
   const horizontal = st.textHorizontal;
   const rho = horizontal ? 0 : upright(lineAngle);
   const up = { x: -Math.sin(rho), y: Math.cos(rho) };
-  const onLine = !st.textAbove || horizontal;
+  const onLine = textOnLine(st);
+  const side = textSide(st);
   const arrowsInside = L >= 2.2 * arrow;
   // Text along the line needs w + gaps (+ arrows when it sits in the line's gap).
   const along = horizontal ? w * Math.abs(Math.cos(lineAngle)) + h * Math.abs(Math.sin(lineAngle)) : w;
-  const textInside = L >= along + 2 * gap + (onLine ? 2 * arrow : 0) && arrowsInside;
+  const textInside = (st.textInside && !textPos) || (L >= along + 2 * gap + (onLine ? 2 * arrow : 0) && arrowsInside);
   const M = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+  // DIMJUST: against the first / second extension line instead of the middle.
+  const shift = (() => {
+    if (st.textJustify === "center") return 0;
+    const room = Math.max(0, L / 2 - along / 2 - gap - arrow);
+    const first = st.textJustify === "ext1" || st.textJustify === "over1";
+    return (first ? -1 : 1) * Math.min(room, L / 2);
+  })();
   let C: Point;
   if (textPos) C = textPos;
-  else if (textInside) C = onLine ? M : add(M, mul(up, gap + h / 2));
+  else if (textInside) C = add(onLine ? M : add(M, mul(up, side * (gap + h / 2))), mul(u, shift));
   else {
     // Outside, past the far end, along the line.
-    C = add(add(B, mul(u, 3 * arrow + gap + along / 2)), onLine ? { x: 0, y: 0 } : mul(up, gap + h / 2));
+    C = add(add(B, mul(u, 3 * arrow + gap + along / 2)), onLine ? { x: 0, y: 0 } : mul(up, side * (gap + h / 2)));
   }
-  // Dimension line (broken around the text when it sits in the line).
+  // Dimension line (broken around the text when it sits in the line); DIMSD1/2 drop a half, DIMSOXD the line between outside arrows.
   const breakIt = onLine && textInside && !textPos;
+  const segs: [number, number][] = [];
   if (breakIt) {
     const half = along / 2 + gap;
     const tc = dot(sub(C, A), u);
     const t1 = Math.max(0, Math.min(L, tc - half));
     const t2 = Math.max(0, Math.min(L, tc + half));
-    if (t1 > 1e-9) b.line(A, add(A, mul(u, t1)));
-    if (t2 < L - 1e-9) b.line(add(A, mul(u, t2)), B);
-  } else b.line(A, B);
+    if (t1 > 1e-9) segs.push([0, t1]);
+    if (t2 < L - 1e-9) segs.push([t2, L]);
+  } else segs.push([0, L]);
+  const kindA = b.kindOf(1);
+  const kindB = b.kindOf(2);
+  const ext = st.lineExtend * k;
+  const mid = L / 2;
+  for (const [t0, t1] of segs) {
+    let lo = t0;
+    let hi = t1;
+    if (st.suppressLine1) lo = Math.max(lo, Math.min(hi, mid));
+    if (st.suppressLine2) hi = Math.min(hi, Math.max(lo, mid));
+    if (!arrowsInside && st.suppressOutsideLine) continue;
+    if (hi - lo < 1e-9) continue;
+    const a0 = lo <= 1e-9 && isStrokeArrow(kindA) && !st.suppressLine1 ? -ext : lo;
+    const b0 = hi >= L - 1e-9 && isStrokeArrow(kindB) && !st.suppressLine2 ? L + ext : hi;
+    b.line(add(A, mul(u, a0)), add(A, mul(u, b0)));
+  }
   if (arrowsInside) {
-    b.arrow(A, u);
-    b.arrow(B, mul(u, -1));
+    b.arrow(A, u, 1);
+    b.arrow(B, mul(u, -1), 2);
   } else {
-    b.arrow(A, mul(u, -1));
-    b.arrow(B, u);
+    b.arrow(A, mul(u, -1), 1);
+    b.arrow(B, u, 2);
     b.line(A, add(A, mul(u, -3 * arrow)));
     b.line(B, add(B, mul(u, 3 * arrow)));
   }
@@ -148,12 +181,16 @@ function linearLike(e: DimensionEntity, st: DimStyle, k: number, geo: DimGeometr
   const foot = (p: Point): Point => add(p, mul(n, dot(sub(loc, p), n)));
   const f1 = foot(p1);
   const f2 = foot(p2);
-  for (const [p, f] of [[p1, f1], [p2, f2]] as const) {
+  // The extension line at p1 is the "first" one (DIMSE1), at p2 the second — as the points were picked, not as they sit on screen.
+  ([[p1, f1, st.suppressExt1], [p2, f2, st.suppressExt2]] as const).forEach(([p, f, off]) => {
+    if (off) return;
     const d = dot(sub(loc, p), n);
     const s = d < 0 ? -1 : 1;
-    const start = Math.min(Math.abs(d), st.extOffset * k);
-    b.line(add(p, mul(n, s * start)), add(f, mul(n, s * st.extExtend * k)));
-  }
+    const end = add(f, mul(n, s * st.extExtend * k));
+    // DIMFXL: a fixed length measured back from the dimension line, ignoring the offset.
+    const start = st.extFixedLength > 0 ? sub(end, mul(n, s * st.extFixedLength * k)) : add(p, mul(n, s * Math.min(Math.abs(d), st.extOffset * k)));
+    b.line(start, end);
+  });
   // Orient A→B along +u.
   const [A, B] = dot(sub(f2, f1), u) >= 0 ? [f1, f2] : [f2, f1];
   if (len(sub(B, A)) < 1e-9) return { lines: b.lines, fills: [], text: null, measure };
@@ -188,11 +225,12 @@ function arcDimension(b: Builder, V: Point, start: number, sweep: number, R: num
   const tangent = mid + Math.PI / 2;
   const rho = horizontal ? 0 : upright(tangent);
   const up = { x: -Math.sin(rho), y: Math.cos(rho) };
-  const onLine = !st.textAbove || horizontal;
+  const onLine = textOnLine(st);
+  const side = textSide(st);
   const textFits = arcLen >= w + 2 * gap + (onLine ? 2 * arrow : 0) && inside;
   let C: Point;
   if (textPos) C = textPos;
-  else if (textFits) C = onLine ? polar(V, R, mid) : add(polar(V, R, mid), mul(up, gap + h / 2));
+  else if (textFits) C = onLine ? polar(V, R, mid) : add(polar(V, R, mid), mul(up, side * (gap + h / 2)));
   else C = add(polar(V, R + gap + h / 2 + arrow, mid), { x: 0, y: 0 });
   if (onLine && textFits && !textPos) {
     const half = (w / 2 + gap) / R;
@@ -204,11 +242,11 @@ function arcDimension(b: Builder, V: Point, start: number, sweep: number, R: num
   const t0 = { x: -Math.sin(start), y: Math.cos(start) };
   const t1 = { x: Math.sin(start + sweep), y: -Math.cos(start + sweep) };
   if (inside) {
-    b.arrow(polar(V, R, start), t0);
-    b.arrow(polar(V, R, start + sweep), t1);
+    b.arrow(polar(V, R, start), t0, 1);
+    b.arrow(polar(V, R, start + sweep), t1, 2);
   } else {
-    b.arrow(polar(V, R, start), mul(t0, -1));
-    b.arrow(polar(V, R, start + sweep), mul(t1, -1));
+    b.arrow(polar(V, R, start), mul(t0, -1), 1);
+    b.arrow(polar(V, R, start + sweep), mul(t1, -1), 2);
   }
   return { at: C, text: label, height: h, rotation: rho, width: w };
 }
@@ -297,19 +335,19 @@ function radialText(b: Builder, C: Point, r: number, phi: number, label: string,
     const horizontal = st.textHorizontal;
     const rho = horizontal ? 0 : upright(phi);
     const up = { x: -Math.sin(rho), y: Math.cos(rho) };
-    const onLine = !st.textAbove || horizontal;
+    const onLine = textOnLine(st);
     const M = add(C, mul(rad, r / 2));
-    const Ct = onLine ? M : add(M, mul(up, gap + h / 2));
+    const Ct = onLine ? M : add(M, mul(up, textSide(st) * (gap + h / 2)));
     if (onLine) {
       const half = (horizontal ? w * Math.abs(rad.x) + h * Math.abs(rad.y) : w) / 2 + gap;
       b.line(C, add(M, mul(rad, -half)));
       b.line(add(M, mul(rad, half)), T);
     } else b.line(C, T);
-    b.arrow(T, mul(rad, -1));
+    b.arrow(T, mul(rad, -1), "leader");
     return { at: Ct, text: label, height: h, rotation: rho, width: w };
   }
   // Text outside: arrow on the circle, short leader, horizontal landing.
-  b.arrow(T, mul(rad, -1));
+  b.arrow(T, mul(rad, -1), "leader");
   if (textPos) {
     const hx = textPos.x >= T.x ? -1 : 1;
     const Q = { x: textPos.x + hx * (w / 2 + gap), y: textPos.y };
@@ -324,7 +362,31 @@ function radialText(b: Builder, C: Point, r: number, phi: number, label: string,
 
 /** Lays out a dimension. `geo.pts` are the defPoints after associative references were followed. */
 export function layoutDimension(e: DimensionEntity, st: DimStyle, geo: DimGeometry): DimLayout {
-  const k = e.scale && e.scale > 0 ? e.scale : 1;
+  const out = layoutKind(e, st, geo);
+  const k = (e.scale && e.scale > 0 ? e.scale : 1) * (st.scale > 0 ? st.scale : 1);
+  // Centre mark / centre lines of radial and diametric dimensions (DIMCEN).
+  if ((e.kind === "radial" || e.kind === "diametric") && st.centerMark !== "none" && Number.isFinite(out.measure)) {
+    const c = geo.circle?.center ?? geo.pts[0];
+    const r = e.kind === "radial" ? out.measure : out.measure / 2;
+    const reach = (st.centerMark === "line" ? r : 0) + st.centerSize * k;
+    out.lines.push([{ x: c.x - reach, y: c.y }, { x: c.x + reach, y: c.y }], [{ x: c.x, y: c.y - reach }, { x: c.x, y: c.y + reach }]);
+  }
+  // A frame around the text (DIMGAP < 0, and basic dimensions).
+  if ((st.textFrame || st.tolMode === "basic") && out.text && out.text.text) {
+    const t = out.text;
+    const pad = st.gap * k;
+    const hw = t.width / 2 + pad;
+    const hh = t.height / 2 + pad;
+    const cs = Math.cos(t.rotation);
+    const sn = Math.sin(t.rotation);
+    const at = (x: number, y: number): Point => ({ x: t.at.x + x * cs - y * sn, y: t.at.y + x * sn + y * cs });
+    out.lines.push([at(-hw, -hh), at(hw, -hh), at(hw, hh), at(-hw, hh), at(-hw, -hh)]);
+  }
+  return out;
+}
+
+function layoutKind(e: DimensionEntity, st: DimStyle, geo: DimGeometry): DimLayout {
+  const k = (e.scale && e.scale > 0 ? e.scale : 1) * (st.scale > 0 ? st.scale : 1);
   const text = (v: number) => formatDimText(e, st, v);
   const empty: DimLayout = { lines: [], fills: [], text: null, measure: NaN };
   const pts = geo.pts;
@@ -363,7 +425,7 @@ export function layoutDimension(e: DimensionEntity, st: DimStyle, geo: DimGeomet
         const Pa = add(M, mul(v, -jl / 2));
         const Pb = add(M, mul(v, jl / 2));
         b.line(J, Pa, add(Pa, add(mul(v, jl / 3), mul(nrm, jl / 2))), sub(Pb, add(mul(v, jl / 3), mul(nrm, jl / 2))), Pb, T);
-        b.arrow(T, mul(v, -1));
+        b.arrow(T, mul(v, -1), "leader");
         const h = st.textHeight * k;
         const label = text(c.radius);
         const w = estWidth(label, h);
