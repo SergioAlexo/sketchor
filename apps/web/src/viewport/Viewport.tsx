@@ -1,6 +1,7 @@
 import { settingsFromHatch } from "../tools/hatchTool";
 import { hatchesTinted } from "./hatchRender";
 import { useEffect, useRef, useState } from "react";
+import { autoConstrainSuppressed, withAutoConstraints } from "../tools/autoConstrain";
 import type { BoxSelectMode, ClosedRegion, Command, Entity, EntityId, Point, TextEntity } from "@sketchor/core";
 import {
   applyGrip,
@@ -469,10 +470,10 @@ export function Viewport() {
   if (!toolCtxRef.current) {
     toolCtxRef.current = {
       doc,
-      execute: (command) => bus.execute(command),
+      execute: (command) => bus.execute(withAutoConstraints(command, doc)),
       commit: (commands) => {
-        if (commands.length === 1) bus.execute(commands[0]);
-        else if (commands.length > 1) bus.execute({ type: "batch", commands });
+        if (commands.length === 1) bus.execute(withAutoConstraints(commands[0], doc));
+        else if (commands.length > 1) bus.execute(withAutoConstraints({ type: "batch", commands }, doc));
       },
       activeLayer: () => useApp.getState().activeLayer,
       redraw: () => redraw(),
@@ -616,14 +617,17 @@ export function Viewport() {
     return true;
   };
 
-  const pickFrom = (e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; altKey: boolean }, world: Point, snap: Snap): Pick => ({
-    point: snap.point,
-    world,
-    snap,
-    shiftKey: e.shiftKey,
-    ctrlKey: e.ctrlKey || e.metaKey,
-    altKey: e.altKey,
-  });
+  const pickFrom = (e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; altKey: boolean }, world: Point, snap: Snap): Pick => {
+    autoConstrainSuppressed.value = e.ctrlKey || e.metaKey; // T-43: Ctrl suppresses inference for this click
+    return {
+      point: snap.point,
+      world,
+      snap,
+      shiftKey: e.shiftKey,
+      ctrlKey: e.ctrlKey || e.metaKey,
+      altKey: e.altKey,
+    };
+  };
 
   // Switching tools drops the previous tool's half-finished sequence and
   // shows the new one's prompt.

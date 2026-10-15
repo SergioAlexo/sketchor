@@ -989,6 +989,9 @@ interface AppState {
   toggleCommandLine: () => void;
   /** Draw a glyph beside each constrained entity (T-41). */
   showConstraintGlyphs: boolean;
+  /** AUTOCON (T-43): drawing tools add the constraints their snaps imply. Off by default until K-03's Sketch mode. */
+  autoConstrain: boolean;
+  setAutoConstrain: (v: boolean) => void;
   setShowConstraintGlyphs: (v: boolean) => void;
   /** The constraint the pointer is over in the panel — its geometry is highlighted on the canvas. */
   highlightedConstraint: string | null;
@@ -1109,6 +1112,8 @@ export const useApp = create<AppState>((set, get) => ({
   commandLine: false,
   toggleCommandLine: () => set((s) => ({ commandLine: !s.commandLine })),
   showConstraintGlyphs: true,
+  autoConstrain: false,
+  setAutoConstrain: (v) => set({ autoConstrain: v }),
   setShowConstraintGlyphs: (v) => set({ showConstraintGlyphs: v }),
   highlightedConstraint: null,
   setHighlightedConstraint: (id) => set((s) => (s.highlightedConstraint === id ? s : { highlightedConstraint: id })),

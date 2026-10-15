@@ -615,6 +615,8 @@ export function App() {
   const toggleOrtho = useTracking((s) => s.toggleOrtho);
   const togglePolar = useTracking((s) => s.togglePolar);
   const otrack = useTracking((s) => s.otrack);
+  const autoConstrain = useApp((s) => s.autoConstrain);
+  const setAutoConstrain = useApp((s) => s.setAutoConstrain);
   const commandLine = useApp((s) => s.commandLine);
   const toggleCommandLine = useApp((s) => s.toggleCommandLine);
   // The solver's verdict on the current sketch (T-40); null until the
@@ -1507,6 +1509,14 @@ export function App() {
               onContextMenu={rebind("view.otrack")}
             >
               TRACK
+            </button>
+            <button
+              className={`tracking-toggle ${autoConstrain ? "active" : ""}`}
+              title="Auto-constraints: while drawing, snaps add coincident / horizontal / vertical / midpoint / perpendicular / tangent constraints (hold Ctrl to suppress)"
+              data-testid="toggle-autocon"
+              onClick={() => setAutoConstrain(!autoConstrain)}
+            >
+              AUTOCON
             </button>
             <SnapPopover />
             <SelectByPopover />

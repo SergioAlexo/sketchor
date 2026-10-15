@@ -15,6 +15,7 @@ export * from "./groups";
 export * from "./constraints";
 export * from "./constraintBuilder";
 export * from "./constraintDisplay";
+export * from "./inference";
 export * from "./solver";
 export * from "./connectivity";
 export * from "./document";
