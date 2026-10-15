@@ -166,7 +166,12 @@ fn scan_drawings(dir: &str) -> Result<Vec<DrawingEntry>, String> {
 /// listing so a folder of hundreds of files doesn't read them all upfront.
 #[tauri::command]
 fn read_drawing_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    // Bytes + lossy decode: a Latin-1 name in an SVG must not fail the whole read (F-10).
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    Ok(match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    })
 }
 
 /// Reads a file's raw bytes by full path, for binary formats (DWG, 3D

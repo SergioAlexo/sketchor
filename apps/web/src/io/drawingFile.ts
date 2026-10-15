@@ -1,4 +1,4 @@
-import { type BlockDefinition, type ForeignRecord, type TextStyle, decodeDxfBytes, entitiesToDxf, entitiesToDxf2018, entitiesToEps, entitiesToEpsFile, entitiesToSvgDocument, flattenInserts } from "@sketchor/core";
+import { type BlockDefinition, type ForeignRecord, type TextStyle, decodeDxfBytes, sizeWarning, entitiesToDxf, entitiesToDxf2018, entitiesToEps, entitiesToEpsFile, entitiesToSvgDocument, flattenInserts } from "@sketchor/core";
 import { DWG_UNREADABLE, dwgToDxfText } from "../browser/dwgImport";
 import { isModelFile, loadModel } from "../model3d/stepImport";
 import { acceptList, allExtensions, formatOf } from "./formats";
@@ -352,6 +352,16 @@ export async function fileDxfText(file: File): Promise<string> {
 
 /** Loads a DXF/SVG/DWG `File` into a tab (opening or reusing one — see openIntoSession), or a STEP/IGES into a viewer tab. */
 export async function loadDrawingFile(name: string, file: File): Promise<void> {
+  await loadDrawingFileInner(name, file);
+  // F-10: a big 2D file opens as usual, with a note on the import banner.
+  const warn = isModelFile(name) ? null : sizeWarning(name, file.size);
+  if (warn) {
+    const app = useApp.getState();
+    app.setFileWarnings([warn, ...app.fileWarnings]);
+  }
+}
+
+async function loadDrawingFileInner(name: string, file: File): Promise<void> {
   if (isModelFile(name)) {
     openModelBytes(name, await file.arrayBuffer());
   } else if (/\.svg$/i.test(name)) {

@@ -35,6 +35,7 @@ export * from "./foreign";
 export * from "./sketchorData";
 export * from "./dxfExport";
 export * from "./dxfText";
+export * from "./fileSize";
 export * from "./dxfw/index";
 export * from "./theme";
 export * from "./themeFile";
