@@ -1,11 +1,14 @@
 import type { Command, Entity, Point } from "@sketchor/core";
 import {
+  axisLineFor,
+  mirrorConstraints,
   dist,
   mirrored,
   newEntityId,
   transformed,
   translated,
 } from "@sketchor/core";
+import { associativeOn } from "./autoConstrain";
 import { parseLength } from "./typedInput";
 import type { Pick, Tool, ToolContext } from "./tool";
 
@@ -384,11 +387,16 @@ export class MirrorTool extends SelectionTool {
     const a = this.picks[0];
     if (dist(a, p.point) === 0) return;
     const targets = this.targets(ctx);
-    const commands: Command[] = copiesOf(targets)
-      .map((e) => mirrored(e, a, p.point))
-      .map((entity): Command => ({ type: "add-entity", entity }));
+    const copies = copiesOf(targets).map((e) => mirrored(e, a, p.point));
+    const commands: Command[] = copies.map((entity): Command => ({ type: "add-entity", entity }));
     if (p.ctrlKey)
       commands.push({ type: "delete-entities", ids: targets.map((e) => e.id) });
+    else if (associativeOn()) {
+      // T-46: when the axis lies on a real line, the copy stays symmetric to its source.
+      const axis = axisLineFor(a, p.point, ctx.doc.all());
+      for (const constraint of mirrorConstraints(targets.map((source, i) => ({ source, copy: copies[i] })), axis))
+        commands.push({ type: "add-constraint", constraint });
+    }
     ctx.commit(commands);
     this.picks = [];
   }

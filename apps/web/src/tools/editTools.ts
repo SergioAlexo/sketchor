@@ -7,6 +7,8 @@ import {
   extendTo,
   lengthen,
   filletAllCorners,
+  filletConstraints,
+  offsetConstraints,
   filletCurves,
   filletLines,
   filletPolylineCorner,
@@ -22,6 +24,7 @@ import {
   trimHatch,
 } from "@sketchor/core";
 import { hiddenLayerSet } from "../state/store";
+import { associativeOn } from "./autoConstrain";
 import { parseLength } from "./typedInput";
 import type { Pick, Tool, ToolContext } from "./tool";
 
@@ -284,7 +287,11 @@ export class FilletTool implements Tool {
       { type: "update-entity", entity: r.line1 },
       { type: "update-entity", entity: r.line2 },
     ];
-    if (r.arc) commands.push({ type: "add-entity", entity: { ...r.arc, id: newEntityId() } });
+    const arc = r.arc ? { ...r.arc, id: newEntityId() } : null;
+    if (arc) commands.push({ type: "add-entity", entity: arc });
+    // T-46: tangent + coincident (+ radius dimension) so the corner stays rounded when the lines move.
+    if (associativeOn())
+      for (const constraint of filletConstraints(r.line1, r.line2, arc, true)) commands.push({ type: "add-constraint", constraint });
     ctx.commit(commands);
     this.first = null;
   }
@@ -429,7 +436,11 @@ export class OffsetTool implements Tool {
       return;
     }
     const { name: _dropped, ...rest } = copy;
-    ctx.execute({ type: "add-entity", entity: { ...rest, id: newEntityId() } as Entity });
+    const added = { ...rest, id: newEntityId() } as Entity;
+    const offsetCmds: Command[] = [{ type: "add-entity", entity: added }];
+    if (associativeOn())
+      for (const constraint of offsetConstraints(this.target, added)) offsetCmds.push({ type: "add-constraint", constraint });
+    ctx.commit(offsetCmds);
     this.target = null;
   }
   preview(_ctx: ToolContext, cursor: Point | null): Entity[] {

@@ -1,6 +1,7 @@
 export * from "./geometry";
 export * from "./arcs";
 export * from "./mirror";
+export * from "./associative";
 export * from "./intersect";
 export * from "./fillet";
 export * from "./offset";

@@ -4,6 +4,11 @@ import { useApp, type ToolId } from "../state/store";
 /** Tools whose new geometry may carry inferred constraints (copies, mirrors, offsets and imports must not). */
 const DRAWING_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["line", "polyline", "rectangle", "circle", "arc", "ellipse", "polygon", "slot", "point"]);
 
+/** T-46: Mirror, Offset and Fillet leave constraints behind only in Sketch mode. */
+export function associativeOn(): boolean {
+  return useApp.getState().drawingMode === "sketch";
+}
+
 /** Set by the viewport from the last pick: Ctrl suppresses inference for one click. */
 export const autoConstrainSuppressed = { value: false };
 
