@@ -53,6 +53,8 @@ export function paramCount(entity: Entity): number {
     case "spline":
       return entity.controlPoints.length * 2; // knots and weights stay as drawn
     case "text":
+    case "insert":
+      return 3; // x y rotation — only modelled when a constraint names it (see buildModel)
     case "image":
     default:
       return 0; // no solver parameters — a new kind opts in by adding its own case
@@ -83,6 +85,11 @@ function pushValues(entity: Entity, out: number[]): void {
       for (const p of entity.controlPoints) out.push(p.x, p.y);
       return;
     case "text":
+      out.push(entity.at.x, entity.at.y, entity.rotation);
+      return;
+    case "insert":
+      out.push(entity.insert.x, entity.insert.y, entity.rotation);
+      return;
     case "image":
     default:
       return;
@@ -90,7 +97,7 @@ function pushValues(entity: Entity, out: number[]): void {
 }
 
 /** Builds the parameter vector for `entities`, in document order. */
-export function buildModel(entities: readonly Entity[]): SketchModel {
+export function buildModel(entities: readonly Entity[], referenced?: ReadonlySet<EntityId>): SketchModel {
   const values: number[] = [];
   const byEntity = new Map<EntityId, EntityParams>();
   const map = new Map<EntityId, Entity>();
@@ -98,6 +105,9 @@ export function buildModel(entities: readonly Entity[]): SketchModel {
     map.set(entity.id, entity);
     const count = paramCount(entity);
     if (count === 0) continue;
+    // Text and inserts are everywhere in a drawing and mostly unconstrained; giving every one three free
+    // parameters would swamp the DoF readout with freedom nothing refers to (K-01).
+    if ((entity.type === "text" || entity.type === "insert") && referenced && !referenced.has(entity.id)) continue;
     byEntity.set(entity.id, {
       id: entity.id,
       start: values.length,
@@ -242,10 +252,20 @@ export function pointOf(model: SketchModel, ref: PointRef): Vec | null {
       return { x: at(i * 2), y: at(i * 2 + 1) };
     }
     case "text":
+    case "insert":
+      return { x: at(0), y: at(1) }; // the anchor / insertion point, whichever ref names it
     case "image":
     default:
       return null;
   }
+}
+
+/** The rotation parameter of a text or block insert. */
+export function rotationOf(model: SketchModel, id: EntityId): Num | null {
+  const e = model.entities.get(id);
+  const got = paramsOf(model, id);
+  if (!e || !got || (e.type !== "text" && e.type !== "insert")) return null;
+  return got.at(2);
 }
 
 /** Writes solved values back, returning only the entities that actually moved. */
@@ -293,6 +313,9 @@ function withValues(entity: Entity, v: readonly number[], at: number): Entity {
       return { ...rest, controlPoints: entity.controlPoints.map((_, i) => ({ x: v[at + i * 2], y: v[at + i * 2 + 1] })) };
     }
     case "text":
+      return { ...entity, at: { x: v[at], y: v[at + 1] }, rotation: v[at + 2] };
+    case "insert":
+      return { ...entity, insert: { x: v[at], y: v[at + 1] }, rotation: v[at + 2] };
     case "image":
     default:
       return entity;

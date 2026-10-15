@@ -45,6 +45,7 @@ export const CONSTRAINT_KINDS: ConstraintKind[] = [
   "radius",
   "distance",
   "angle",
+  "rotation",
   "fix",
 ];
 
@@ -65,6 +66,7 @@ export const CONSTRAINT_HINTS: Record<ConstraintKind, string> = {
   radius: "A circle or arc — locks its current radius",
   distance: "Two entities — locks the current distance between their nearest ends",
   angle: "Two lines — locks the current angle between them",
+  rotation: "Text or a block insert — locks its current rotation",
   fix: "Any geometry — pins it where it is",
 };
 
@@ -127,6 +129,9 @@ export function attachPoints(entity: Entity): { ref: PointRef; at: Point }[] {
     case "point":
       return [{ ref: ref("a"), at: entity.p }];
     case "text":
+      return [{ ref: ref("a"), at: entity.at }]; // K-01: the text anchor
+    case "insert":
+      return [{ ref: ref("a"), at: entity.insert }]; // K-01: a block's base point
     case "image":
     default:
       return []; // nothing a constraint can attach to (yet)
@@ -289,6 +294,14 @@ export function buildConstraints(kind: ConstraintKind, selection: readonly Entit
       const v = directionOf(usable[1])!;
       const value = Math.atan2(u.x * v.y - u.y * v.x, u.x * v.x + u.y * v.y);
       return { constraints: [{ id: ctx.newId(), type: "angle", a: usable[0].id, b: usable[1].id, value }] };
+    }
+    case "rotation": {
+      const usable = sel.filter((e) => e.type === "text" || e.type === "insert");
+      const bad = need(usable.length > 0 && usable.length === sel.length);
+      if (bad) return bad;
+      return {
+        constraints: usable.map((e) => ({ id: ctx.newId(), type: "rotation" as const, entityId: e.id, value: (e as { rotation: number }).rotation })),
+      };
     }
     case "fix": {
       const usable = sel.filter((e) => attachPoints(e).length > 0 || isCurve(e));

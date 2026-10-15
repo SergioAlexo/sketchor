@@ -33,6 +33,10 @@ export function entityAnchor(entity: Entity): Point | null {
     }
     case "point":
       return entity.p;
+    case "text":
+      return entity.at;
+    case "insert":
+      return entity.insert;
     case "ellipse":
       // The minor-axis end, clear of the centre and major-axis marks.
       return ellipsePointAt(entity, Math.PI / 2);
@@ -64,6 +68,10 @@ export function pointRefAt(lookup: EntityLookup, ref: PointRef): Point | null {
       return arcPointAt(e.center, e.radius, ref.point === "a" ? e.startAngle : e.endAngle);
     case "point":
       return e.p;
+    case "text":
+      return e.at;
+    case "insert":
+      return e.insert;
     case "ellipse": {
       if (ref.point === "center") return e.center;
       return ellipsePointAt(e, ref.point === "b" ? e.end : e.start);
@@ -78,7 +86,6 @@ export function pointRefAt(lookup: EntityLookup, ref: PointRef): Point | null {
       if (ref.point === "center") return mid(e.points[0], e.points[e.points.length - 1]);
       return ref.point === "b" ? e.points[e.points.length - 1] : e.points[0];
     }
-    case "text":
     case "image":
     default:
       return null;
@@ -105,6 +112,7 @@ export function constraintAnchors(lookup: EntityLookup, c: Constraint): Point[] 
     case "vertical":
     case "radius":
     case "fix":
+    case "rotation":
       return ofEntity(c.entityId);
     case "parallel":
     case "perpendicular":

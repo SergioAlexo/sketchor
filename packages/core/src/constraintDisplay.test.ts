@@ -39,7 +39,7 @@ describe("entityAnchor", () => {
   });
 
   it("has nowhere to mark on geometry a constraint can't hold", () => {
-    const text: Entity = { id: "t", type: "text", at: { x: 0, y: 0 }, text: "hi", height: 5, rotation: 0 };
+    const text: Entity = { id: "t", type: "image", insert: { x: 0, y: 0 }, width: 5, height: 5, rotation: 0 } as unknown as Entity;
     expect(entityAnchor(text)).toBeNull();
   });
 });

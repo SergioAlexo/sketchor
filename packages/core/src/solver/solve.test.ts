@@ -300,7 +300,7 @@ describe("edge cases that must not throw or hang", () => {
   });
 
   it("ignores constraints on geometry it has no parameters for", () => {
-    const text: Entity = { id: "t", type: "text", at: { x: 0, y: 0 }, text: "hi", height: 10, rotation: 0 };
+    const text: Entity = { id: "t", type: "image", insert: { x: 0, y: 0 }, width: 5, height: 5, rotation: 0 } as unknown as Entity;
     const result = solveSketch([text], [{ id: "k1", type: "horizontal", entityId: "t" }]);
     expect(result.updates).toEqual([]);
     expect(result.dof).toBe(0);

@@ -45,7 +45,9 @@ export type Constraint =
   /** Two lines lie on the same infinite line. */
   | { id: ConstraintId; type: "collinear"; a: EntityId; b: EntityId }
   /** `point` lies somewhere on `entityId` (a line, circle or arc). */
-  | { id: ConstraintId; type: "point-on-curve"; point: PointRef; entityId: EntityId };
+  | { id: ConstraintId; type: "point-on-curve"; point: PointRef; entityId: EntityId }
+  /** K-01: a text or block insert is turned to `value` radians (CCW) — placement of a block as an angle. */
+  | { id: ConstraintId; type: "rotation"; entityId: EntityId; value: number };
 
 let counter = 0;
 export function newConstraintId(): ConstraintId {
@@ -63,6 +65,7 @@ export function constraintEntityIds(c: Constraint): EntityId[] {
     case "vertical":
     case "radius":
     case "fix":
+    case "rotation":
       return [c.entityId];
     case "parallel":
     case "perpendicular":
@@ -98,4 +101,5 @@ export const CONSTRAINT_LABELS: Record<Constraint["type"], string> = {
   symmetric: "Symmetric",
   collinear: "Collinear",
   "point-on-curve": "Point on curve",
+  rotation: "Rotation",
 };

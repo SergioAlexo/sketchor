@@ -41,6 +41,7 @@ export const CONSTRAINT_GLYPHS: Record<ConstraintKind, string> = {
   radius: "R",
   angle: "∠",
   fix: "⚓",
+  rotation: "↻",
   concentric: "◎",
   midpoint: "◐",
   symmetric: "⋈",

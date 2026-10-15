@@ -123,7 +123,7 @@ describe("what applies to what", () => {
   });
 
   it("ignores geometry it can't constrain", () => {
-    const text: Entity = { id: "t", type: "text", at: { x: 0, y: 0 }, text: "hi", height: 5, rotation: 0 };
+    const text: Entity = { id: "t", type: "image", insert: { x: 0, y: 0 }, width: 5, height: 5, rotation: 0 } as unknown as Entity; // images (unlike text, K-01) have nothing to attach to
     expect(errorOf(buildConstraints("fix", [text], ctx))).toBeTruthy();
     expect(errorOf(buildConstraints("horizontal", [text], ctx))).toBeTruthy();
   });

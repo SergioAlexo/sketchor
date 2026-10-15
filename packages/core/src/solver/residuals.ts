@@ -1,6 +1,6 @@
 import type { Constraint, ConstraintId } from "../constraints";
 import { curveEval, footOf } from "./footCurves";
-import { centerOf, directionOf, pointOf, radiusOf, type SketchModel } from "./model";
+import { centerOf, directionOf, pointOf, radiusOf, rotationOf, type SketchModel } from "./model";
 import {
   add,
   atan2Num,
@@ -12,6 +12,7 @@ import {
   length,
   mul,
   scale,
+  sinNum,
   sub,
   variable,
   vsub,
@@ -257,6 +258,11 @@ export function rowsFor(model: SketchModel, c: Constraint): Row[] {
       // constraint useful, and a point that leaves the drawn segment is
       // the user's business, not the solver's.
       return [row(pointToLine(p, at, d))];
+    }
+    case "rotation": {
+      const r = rotationOf(model, c.entityId);
+      // sin of the misalignment: zero at the target (and its half-turn twin, so the branch nearest the current angle wins), in radians near it.
+      return r ? [row(sinNum(sub(r, konst(c.value))))] : [];
     }
     case "fix":
       // Handled by freezing the entity's parameters (see model.ts), which

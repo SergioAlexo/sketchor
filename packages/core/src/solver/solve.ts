@@ -1,4 +1,4 @@
-import type { Constraint, ConstraintId, PointRef } from "../constraints";
+import { constraintEntityIds, type Constraint, type ConstraintId, type PointRef } from "../constraints";
 import type { Entity, EntityId } from "../entities";
 import type { Point } from "../geometry";
 import { applyModel, buildModel, freeIndices, freezeEntity, pointOf, type SketchModel } from "./model";
@@ -85,7 +85,9 @@ export function solveSketch(
 ): SolveResult {
   const tolerance = options.tolerance ?? DEFAULT_TOLERANCE;
   const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-  const model = buildModel(entities);
+  const referenced = new Set<EntityId>();
+  for (const c of constraints) for (const id of constraintEntityIds(c)) referenced.add(id);
+  const model = buildModel(entities, referenced);
   addFootParams(model, constraints);
   for (const c of constraints) if (c.type === "fix") freezeEntity(model, c.entityId);
   for (const id of options.fixed ?? []) freezeEntity(model, id);
