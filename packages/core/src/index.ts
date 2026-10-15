@@ -5,6 +5,7 @@ export * from "./intersect";
 export * from "./fillet";
 export * from "./offset";
 export * from "./clipboard";
+export * from "./expr";
 export * from "./shapes";
 export * from "./joinExplode";
 export * from "./grips";

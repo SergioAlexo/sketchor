@@ -49,6 +49,7 @@ function fixture(withBlocks = false): { doc: SketchDocument; bus: CommandBus } {
   doc._putRecord("layers", { name: "outline", visible: true });
   doc._putRecord("layers", { name: "notes", visible: false, locked: true });
   doc._patchSettings({ insUnits: 4 });
+  doc._putRecord("params", { name: "w", expression: "10" });
   if (withBlocks) addBlocks(doc);
   return { doc, bus: new CommandBus(doc) };
 }
@@ -114,6 +115,8 @@ const CASES: { name: string; command: Command }[] = [
   { name: "put-table-record (replace)", command: { type: "put-table-record", table: "layers", record: { name: "outline", visible: false } } },
   { name: "put-table-record (at an index)", command: { type: "put-table-record", table: "layers", record: { name: "first", visible: true }, index: 0 } },
   { name: "delete-table-record", command: { type: "delete-table-record", table: "layers", name: "outline" } },
+  { name: "put-param", command: { type: "put-param", name: "w", expression: "2in + 5mm" } },
+  { name: "delete-param", command: { type: "delete-param", name: "w" } },
   { name: "rename-table-record (rewrites entities)", command: { type: "rename-table-record", table: "layers", from: "outline", to: "profile" } },
   { name: "rename-table-record (no rewrite)", command: { type: "rename-table-record", table: "layers", from: "outline", to: "profile", rewrite: false } },
   { name: "define-block (convert)", command: { type: "define-block", name: "NEW", basePoint: { x: 1, y: 1 }, ids: ["e1", "e2"], insertId: "i9" } },

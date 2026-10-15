@@ -10,6 +10,7 @@ import { setActiveBlocks } from "./blocks/context";
 import { setActiveDimHost } from "./dimensions/context";
 import { planDefineBlock, planDeleteBlock, planExplode, planRenameBlock, planUpdateBlock } from "./blocks/ops";
 import type { AttributeDef, BlockDefinition } from "./blocks/types";
+import { PARAMS_TABLE, refreshExpressions, validateParam } from "./expr";
 import { entityRefRewritersFor, recordRefRewritersFor, type DocSettings, type TableRecord } from "./tables";
 
 /**
@@ -75,6 +76,9 @@ export type Command =
   | { type: "delete-block"; name: string; purge?: boolean }
   /** B-02. Replaces an insert with the entities it stands for (one nesting level; attribute values become text). Refused for a non-explodable block. */
   | { type: "explode-insert"; id: EntityId }
+  /** T-45: define or redefine a named parameter (`expression` may reference other parameters); dimensions and constraints with an `expression` follow. */
+  | { type: "put-param"; name: string; expression: string; comment?: string }
+  | { type: "delete-param"; name: string }
   | { type: "batch"; commands: Command[] };
 
 interface HistoryEntry {
@@ -127,6 +131,19 @@ export class CommandBus {
     this.undoStack.push({ command, inverse: [...this.afterApply(assoc), ...inverse] });
     this.redoStack = [];
     this.emit();
+  }
+
+  /** T-45: after a parameter changed, pushes the new values into every dimension / constraint that has an expression. */
+  private refreshParams(inverse: Command[]): Command[] {
+    const doc = this.doc;
+    const changed = refreshExpressions(doc.all(), doc.constraints(), doc.records(PARAMS_TABLE));
+    for (const entity of changed.entities) inverse.unshift(...this.apply({ type: "update-entity", entity }));
+    for (const constraint of changed.constraints) {
+      const previous = doc.getConstraint(constraint.id);
+      doc._putConstraint(constraint);
+      if (previous) inverse.unshift({ type: "add-constraint", constraint: previous });
+    }
+    return inverse;
   }
 
   /** Middleware after a command: the solver, then H-05 associative hatches following their boundary. Returns the inverse commands. */
@@ -322,6 +339,14 @@ export class CommandBus {
         doc._removeRecord(command.table, command.name);
         return [{ type: "put-table-record", table: command.table, record: previous, index }];
       }
+      case "put-param": {
+        if (validateParam(doc.records(PARAMS_TABLE), command.name, command.expression) !== null) return [];
+        const record: TableRecord = { name: command.name, expression: command.expression };
+        if (command.comment) record.comment = command.comment;
+        return this.refreshParams(this.apply({ type: "put-table-record", table: PARAMS_TABLE, record }));
+      }
+      case "delete-param":
+        return this.refreshParams(this.apply({ type: "delete-table-record", table: PARAMS_TABLE, name: command.name }));
       case "rename-table-record": {
         const { table, from, to } = command;
         if (from === to || to === "" || !doc.hasRecord(table, from) || doc.hasRecord(table, to)) return [];
