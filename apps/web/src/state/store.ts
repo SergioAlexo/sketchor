@@ -454,6 +454,17 @@ export type ToolId =
   | "fill"
   | "text"
   | "dim"
+  | "dimlinear"
+  | "dimaligned"
+  | "dimangular"
+  | "dimradial"
+  | "dimdiametric"
+  | "dimarc"
+  | "dimordinate"
+  | "dimjogged"
+  | "dimbaseline"
+  | "dimcontinue"
+  | "qdim"
   | "pan"
   | "move"
   | "copy"
@@ -494,7 +505,18 @@ export const TOOL_HINTS: Record<ToolId, string> = {
   straighten: "Select the part with V, switch here, click the reference edge — a line or a straight polyline segment — then Enter to apply",
   fill: "Pick a colour, then click a closed shape to hatch-fill it - Alt-click removes a fill - use the panel to apply to a whole selection",
   text: "Click where the text goes and type - Enter places it, Esc cancels - double-click existing text to edit it",
-  dim: "Click two points to place a linear dimension on the Dimensions layer, in the current display unit",
+  dim: "Dimension: click a line (length), circle (diameter), arc (radius), two lines (angle, or distance if parallel) or two points - then click where the dimension line goes",
+  dimlinear: "Linear dimension: click two points (or one line), then drag above/below for horizontal or beside for vertical - Alt-click the placement for aligned",
+  dimaligned: "Aligned dimension: click two points (or one line), then click the dimension line position",
+  dimangular: "Angular dimension: click two lines, or a vertex and two points, then the arc position",
+  dimradial: "Radius dimension: click a circle or arc, then where the dimension goes",
+  dimdiametric: "Diameter dimension: click a circle or arc, then where the dimension goes",
+  dimarc: "Arc length dimension: click an arc, then the dimension arc position",
+  dimordinate: "Ordinate dimension (from 0,0): click the feature point, then the end of the leader - up/down reads X, sideways reads Y",
+  dimjogged: "Jogged radius: click a circle or arc, then where the dimension goes",
+  dimbaseline: "Baseline dimension: click an existing linear dimension, then each next point - Esc finishes",
+  dimcontinue: "Continue dimension: click an existing linear dimension, then each next point - Esc finishes",
+  qdim: "Quick dimension: select objects (or click them), Enter, then place the chain - B baseline, C continued, O ordinate",
   pan: "Drag to pan the view - pinch with two fingers to zoom - double-tap to fit the drawing",
   move: "Select, then click a base point and a destination - or type @dx,dy or a distance - Ctrl-click the destination to copy instead",
   copy: "Select, then click a base point; every further click places another copy - Enter or Esc stops",

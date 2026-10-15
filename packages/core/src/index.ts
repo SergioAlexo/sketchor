@@ -29,6 +29,7 @@ export * from "./dimensions/resolve";
 export * from "./dimensions/driving";
 export * from "./dimensions/explode";
 export * from "./dimensions/context";
+export * from "./dimensions/build";
 export * from "./layerTable";
 export * from "./commands";
 export * from "./sketchtext";

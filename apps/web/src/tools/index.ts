@@ -8,6 +8,7 @@ import { AttdefTool } from "./attdefTool";
 import { HatchTool } from "./hatchTool";
 import { SplineEditTool } from "./splineEditTool";
 import { CopyTool, MirrorTool, MoveTool, RotateTool, ScaleTool } from "./modifyTools";
+import { DimTool } from "./dimTools";
 import type { Tool } from "./tool";
 
 /**
@@ -48,6 +49,18 @@ const TOOLS: Partial<Record<ToolId, Tool>> = {
   blockbase: new BlockBaseTool(),
   insert: new InsertTool(),
   attdef: new AttdefTool(),
+  dim: new DimTool("dim", "smart"),
+  dimlinear: new DimTool("dimlinear", "linear"),
+  dimaligned: new DimTool("dimaligned", "aligned"),
+  dimangular: new DimTool("dimangular", "angular"),
+  dimradial: new DimTool("dimradial", "radial"),
+  dimdiametric: new DimTool("dimdiametric", "diametric"),
+  dimarc: new DimTool("dimarc", "arclength"),
+  dimordinate: new DimTool("dimordinate", "ordinate"),
+  dimjogged: new DimTool("dimjogged", "jogged"),
+  dimbaseline: new DimTool("dimbaseline", "baseline"),
+  dimcontinue: new DimTool("dimcontinue", "continue"),
+  qdim: new DimTool("qdim", "qdim"),
 };
 
 export function getTool(id: ToolId): Tool | null {

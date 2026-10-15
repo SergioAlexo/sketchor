@@ -1429,7 +1429,7 @@ export function App() {
                 {tool === "attdef" && <AttdefPanel />}
                 <AttEditDialog />
                 <BlockEditBar />
-                {(tool === "text" || tool === "dim") && <TextPanel />}
+                {tool === "text" && <TextPanel />}
               </>
             )}
           </main>

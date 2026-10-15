@@ -57,7 +57,10 @@ definition-local) and block-definition dimensions export through
 presets in `style.ts`); text styles (`textStyle.ts`, `textStyles` table) give
 `TextEntity` `style/halign/valign/widthFactor/oblique`, and the DXF STYLE table
 round-trips. New entity fields that sketch code cannot express must be carried
-in `diffToCommands`.
+in `diffToCommands`. Dimension *creation* is pure too (`dimensions/build.ts`:
+smart-DIM classification, baseline/continue, QDIM); `tools/dimTools.ts` only
+collects picks (tool `dim` = smart DIM; DLI/DAL/DAN/DRA/DDI/DAR/DOR/DJO/DBA/DCO/QDIM
+on the command line).
 
 ## Hatching (`packages/core/src/hatch/`, plan §6)
 
