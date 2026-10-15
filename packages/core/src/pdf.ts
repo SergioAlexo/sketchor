@@ -102,6 +102,18 @@ function rgb(color: string): [number, number, number] {
   return out.every((c) => Number.isFinite(c)) ? out : [0, 0, 0];
 }
 
+/** Drawing symbols WinAnsi has no code for, replaced by the nearest Helvetica glyph (D-11: dimension text carries them). */
+const WINANSI_FALLBACK: Record<string, string> = {
+  "⌀": "Ø", // diameter sign
+  "∅": "Ø",
+  "⌒": "^", // arc length
+  "≈": "~",
+  "≤": "<",
+  "≥": ">",
+  "△": "^",
+  "−": "-",
+};
+
 /**
  * A string literal for a content stream. Escapes PDF's own delimiters and
  * drops anything outside the single-byte range to "?" — a load plan is job
@@ -109,7 +121,8 @@ function rgb(color: string): [number, number, number] {
  */
 function literal(text: string): string {
   let out = "";
-  for (const ch of text) {
+  for (const raw of text) {
+    const ch = WINANSI_FALLBACK[raw] ?? raw;
     const code = ch.charCodeAt(0);
     if (ch === "(" || ch === ")" || ch === "\\") out += "\\" + ch;
     else if (code >= 32 && code <= 255) out += ch;

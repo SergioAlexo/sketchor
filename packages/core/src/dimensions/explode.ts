@@ -1,4 +1,4 @@
-import type { DimensionEntity, Entity, PolylineEntity, TextEntity } from "../entities";
+import type { DimensionEntity, Entity, HatchEntity, PolylineEntity, TextEntity } from "../entities";
 import { textToStrokes } from "../font";
 import type { Point } from "../geometry";
 import { activeDimHost, type DimHost } from "./context";
@@ -27,7 +27,13 @@ export function explodeDimension(e: DimensionEntity, host: DimHost | null = acti
     out.push({ id: `${e.id}:${n++}`, type: "polyline", ...base, points: closed ? pts.slice(0, -1) : pts, closed, ...extra });
   };
   for (const run of layout.lines) poly(run);
-  for (const run of layout.fills) poly(run, { fill: e.color ?? "#000000", lineweight: 0 });
+  // Arrow heads are SOLID fills, not a 30 % tint (what `fill` on a closed polyline means everywhere else), so they are solid hatches: opaque in SVG/PDF/EPS and a real HATCH in DXF.
+  for (const run of layout.fills) {
+    if (run.length < 3) continue;
+    const ring = Math.hypot(run[0].x - run[run.length - 1].x, run[0].y - run[run.length - 1].y) < 1e-9 ? run.slice(0, -1) : run;
+    const edges = ring.map((a, i) => ({ type: "line" as const, a, b: ring[(i + 1) % ring.length] }));
+    out.push({ id: `${e.id}:${n++}`, type: "hatch", ...base, lineweight: 0, loops: [{ edges }], paint: { kind: "solid", color: e.color ?? "#000000" }, style: "normal" } as HatchEntity);
+  }
   if (layout.text && layout.text.text) {
     const t: TextEntity = {
       id: `${e.id}:${n++}`,

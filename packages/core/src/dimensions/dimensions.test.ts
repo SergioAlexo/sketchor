@@ -222,9 +222,9 @@ describe("inside block inserts", () => {
 });
 
 describe("exports", () => {
-  it("explodeDimension gives lines, filled arrows and one centred text", () => {
+  it("explodeDimension gives lines, solid-hatch arrows and one centred text", () => {
     const parts = explodeDimension(dim(), null);
-    expect(parts.filter((p) => p.type === "polyline" && p.fill)).toHaveLength(2);
+    expect(parts.filter((p) => p.type === "hatch" && p.paint.kind === "solid")).toHaveLength(2);
     const t = parts.find((p) => p.type === "text")!;
     expect(t).toMatchObject({ text: "100", halign: "center", valign: "middle" });
   });
