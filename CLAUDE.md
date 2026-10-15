@@ -385,6 +385,13 @@ the worker imports the vendored `.mjs`/`.wasm` directly. So:
   actually asks the DLL, create an empty `%LOCALAPPDATA%\Sketchor\thumb-debug.log`
   — every request is appended (opt-in trace in lib.rs).
 
+**Mesh formats (F-05).** STL/OBJ/PLY/3MF/glTF/GLB are read by pure parsers in
+`packages/core/src/mesh/` (`parseAnyMesh`) inside the same worker
+(`handleMesh` in `occt.worker.ts`), then `segmentMesh` fakes a B-rep: faces =
+connected triangle regions under a 20° dihedral, each with its own vertices, in
+the occt-import-js result shape — so `buildModel`/`topology.ts` are unchanged.
+Mesh files carry no unit (mm assumed; glTF is metres, 3MF has a `unit`).
+
 Debug: `window.sketchor.openModel(name, arrayBuffer)` / `getModel()`.
 
 ## Printing and autosave (`apps/web/src/print/`, `io/autosaveFolder.ts`)

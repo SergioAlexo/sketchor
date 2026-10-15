@@ -39,6 +39,7 @@ export * from "./sketchorData";
 export * from "./dxfExport";
 export * from "./dxfText";
 export * from "./fileSize";
+export * from "./mesh/index";
 export * from "./dxfw/index";
 export * from "./theme";
 export * from "./themeFile";

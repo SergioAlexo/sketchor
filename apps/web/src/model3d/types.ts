@@ -56,7 +56,7 @@ export interface Model3D {
   detectedUp?: "z" | "y";
 }
 
-export type ModelFormat = "step" | "iges";
+export type ModelFormat = "step" | "iges" | "stl" | "obj" | "ply" | "3mf" | "gltf" | "glb";
 
 export interface ModelPart {
   name: string;

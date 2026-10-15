@@ -25,7 +25,7 @@ const DB_VERSION = 2;
  * Bump when `Model3D`'s shape or the tessellation/edge extraction changes:
  * it's part of every key, so stale entries simply stop matching and age out.
  */
-const LAYOUT_VERSION = 6; // 6: wasm fix for sub-assemblies that tessellated to nothing (cached parses lost parts)
+const LAYOUT_VERSION = 7; // 7: mesh formats (F-05); 6: wasm fix for sub-assemblies that tessellated to nothing (cached parses lost parts)
 const keyOf = (hash: string) => `${LAYOUT_VERSION}:${hash}`;
 const MODELS = "models";
 /** Per-model size + last-use time, kept apart from the (large) model rows so eviction never has to load them. */

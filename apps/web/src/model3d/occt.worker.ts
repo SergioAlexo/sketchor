@@ -1,5 +1,6 @@
 import occtimportjs from "../../vendor/occt-import-js/occt-import-js.mjs";
 import wasmUrl from "../../vendor/occt-import-js/occt-import-js.wasm?url";
+import { parseAnyMesh, segmentMesh } from "@sketchor/core";
 import { buildModel } from "./buildModel";
 import { describeImportError } from "./importError";
 import { getCachedModel, putCachedModel } from "./modelCache";
@@ -79,6 +80,10 @@ async function handle(req: ParseRequest): Promise<void> {
   }
 
   post({ id: req.id, phase: "reading" });
+  if (req.format !== "step" && req.format !== "iges") {
+    await handleMesh(req, t0);
+    return;
+  }
   const lib = await occt();
   const byteLength = req.buffer.byteLength;
   const params = tessellationFor(byteLength);
@@ -115,6 +120,38 @@ async function handle(req: ParseRequest): Promise<void> {
   // Cache before transferring: the put needs the buffers still attached. A
   // model that parsed fine is still worth showing if the cache refuses it
   // (quota, a structured-clone failure on a huge one) — it just isn't kept.
+  try {
+    await putCachedModel(model);
+  } catch (err) {
+    console.warn("model cache write failed; showing the model uncached", err);
+  }
+  post({ id: req.id, ok: true, model, fromCache: false, ms: performance.now() - t0 }, transferables(model));
+}
+
+/** F-05: STL/OBJ/PLY/3MF/glTF — parse in JS, split into faces by dihedral angle (core/mesh), then the same buildModel/topology path as STEP. */
+async function handleMesh(req: ParseRequest, t0: number): Promise<void> {
+  const byteLength = req.buffer.byteLength;
+  let parsed;
+  try {
+    parsed = await parseAnyMesh(req.format as Exclude<ModelFormat, "step" | "iges">, new Uint8Array(req.buffer), req.name.replace(/\.[^.]*$/, "") || "Part");
+  } catch (err) {
+    post({ id: req.id, ok: false, error: describeImportError((err as Error)?.message ?? String(err), req.name, byteLength) });
+    return;
+  } finally {
+    req.buffer = EMPTY_BUFFER;
+  }
+  const meshes = parsed.parts.map((p) => segmentMesh(p));
+  const result: OcctResult = {
+    success: true,
+    meshes,
+    root: parsed.parts.length > 1 ? { name: req.name, children: meshes.map((m, i) => ({ name: m.name, meshes: [i] })) } : { name: req.name, meshes: [0] },
+  };
+  const model = buildModel(result, req.name, req.hash, req.format);
+  if (model.parts.length === 0) {
+    post({ id: req.id, ok: false, error: "the file contains no triangles to show" });
+    return;
+  }
+  model.detectedUp = req.format === "gltf" || req.format === "glb" ? "y" : "z"; // glTF is Y-up by spec
   try {
     await putCachedModel(model);
   } catch (err) {

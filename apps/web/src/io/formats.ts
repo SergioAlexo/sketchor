@@ -31,6 +31,12 @@ export const FORMATS: readonly FormatInfo[] = [
   { ext: ["ai"], kind: "2d", label: "Illustrator drawing", mime: "application/illustrator", writable: false, association: true, nativeThumbnail: true },
   { ext: ["step", "stp"], kind: "3d", label: "STEP model", mime: "model/step", writable: false, association: true, nativeThumbnail: true },
   { ext: ["iges", "igs"], kind: "3d", label: "IGES model", mime: "model/iges", writable: false, association: true, nativeThumbnail: true },
+  // Mesh formats (F-05): read in the model worker; OS association and Explorer thumbnails are not wired yet.
+  { ext: ["stl"], kind: "3d", label: "STL mesh", mime: "model/stl", writable: false, association: false, nativeThumbnail: false },
+  { ext: ["obj"], kind: "3d", label: "OBJ mesh", mime: "model/obj", writable: false, association: false, nativeThumbnail: false },
+  { ext: ["3mf"], kind: "3d", label: "3MF model", mime: "model/3mf", writable: false, association: false, nativeThumbnail: false },
+  { ext: ["gltf", "glb"], kind: "3d", label: "glTF model", mime: "model/gltf-binary", writable: false, association: false, nativeThumbnail: false },
+  { ext: ["ply"], kind: "3d", label: "PLY mesh", mime: "model/ply", writable: false, association: false, nativeThumbnail: false },
 ];
 
 const extOf = (name: string): string => name.split(/[\\/]/).pop()!.split(".").slice(1).pop()?.toLowerCase() ?? "";

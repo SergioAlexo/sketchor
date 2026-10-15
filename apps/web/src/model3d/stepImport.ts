@@ -29,6 +29,12 @@ export type LoadPriority = "open" | "thumbnail";
 export function modelFormatOf(name: string): ModelFormat | null {
   if (/\.(step|stp)$/i.test(name)) return "step";
   if (/\.(iges|igs)$/i.test(name)) return "iges";
+  if (/\.stl$/i.test(name)) return "stl";
+  if (/\.obj$/i.test(name)) return "obj";
+  if (/\.ply$/i.test(name)) return "ply";
+  if (/\.3mf$/i.test(name)) return "3mf";
+  if (/\.gltf$/i.test(name)) return "gltf";
+  if (/\.glb$/i.test(name)) return "glb";
   return null;
 }
 
