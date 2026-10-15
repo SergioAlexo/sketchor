@@ -583,16 +583,6 @@ function splinePoints(raw: RawEntity): Point[] {
   return pts;
 }
 
-/** Strips MTEXT's inline formatting codes (`\P`, `{\C1;...}`, font/height overrides) down to plain text. */
-function cleanMtext(s: string): string {
-  return s
-    .replace(/\\P/g, " ")
-    .replace(/\\~/g, " ")
-    .replace(/[{}]/g, "")
-    .replace(/\\[A-Za-z][^;]*;/g, "")
-    .replace(/\\\\/g, "\\");
-}
-
 export interface DxfImportReport {
   /** Entity types that produced geometry, with how many raw records of that type were found. */
   parsed: { type: string; count: number }[];
@@ -795,6 +785,8 @@ function placeEntity(
       };
     case "text":
       return { ...entity, id, at: map(entity.at), height: entity.height * radiusScale, rotation: entity.rotation + rotation };
+    case "mtext":
+      return { ...entity, id, at: map(entity.at), height: entity.height * radiusScale, width: entity.width * Math.abs(sx), rotation: entity.rotation + rotation };
     case "dimension": {
       // Same map as above as a matrix; a shearing insert leaves the dimension unmoved (its parts are not recomputed here).
       const a = cos * sx;
@@ -980,22 +972,42 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
         if (parsed.associative && ctx.hatchSources) ctx.hatchSources.set(id, parsed.sourceHandles);
         break;
       }
-      case "TEXT":
       case "MTEXT": {
+        // D-04: keep the inline codes (formatting, stacks, wrapping); the entity lays them out.
+        const code = unescapeDxfText(raw.pairs.filter((p) => p.code === 3).map((p) => p.value).join("") + str(raw, 1, ""));
+        if (!code) break;
+        const hasDir = raw.pairs.some((p) => p.code === 11) && !raw.pairs.some((p) => p.code === 50);
+        const style = str(raw, 7, "");
+        const spacing = num(raw, 44, 1);
+        const att = Math.round(num(raw, 71, 1));
+        entities.push({
+          id: newEntityId(),
+          type: "mtext",
+          layer,
+          at: { x: num(raw, 10), y: num(raw, 20) },
+          width: Math.max(0, num(raw, 41, 0)),
+          attachment: att >= 1 && att <= 9 ? att : 1,
+          text: code,
+          height: num(raw, 40, 2.5) || 2.5,
+          rotation: hasDir ? Math.atan2(num(raw, 21), num(raw, 11)) : (num(raw, 50, 0) * Math.PI) / 180,
+          ...(style && style !== "Standard" ? { style } : {}),
+          ...(spacing > 0 && spacing !== 1 ? { lineSpacing: spacing } : {}),
+          ...((Math.round(num(raw, 90, 0)) & 3) !== 0 ? { background: { ...(num(raw, 45, 0) > 0 ? { scale: num(raw, 45) } : {}) } } : {}),
+        });
+        break;
+      }
+      case "TEXT": {
         const at = { x: num(raw, 10), y: num(raw, 20) };
         const height = num(raw, 40, 2.5) || 2.5;
         const rotation = (num(raw, 50, 0) * Math.PI) / 180;
         const raw1 = str(raw, 1, "");
-        const content =
-          raw.type === "MTEXT"
-            ? cleanMtext(unescapeDxfText(raw.pairs.filter((p) => p.code === 3).map((p) => p.value).join("") + raw1))
-            : unescapeDxfText(raw1);
+        const content = unescapeDxfText(raw1);
         if (content) {
           const style = str(raw, 7, "");
           const hc = Math.round(num(raw, 72, 0));
           const vc = Math.round(num(raw, 73, 0));
-          const halign = raw.type === "TEXT" ? hAlignFromCode(hc) : undefined;
-          const valign = raw.type === "TEXT" ? vAlignFromCode(vc) : undefined;
+          const halign = hAlignFromCode(hc);
+          const valign = vAlignFromCode(vc);
           const wf = num(raw, 41, 1);
           const ob = num(raw, 51, 0);
           // With a non-default alignment the real insertion point is group 11.
@@ -1011,8 +1023,8 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
             ...(style && style !== "Standard" ? { style } : {}),
             ...(halign ? { halign } : {}),
             ...(valign ? { valign } : {}),
-            ...(raw.type === "TEXT" && wf > 0 && wf !== 1 ? { widthFactor: wf } : {}),
-            ...(raw.type === "TEXT" && ob ? { oblique: ob } : {}),
+            ...(wf > 0 && wf !== 1 ? { widthFactor: wf } : {}),
+            ...(ob ? { oblique: ob } : {}),
           });
         }
         break;

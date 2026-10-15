@@ -4,6 +4,7 @@ import type { Point } from "../geometry";
 import { activeDimHost, type DimHost } from "./context";
 import type { DimText } from "./layout";
 import { layoutOf } from "./resolve";
+import { explodeMText } from "../mtext/explode";
 
 /**
  * A dimension as ordinary entities — lines, filled arrow polygons and one
@@ -54,8 +55,9 @@ export function explodeDimension(e: DimensionEntity, host: DimHost | null = acti
 
 /** Every dimension in `entities` replaced by its parts (other entities pass through). */
 export function explodeDimensions(entities: readonly Entity[], host: DimHost | null = activeDimHost()): Entity[] {
-  if (!entities.some((e) => e.type === "dimension")) return entities as Entity[];
-  return entities.flatMap((e) => (e.type === "dimension" ? explodeDimension(e, host) : [e]));
+  // D-04: MTEXT has no R12 / SVG / PDF form either, so it explodes through the same call.
+  if (!entities.some((e) => e.type === "dimension" || e.type === "mtext")) return entities as Entity[];
+  return entities.flatMap((e) => (e.type === "dimension" ? explodeDimension(e, host) : e.type === "mtext" ? explodeMText(e) : [e]));
 }
 
 /** The text as stroke-font polylines centred on the text box (for tessellation, so exports without text support still show it). */

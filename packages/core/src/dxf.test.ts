@@ -3,7 +3,8 @@ import "./kinds/builtin";
 import { boundsOf, dxfToSvg, entitiesToSvg, parseDxf, type DxfParseOptions } from "./dxf";
 import { ellipsePointAt, isFullEllipse } from "./ellipse";
 import { distToNurbs, nurbsDomain, nurbsPointAt } from "./nurbs";
-import type { ArcEntity, CircleEntity, EllipseEntity, Entity, SplineEntity, LineEntity, PointEntity, PolylineEntity, TextEntity } from "./entities";
+import type { ArcEntity, CircleEntity, EllipseEntity, Entity, SplineEntity, LineEntity, PointEntity, PolylineEntity, TextEntity, MTextEntity } from "./entities";
+import { mtextPlain } from "./mtext/parse";
 
 /**
  * The DXF importer — the widest surface in the codebase and the one fed by
@@ -303,19 +304,23 @@ describe("TEXT and MTEXT", () => {
     expect(e.height).toBeCloseTo(2.5, 9);
   });
 
-  it("strips MTEXT formatting codes", () => {
-    const [e] = entitiesOf(mtextRec([[1, "{\\C1;red} text"]])) as TextEntity[];
-    expect(e.text).toBe("red text");
+  it("keeps MTEXT formatting codes on an mtext entity (D-04)", () => {
+    const [e] = entitiesOf(mtextRec([[1, "{\\C1;red} text"], [41, 30], [71, 5]])) as MTextEntity[];
+    expect(e.type).toBe("mtext");
+    expect(e.text).toBe("{\\C1;red} text");
+    expect(e.width).toBe(30);
+    expect(e.attachment).toBe(5);
+    expect(mtextPlain(e.text)).toBe("red text");
   });
 
   it("joins MTEXT continuation groups (code 3) ahead of code 1", () => {
-    const [e] = entitiesOf(mtextRec([[3, "AB"], [1, "CD"]])) as TextEntity[];
+    const [e] = entitiesOf(mtextRec([[3, "AB"], [1, "CD"]])) as MTextEntity[];
     expect(e.text).toBe("ABCD");
   });
 
-  it("turns an MTEXT paragraph break into a space", () => {
-    const [e] = entitiesOf(mtextRec([[1, "one\\Ptwo"]])) as TextEntity[];
-    expect(e.text).toBe("one two");
+  it("keeps an MTEXT paragraph break as a paragraph", () => {
+    const [e] = entitiesOf(mtextRec([[1, "one\\Ptwo"]])) as MTextEntity[];
+    expect(mtextPlain(e.text)).toBe("one\ntwo");
   });
 });
 

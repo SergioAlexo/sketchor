@@ -1,4 +1,4 @@
-import { canvasFontFamily, layoutOf, resolveTextLook, type TableRecord } from "@sketchor/core";
+import { canvasFontFamily, layoutMText, layoutOf, resolveTextLook, type TableRecord } from "@sketchor/core";
 import type { Bounds, BoxSelectMode, CanvasTokens, ClosedRegion, Entity, EntityId, Point, SketchDocument } from "@sketchor/core";
 import {
   arcPointAt,
@@ -763,6 +763,51 @@ function drawEntity(
     }
     ctx.fillText(entity.text, 0, 0);
     ctx.restore();
+    return;
+  }
+
+  if (entity.type === "mtext") {
+    // D-04: the same layout the exporters use (core mtext/layout.ts) - runs at baseline positions, rules as segments.
+    const lay = layoutMText(entity);
+    if (entity.background) {
+      ctx.fillStyle = entity.background.color ?? COLORS.bg;
+      ctx.beginPath();
+      lay.box.forEach((pt, i) => {
+        const s = worldToScreen(view, pt);
+        if (i === 0) ctx.moveTo(s.x, s.y);
+        else ctx.lineTo(s.x, s.y);
+      });
+      ctx.closePath();
+      ctx.fill();
+    }
+    const look = resolveTextLook({ style: entity.style } as never, textStyleLookup);
+    ctx.textBaseline = "alphabetic";
+    ctx.textAlign = "left";
+    for (const r of lay.runs) {
+      const p = worldToScreen(view, r.at);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(-r.rotation);
+      ctx.fillStyle = r.color && r.color.startsWith("#") ? r.color : color;
+      const family = r.font && !/^sketchor/i.test(r.font) ? `"${r.font}", ${canvasFontFamily(look.font)}` : canvasFontFamily(look.font);
+      ctx.font = `${r.italic ? "italic " : ""}${r.bold ? "bold " : ""}${Math.max(1, r.height * view.scale)}px ${family}`;
+      const wf = (r.widthFactor ?? 1) * look.widthFactor;
+      if (wf !== 1) ctx.scale(wf, 1);
+      ctx.fillText(r.text, 0, 0);
+      ctx.restore();
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1, entity.height * view.scale * 0.06);
+    ctx.setLineDash([]);
+    for (const seg of lay.lines) {
+      ctx.beginPath();
+      seg.forEach((pt, i) => {
+        const s = worldToScreen(view, pt);
+        if (i === 0) ctx.moveTo(s.x, s.y);
+        else ctx.lineTo(s.x, s.y);
+      });
+      ctx.stroke();
+    }
     return;
   }
 

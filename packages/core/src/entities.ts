@@ -549,6 +549,37 @@ export interface DimensionEntity {
   expression?: string;
 }
 
+/**
+ * D-04: multi-line rich text. `text` holds MTEXT inline codes (`\P`, `\L..\l`,
+ * `\S1/2;`, `{\C1;..}` ...; see `mtext/parse.ts`); `width` is the wrap width
+ * (0 = never wrap); `attachment` is DXF's 1-9 (1 top-left .. 9 bottom-right) and
+ * says which corner/edge of the box `at` is.
+ */
+export interface MTextEntity {
+  id: EntityId;
+  type: "mtext";
+  name?: string;
+  layer?: string;
+  color?: string;
+  /** Ignored for mtext - present only so every entity shares one shape. */
+  fill?: string;
+  linetype?: string;
+  lineweight?: number;
+  construction?: boolean;
+  at: Point;
+  width: number;
+  attachment: number;
+  text: string;
+  height: number;
+  rotation: number;
+  /** `textStyles` record name (absent = Standard). */
+  style?: string;
+  /** Line spacing factor (1 = single, DXF group 44). */
+  lineSpacing?: number;
+  /** Background mask: fill colour (absent = the canvas background) and border offset factor (DXF 45, default 1.5). */
+  background?: { color?: string; scale?: number };
+}
+
 export type Entity =
   | LineEntity
   | CircleEntity
@@ -561,7 +592,8 @@ export type Entity =
   | PolylineEntity
   | TextEntity
   | ImageEntity
-  | DimensionEntity;
+  | DimensionEntity
+  | MTextEntity;
 
 /** Rough width of a {@link TextEntity} string in world units — one built-in font, ~0.55 em per glyph. */
 export function textWidth(text: string, height: number): number {

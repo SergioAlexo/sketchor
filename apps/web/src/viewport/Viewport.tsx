@@ -91,6 +91,7 @@ import { COMMAND_LINE_ACTIONS } from "../metrics/actions";
 import { track } from "../metrics/metrics";
 import { CommandBar, type CommandEcho } from "../tools/CommandBar";
 import { useTheme } from "../theme/themeStore";
+import { useMTextUi } from "../mtext/mtextUi";
 
 /**
  * The half-finished states a pan can interrupt. Panning or zooming mid-draw
@@ -1459,6 +1460,14 @@ export function Viewport() {
         }
         break;
       }
+      case "mtext": {
+        // D-04: edit the multiline text under the cursor, or start one where you clicked.
+        const hit = hitTest(view, world);
+        const existing = hit ? doc.get(hit) : null;
+        if (existing && existing.type === "mtext") useMTextUi.getState().openEdit(existing);
+        else useMTextUi.getState().openNew(world, app.textHeight);
+        break;
+      }
       case "text": {
         // Edit the text under the cursor, or start a fresh one where you clicked.
         const hit = hitTest(view, world);
@@ -1995,6 +2004,10 @@ export function Viewport() {
     const dblEntity = hit ? doc.get(hit) : null;
     if (dblEntity && dblEntity.type === "text" && (app.tool === "select" || app.tool === "text")) {
       openTextEditor(dblEntity);
+      return;
+    }
+    if (dblEntity && dblEntity.type === "mtext" && (app.tool === "select" || app.tool === "mtext")) {
+      useMTextUi.getState().openEdit(dblEntity);
       return;
     }
 

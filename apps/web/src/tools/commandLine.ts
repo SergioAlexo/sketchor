@@ -78,6 +78,8 @@ export const TOOL_ALIASES: Record<string, ToolId> = {
   point: "point",
   t: "text",
   text: "text",
+  mt: "mtext",
+  mtext: "mtext",
   dim: "dim",
   dimension: "dim",
   dli: "dimlinear",

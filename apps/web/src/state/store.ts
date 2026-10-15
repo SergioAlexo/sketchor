@@ -457,6 +457,7 @@ export type ToolId =
   | "straighten"
   | "fill"
   | "text"
+  | "mtext"
   | "dim"
   | "dimlinear"
   | "dimaligned"
@@ -508,6 +509,7 @@ export const TOOL_HINTS: Record<ToolId, string> = {
   measure: "Click two points to measure distance (snaps to endpoints, midpoints, centers, on-line points, intersections) - Ctrl-click a line to set it as the angle reference - Alt-click a line/circle/arc for its whole length/radius, Shift-Alt-click more lines/arcs to total - click inside a closed area for its area+perimeter - Ctrl+C copies the readout",
   straighten: "Select the part with V, switch here, click the reference edge — a line or a straight polyline segment — then Enter to apply",
   fill: "Pick a colour, then click a closed shape to hatch-fill it - Alt-click removes a fill - use the panel to apply to a whole selection",
+  mtext: "Click where the multiline text goes - the editor opens (stacks, colours, wrapping) - double-click existing multiline text to edit it",
   text: "Click where the text goes and type - Enter places it, Esc cancels - double-click existing text to edit it",
   dim: "Dimension: click a line (length), circle (diameter), arc (radius), two lines (angle, or distance if parallel) or two points - then click where the dimension line goes",
   dimlinear: "Linear dimension: click two points (or one line), then drag above/below for horizontal or beside for vertical - Alt-click the placement for aligned",

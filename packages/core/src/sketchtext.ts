@@ -60,6 +60,10 @@ const POINT_PAIR_CAPTURE = new RegExp(String.raw`\(\s*(${NUM})\s*,\s*(${NUM})\s*
 const TEXT_RE = new RegExp(
   String.raw`^text\s+([A-Za-z_]\w*)\s+at\s*\(\s*(${NUM})\s*,\s*(${NUM})\s*\)\s+("(?:[^"\\]|\\.)*")\s+h\s+(${NUM})(?:\s+rot\s+(${NUM}))?$`,
 );
+// D-04: `mtext NAME at (x, y) "codes" h H [w WIDTH] [rot DEG] [attach 1-9]` (text keeps MTEXT codes; style, spacing, background are carried over on edit).
+const MTEXT_RE = new RegExp(
+  String.raw`^mtext\s+([A-Za-z_]\w*)\s+at\s*\(\s*(${NUM})\s*,\s*(${NUM})\s*\)\s+("(?:[^"\\]|\\.)*")\s+h\s+(${NUM})(?:\s+w\s+(${NUM}))?(?:\s+rot\s+(${NUM}))?(?:\s+attach\s+([1-9]))?$`,
+);
 // Note: sketch code carries an image's position/size/rotation only — it has
 // no way to author the actual pixel data, so a new `image` line (one that
 // doesn't match an existing image by name) is a no-op rather than creating a
@@ -86,7 +90,7 @@ export function assignNames(doc: SketchDocument): Map<EntityId, string> {
       used.add(e.name);
     }
   }
-  const counters: Record<Entity["type"], number> = { line: 1, circle: 1, arc: 1, point: 1, ellipse: 1, spline: 1, hatch: 1, insert: 1, polyline: 1, text: 1, image: 1, dimension: 1 };
+  const counters: Record<Entity["type"], number> = { line: 1, circle: 1, arc: 1, point: 1, ellipse: 1, spline: 1, hatch: 1, insert: 1, polyline: 1, text: 1, image: 1, dimension: 1, mtext: 1 };
   for (const e of doc.all()) {
     if (names.has(e.id)) continue;
     const prefix = NAME_PREFIX[e.type];
@@ -99,7 +103,7 @@ export function assignNames(doc: SketchDocument): Map<EntityId, string> {
   return names;
 }
 
-const NAME_PREFIX: Record<Entity["type"], string> = { line: "L", circle: "C", arc: "A", point: "P", ellipse: "E", spline: "S", hatch: "H", insert: "I", polyline: "PL", text: "T", image: "IMG", dimension: "D" };
+const NAME_PREFIX: Record<Entity["type"], string> = { line: "L", circle: "C", arc: "A", point: "P", ellipse: "E", spline: "S", hatch: "H", insert: "I", polyline: "PL", text: "T", image: "IMG", dimension: "D", mtext: "MT" };
 
 /** Next free name for a newly drawn entity (used by the tools). */
 export function nextEntityName(doc: SketchDocument, type: Entity["type"]): string {
@@ -222,6 +226,13 @@ export function toCode(doc: SketchDocument): string {
         `text ${name} at (${fmt(e.at.x)}, ${fmt(e.at.y)}) ${JSON.stringify(e.text)} h ${fmt(e.height)}` +
           (e.rotation ? ` rot ${fmt(toDeg(e.rotation))}` : ""),
       );
+    } else if (e.type === "mtext") {
+      out.push(
+        `mtext ${name} at (${fmt(e.at.x)}, ${fmt(e.at.y)}) ${JSON.stringify(e.text)} h ${fmt(e.height)}` +
+          (e.width ? ` w ${fmt(e.width)}` : "") +
+          (e.rotation ? ` rot ${fmt(toDeg(e.rotation))}` : "") +
+          (e.attachment !== 1 ? ` attach ${e.attachment}` : ""),
+      );
     } else if (e.type === "dimension") {
       out.push(dimensionLine(name, e));
     } else if (e.type === "image") {
@@ -266,6 +277,7 @@ export type ParsedEntity =
   | { type: "polyline"; name: string; points: { x: number; y: number }[]; closed: boolean }
   | { type: "text"; name: string; at: { x: number; y: number }; text: string; height: number; rotation: number }
   | { type: "image"; name: string; insert: { x: number; y: number }; width: number; height: number; rotation: number }
+  | { type: "mtext"; name: string; at: { x: number; y: number }; text: string; height: number; rotation: number; width: number; attachment: number }
   | ParsedDimension;
 
 /** D-02a: a dimension as written in code (angles in degrees there, radians here). Associations (`refs`, `target`) are not expressible and are carried over on edit. */
@@ -481,6 +493,29 @@ export function parseCode(text: string): { entities: ParsedEntity[]; errors: Par
         height,
         rotation: match[6] ? (Number(match[6]) * Math.PI) / 180 : 0,
       };
+    } else if ((match = row.match(MTEXT_RE))) {
+      const height = Number(match[5]);
+      let content = "";
+      try {
+        content = JSON.parse(match[4]) as string;
+      } catch {
+        errors.push({ line: lineNo, message: "mtext content must be a quoted string" });
+        continue;
+      }
+      if (!(height > 0)) {
+        errors.push({ line: lineNo, message: "mtext height must be positive" });
+        continue;
+      }
+      parsed = {
+        type: "mtext",
+        name: match[1],
+        at: { x: Number(match[2]), y: Number(match[3]) },
+        text: content,
+        height,
+        width: match[6] ? Number(match[6]) : 0,
+        rotation: match[7] ? (Number(match[7]) * Math.PI) / 180 : 0,
+        attachment: match[8] ? Number(match[8]) : 1,
+      };
     } else if ((match = row.match(IMAGE_RE))) {
       const width = Number(match[4]);
       const height = Number(match[5]);
@@ -518,7 +553,7 @@ export function parseCode(text: string): { entities: ParsedEntity[]; errors: Par
     }
 
     if (!parsed) {
-      const known = ["line", "circle", "arc", "point", "ellipse", "spline", "hatch", "insert", "polyline", "text", "image", "dimension"];
+      const known = ["line", "circle", "arc", "point", "ellipse", "spline", "hatch", "insert", "polyline", "text", "mtext", "image", "dimension"];
       errors.push({
         line: lineNo,
         message: known.includes(keyword)
@@ -537,6 +572,8 @@ export function parseCode(text: string): { entities: ParsedEntity[]; errors: Par
                       ? "ellipse NAME at (x, y) major (dx, dy) ratio R [from DEG to DEG]"
                     : keyword === "text"
                       ? 'text NAME at (x, y) "content" h HEIGHT [rot DEG]'
+                      : keyword === "mtext"
+                        ? 'mtext NAME at (x, y) "content" h HEIGHT [w WIDTH] [rot DEG] [attach 1-9]'
                       : keyword === "image"
                         ? "image NAME at (x, y) WIDTHxHEIGHT [rot DEG]"
                         : "polyline NAME pts (x, y) (x, y) ... [closed]")
@@ -642,6 +679,17 @@ function sameGeometry(existing: Entity, parsed: ParsedEntity): boolean {
       near(existing.scale ?? 1, parsed.scale ?? 1) &&
       existing.driving === parsed.driving &&
       near(existing.driving ? existing.value : undefined, parsed.driving ? parsed.value : undefined)
+    );
+  }
+  if (existing.type === "mtext" && parsed.type === "mtext") {
+    return (
+      existing.text === parsed.text &&
+      Math.abs(existing.at.x - parsed.at.x) < EPS &&
+      Math.abs(existing.at.y - parsed.at.y) < EPS &&
+      Math.abs(existing.height - parsed.height) < EPS &&
+      Math.abs(existing.width - parsed.width) < EPS &&
+      Math.abs(existing.rotation - parsed.rotation) < EPS &&
+      existing.attachment === parsed.attachment
     );
   }
   if (existing.type === "text" && parsed.type === "text") {
@@ -755,6 +803,19 @@ export function toEntity(parsed: ParsedEntity, id: EntityId, layer?: string, bul
         driving: parsed.driving,
         ...(parsed.value !== undefined ? { value: parsed.value } : {}),
       };
+    case "mtext":
+      return {
+        id,
+        type: "mtext",
+        name: parsed.name,
+        ...layerProp,
+        at: parsed.at,
+        text: parsed.text,
+        height: parsed.height,
+        width: parsed.width,
+        rotation: parsed.rotation,
+        attachment: parsed.attachment,
+      };
     case "text":
       return {
         id,
@@ -857,6 +918,11 @@ export function diffToCommands(doc: SketchDocument, parsed: ParsedEntity[]): Com
           if (existing.targets) updated.targets = existing.targets;
           if (existing.overrides) updated.overrides = existing.overrides;
           if (existing.expression) updated.expression = existing.expression;
+        }
+        if (existing.type === "mtext" && updated.type === "mtext") {
+          for (const k of ["style", "lineSpacing", "background"] as const) {
+            if (existing[k] !== undefined) (updated as unknown as Record<string, unknown>)[k] = existing[k];
+          }
         }
         if (existing.type === "text" && updated.type === "text") {
           // D-01: style, alignment, width factor and oblique have no sketch-code word either.
