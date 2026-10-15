@@ -20,6 +20,7 @@ import {
   distToSegment,
   polylineSegments,
   constraintAnchors,
+  entityDofStates,
   entitiesInBox,
   entitiesCrossedByFence,
   entitiesInPolygon,
@@ -422,6 +423,7 @@ export function Viewport() {
       trackRays: activeTool ? trackRaysRef.current : [],
       relativeZero: activeTool ? relativeZeroRef.current : null,
       constraintGlyphs: constraintGlyphs(),
+      dofStates: state.showDofColours ? entityDofStates(doc.solverConstraints(), bus.lastSolve) : undefined,
       acquiredPoints: activeTool ? acquiredRef.current : [],
       moveOffset:
         interaction.kind === "move" ? { dx: interaction.dx, dy: interaction.dy } : null,

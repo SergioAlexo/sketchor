@@ -513,7 +513,13 @@ constraint holds and a double-click removes it.
 with optional `axis`, `radius`, `angle`) and `SketchDocument.solverConstraints()`
 (explicit + derived) is what the bus gives the solver; there is no second
 record. Editing `value` moves the geometry in the same undo step. Not yet
-built: the value-edit UI, inference while drawing (T-43), DOF colouring (T-44).
+built: the value-edit UI.
+
+**Inference and DOF feedback** (T-43/T-44): `inference.ts` (`inferConstraints(added, existing)`) reads the
+relationships a finished drawing already has to 1e-6 mm (coincident, horizontal/vertical, midpoint, point-on-curve,
+perpendicular, tangent, parallel) rather than tracking snap provenance; `tools/autoConstrain.ts` appends them to the
+drawing tools' `execute/commit` batch when the AUTOCON toggle is on (Ctrl on the click suppresses). `SolveResult.underDefined`
++ `dofState.ts` give each constrained entity a state the renderer tints (`canvas.dofUnder`/`dofConflict` tokens).
 
 ## Typed input and the command line
 

@@ -991,6 +991,9 @@ interface AppState {
   showConstraintGlyphs: boolean;
   /** AUTOCON (T-43): drawing tools add the constraints their snaps imply. Off by default until K-03's Sketch mode. */
   autoConstrain: boolean;
+  /** T-44: tint constrained geometry by how much freedom it has left. */
+  showDofColours: boolean;
+  setShowDofColours: (v: boolean) => void;
   setAutoConstrain: (v: boolean) => void;
   setShowConstraintGlyphs: (v: boolean) => void;
   /** The constraint the pointer is over in the panel — its geometry is highlighted on the canvas. */
@@ -1113,6 +1116,8 @@ export const useApp = create<AppState>((set, get) => ({
   toggleCommandLine: () => set((s) => ({ commandLine: !s.commandLine })),
   showConstraintGlyphs: true,
   autoConstrain: false,
+  showDofColours: true,
+  setShowDofColours: (v) => set({ showDofColours: v }),
   setAutoConstrain: (v) => set({ autoConstrain: v }),
   setShowConstraintGlyphs: (v) => set({ showConstraintGlyphs: v }),
   highlightedConstraint: null,

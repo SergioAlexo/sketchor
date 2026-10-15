@@ -134,6 +134,12 @@
             "crossingMarker": {
               "$ref": "#/$defs/colour"
             },
+            "dofUnder": {
+              "$ref": "#/$defs/colour"
+            },
+            "dofConflict": {
+              "$ref": "#/$defs/colour"
+            },
             "origin": {
               "$ref": "#/$defs/colour"
             },

@@ -46,6 +46,8 @@ export interface SolveResult {
   conflicts: ConstraintId[];
   /** Constraints that add no information — satisfied, but implied by the others. */
   redundant: ConstraintId[];
+  /** Entities with a parameter the constraints leave free to move (T-44); fixed and fully pinned ones are absent. */
+  underDefined: EntityId[];
   /** Largest residual left, in mm or radians; below `tolerance` means solved. */
   residual: number;
   iterations: number;
@@ -166,6 +168,18 @@ export function solveSketch(
   const violated = new Set<ConstraintId>();
   for (const r of constraintRows) if (Math.abs(r.residual.v) > Math.max(tolerance, 1e-6)) violated.add(r.constraint);
 
+  const under = underDefinedColumns(constraintRows, column, free.length);
+  const underDefined: EntityId[] = [];
+  for (const [id, ep] of model.byEntity) {
+    for (let k = ep.start; k < ep.start + ep.count; k++) {
+      const col = column.get(k);
+      if (col !== undefined && under.has(col)) {
+        underDefined.push(id);
+        break;
+      }
+    }
+  }
+
   const status: SolveStatus =
     violated.size > 0 ? "over-constrained" : dof === 0 ? "fully-constrained" : "under-constrained";
 
@@ -174,6 +188,7 @@ export function solveSketch(
     status,
     dof,
     conflicts: [...violated],
+    underDefined,
     redundant: violated.size === 0 ? redundantConstraints(constraintRows, column, free.length, rank) : [],
     residual,
     iterations,
@@ -281,6 +296,12 @@ export function jacobianRank(rows: readonly Row[], column: ReadonlyMap<number, n
 }
 
 function rankOf(m: number[][], n: number): number {
+  return reduce(m, n).rank;
+}
+
+/** Gauss–Jordan elimination in place; returns the rank and which column each independent row pivots on. */
+function reduce(m: number[][], n: number): { rank: number; pivots: number[]; epsilon: number } {
+  const pivots: number[] = [];
   const scale = Math.max(1e-12, ...m.flat().map(Math.abs));
   const epsilon = scale * 1e-9;
   let rank = 0;
@@ -294,6 +315,7 @@ function rankOf(m: number[][], n: number): number {
       }
     }
     if (pivot < 0) continue;
+    pivots.push(col);
     [m[rank], m[pivot]] = [m[pivot], m[rank]];
     for (let r = 0; r < m.length; r++) {
       if (r === rank || m[r][col] === 0) continue;
@@ -302,7 +324,33 @@ function rankOf(m: number[][], n: number): number {
     }
     rank += 1;
   }
-  return rank;
+  return { rank, pivots, epsilon };
+}
+
+/**
+ * Columns (solver parameters) the constraints do not pin down: those that
+ * can still move along some direction the equations say nothing about.
+ * With the Jacobian in reduced row-echelon form, a non-pivot column is
+ * free outright, and a pivot column is free if its row still leans on a
+ * free column — i.e. it is not determined by the constraints alone.
+ */
+export function underDefinedColumns(rows: readonly Row[], column: ReadonlyMap<number, number>, n: number): Set<number> {
+  const m = denseRows(rows, column, n);
+  const { rank, pivots, epsilon } = reduce(m, n);
+  const isPivot = new Set(pivots);
+  const out = new Set<number>();
+  for (let c = 0; c < n; c++) if (!isPivot.has(c)) out.add(c);
+  for (let r = 0; r < rank; r++) {
+    const lead = Math.abs(m[r][pivots[r]]);
+    for (const f of out) {
+      if (isPivot.has(f)) continue;
+      if (Math.abs(m[r][f]) > Math.max(epsilon, lead * 1e-9)) {
+        out.add(pivots[r]);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 /**

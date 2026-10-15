@@ -16,6 +16,7 @@ export * from "./constraints";
 export * from "./constraintBuilder";
 export * from "./constraintDisplay";
 export * from "./inference";
+export * from "./dofState";
 export * from "./solver";
 export * from "./connectivity";
 export * from "./document";

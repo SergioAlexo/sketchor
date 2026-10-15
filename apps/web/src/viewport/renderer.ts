@@ -49,6 +49,8 @@ export interface RenderUiState {
   relativeZero: Point | null;
   /** Constraint marks (T-41): one per place a constraint holds, clickable in the viewport. */
   constraintGlyphs: readonly { at: Point; glyph: string; state: "normal" | "conflict" | "highlight" }[];
+  /** T-44: constrained geometry's freedom — blue under-defined, red conflicting; fully defined keeps its colour. Absent/empty = off. */
+  dofStates?: ReadonlyMap<EntityId, "under" | "full" | "conflict">;
   /** Live offset while dragging a selection. */
   moveOffset: { dx: number; dy: number } | null;
   /** Active measure-tool result overlay, if any. */
@@ -112,6 +114,12 @@ export function setCanvasTheme(tokens: CanvasTokens): void {
   COLORS = tokens;
 }
 
+/** T-44: the tint for an entity's DOF state, if any. */
+function dofColour(ui: RenderUiState, id: EntityId): string | null {
+  const s = ui.dofStates?.get(id);
+  return s === "under" ? COLORS.dofUnder : s === "conflict" ? COLORS.dofConflict : null;
+}
+
 function fmtNum(n: number): string {
   const r = Math.round(n * 100) / 100;
   return String(Object.is(r, -0) ? 0 : r);
@@ -166,7 +174,7 @@ export function render(
           ? COLORS.hover
           : isFreeEndpoint
             ? COLORS.connectivityHint
-            : (shown.color ?? COLORS.entity);
+            : dofColour(ui, entity.id) ?? (shown.color ?? COLORS.entity);
     // A locked layer is background, not geometry you are working on.
     if (locked) ctx.globalAlpha = 0.45;
     if (shown.fill) drawHatch(ctx, view, shown, shown.fill);

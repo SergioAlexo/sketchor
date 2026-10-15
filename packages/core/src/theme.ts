@@ -50,6 +50,10 @@ export interface CanvasTokens {
   closedRegionFill: string;
   duplicateMarker: string;
   crossingMarker: string;
+  /** T-44: geometry the constraints leave free to move. */
+  dofUnder: string;
+  /** T-44: geometry held by constraints that cannot all hold. */
+  dofConflict: string;
   origin: string;
   originOff: string;
   axisX: string;
@@ -139,6 +143,8 @@ export const DEFAULT_DARK: ThemeTokens = {
     closedRegionFill: "rgba(180, 190, 205, 0.16)",
     duplicateMarker: "#f0b968",
     crossingMarker: "#c77dff",
+    dofUnder: "#38b6ff",
+    dofConflict: "#ff4d4d",
     origin: "#9aa4b8",
     originOff: "#4a5165",
     axisX: "#e06c75",
@@ -180,6 +186,8 @@ export const DEFAULT_LIGHT: ThemeTokens = {
     closedRegionFill: "rgba(60, 70, 90, 0.08)",
     duplicateMarker: "#b5731f",
     crossingMarker: "#7a3fc2",
+    dofUnder: "#0b6fd0",
+    dofConflict: "#d02020",
     origin: "#4b4f5a",
     originOff: "#b7bcc6",
     axisX: "#c0392b",

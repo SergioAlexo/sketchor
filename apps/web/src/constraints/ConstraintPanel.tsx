@@ -5,6 +5,7 @@ import {
   constraintEntityIds,
   constraintOptions,
   newConstraintId,
+  resolveConflictCommand,
   CONSTRAINT_LABELS,
   type ConstraintKind,
 } from "@sketchor/core";
@@ -68,6 +69,11 @@ export function ConstraintPanel({ onClose }: { onClose: () => void }) {
   const solve = useMemo(() => bus.lastSolve, [revision]); // eslint-disable-line react-hooks/exhaustive-deps
   const conflicts = new Set(solve?.conflicts ?? []);
   const redundant = new Set(solve?.redundant ?? []);
+  const showDof = useApp((s) => s.showDofColours);
+  const setShowDof = useApp((s) => s.setShowDofColours);
+  // Conflicts can include constraints derived from driving dimensions, which doc.constraints() doesn't list.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const conflicting = useMemo(() => doc.solverConstraints().filter((c) => conflicts.has(c.id)), [revision, solve]);
 
   const apply = (kind: ConstraintKind) => {
     const result = buildConstraints(kind, entities, { newId: newConstraintId });
@@ -120,7 +126,38 @@ export function ConstraintPanel({ onClose }: { onClose: () => void }) {
           <input type="checkbox" checked={showGlyphs} onChange={(e) => setShowGlyphs(e.target.checked)} data-testid="toggle-glyphs" />
           Glyphs
         </label>
+        <label title="Tint constrained geometry: blue = still free to move, red = in conflict">
+          <input type="checkbox" checked={showDof} onChange={(e) => setShowDof(e.target.checked)} data-testid="toggle-dof-colours" />
+          DOF colours
+        </label>
       </div>
+
+      {conflicting.length > 0 && (
+        <div className="constraint-conflicts" data-testid="constraint-conflicts">
+          <div className="constraint-listhead">
+            <span>{conflicting.length} conflicting</span>
+          </div>
+          {conflicting.map((c) => {
+            const isDim = c.id.startsWith("dim:");
+            const fix = resolveConflictCommand(c.id, (id) => doc.get(id));
+            return (
+              <div key={c.id} className="constraint-row conflict" onPointerEnter={() => setHighlight(c.id)} data-testid={`conflict-row-${c.id}`}>
+                <span className="constraint-glyph">{CONSTRAINT_GLYPHS[c.type]}</span>
+                <span className="constraint-name">{describe(c)}</span>
+                <button
+                  className="btn ghost sm"
+                  disabled={!fix}
+                  title={isDim ? "Keep the dimension but stop it driving the geometry" : "Remove this constraint"}
+                  data-testid={`conflict-fix-${c.id}`}
+                  onClick={() => fix && bus.execute(fix)}
+                >
+                  {isDim ? "Make reference" : "Delete"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="constraint-list" onPointerLeave={() => setHighlight(null)}>
         {constraints.length === 0 && <div className="constraint-empty">Select geometry above and apply a constraint.</div>}
