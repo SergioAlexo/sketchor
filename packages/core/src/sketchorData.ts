@@ -34,6 +34,10 @@ export interface SketchorDocData {
   constraints?: Constraint[];
   params?: TableRecord[];
   blocks?: Record<string, BlockExtras>;
+  /** D-10: dimension fields DXF has no group for (associations, driving value, per-dimension overrides…), by entity id. */
+  dims?: Record<string, Record<string, unknown>>;
+  /** D-10: full `dimStyles` records (child styles, arrow kinds, colours…). */
+  dimStyles?: TableRecord[];
 }
 
 export const SKETCHOR_DICT_KEY = "SKETCHOR_DATA";

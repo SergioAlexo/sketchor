@@ -124,7 +124,7 @@ function serialize(format: SaveFormat): string | Uint8Array {
     // declared unit so the file's numbers represent real-world size.
     const insUnits = displayUnitToDxfCode(displayUnit);
     const scale = factorFromMm(displayUnit);
-    return r12 ? entitiesToDxf(entities, insUnits, scale, keepBlocks ? blocks : undefined) : entitiesToDxf2018(entities, { insUnits, scale, textStyles: doc.records("textStyles") as TextStyle[], ...(keepBlocks ? { blocks } : {}), groups: doc.groups(), constraints: doc.constraints(), params: doc.records("params"), foreign: doc.records("foreign") as ForeignRecord[] });
+    return r12 ? entitiesToDxf(entities, insUnits, scale, keepBlocks ? blocks : undefined) : entitiesToDxf2018(entities, { insUnits, scale, textStyles: doc.records("textStyles") as TextStyle[], dimStyles: doc.records("dimStyles"), ...(doc.settings.currentDimStyle ? { currentDimStyle: doc.settings.currentDimStyle } : {}), ...(keepBlocks ? { blocks } : {}), groups: doc.groups(), constraints: doc.constraints(), params: doc.records("params"), foreign: doc.records("foreign") as ForeignRecord[] });
   }
   // True physical size: inches only when the tab works in inches/feet.
   const displayUnit = useApp.getState().displayUnit;

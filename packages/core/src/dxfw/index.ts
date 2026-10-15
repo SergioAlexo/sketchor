@@ -1,8 +1,12 @@
 import { foreignClassText, foreignEntityText, type ForeignRecord } from "../foreign";
-import { explodeDimensions } from "../dimensions/explode";
+import { explodeDimension, explodeDimensions } from "../dimensions/explode";
+import { layoutOf } from "../dimensions/resolve";
+import { dimensionRecordText, hasDimensionRecord } from "../dimensions/dxfDim";
+import { dimStyleToDxf } from "../dimensions/dxfVars";
+import { DIM_STYLE_PRESETS, DEFAULT_DIM_STYLE, dimStyleOf, dimStyleRecord } from "../dimensions/style";
 import { activeDimHost, styleOnlyHost } from "../dimensions/context";
 import { STANDARD_TEXT_STYLE, type TextStyle } from "../textStyle";
-import type { Entity } from "../entities";
+import type { DimensionEntity, Entity } from "../entities";
 import { layerOf } from "../entities";
 import type { BlockDefinition } from "../blocks/types";
 import { scaleBlockDefinition, scaleEntityKeepingInserts } from "../dxf";
@@ -10,7 +14,8 @@ import { blockDefinitions2018, insertEntity2018, planBlockHandles, type BlockHan
 import { boundsOf } from "../dxf";
 import { CONTINUOUS, builtinLinetype } from "../linetypes";
 import { HandleAllocator } from "./handles";
-import { entityDxf2018 } from "./entities";
+import { entityDxf2018, entityHead } from "./entities";
+import { entityXdataText } from "../sketchorData";
 import { n, pair, unitsAndExtentsHeader } from "./write";
 import type { Group } from "../groups";
 import type { Constraint } from "../constraints";
@@ -122,12 +127,18 @@ function appidEntry(h: string, owner: string, name: string): string {
   return symbolRecordHead("APPID", h, owner, "AcDbRegAppTableRecord") + `2\n${name}\n70\n0\n`;
 }
 
-function dimstyleEntry(h: string, owner: string): string {
+/** One DIMSTYLE record (D-10): the style's DIMVARs in AutoCAD's group codes. */
+function dimstyleEntry(h: string, owner: string, name: string, vars: [number, number | string][] = []): string {
   // DIMSTYLE table entries are the one DXF record that uses group 105 for
   // its handle instead of 5 — a documented quirk, not a typo.
+  // Groups 70-139 and 170+ are integers; 3-7 are text; the rest are reals.
+  const text = vars
+    .map(([code, v]) => (typeof v === "string" ? `${code}\n${v}\n` : (code >= 70 && code < 140) || code >= 170 ? `${code}\n${Math.round(v)}\n` : pair(code, v)))
+    .join("");
   return (
     `0\nDIMSTYLE\n105\n${h}\n330\n${owner}\n100\nAcDbSymbolTableRecord\n100\nAcDbDimStyleTableRecord\n` +
-    `2\nStandard\n70\n0\n`
+    `2\n${name}\n70\n0\n` +
+    text
   );
 }
 
@@ -142,7 +153,7 @@ function blockRecordEntry(h: string, owner: string, name: string): string {
   return symbolRecordHead("BLOCK_RECORD", h, owner, "AcDbBlockTableRecord") + `2\n${name}\n`;
 }
 
-function header(insUnits: number, bounds: { minX: number; minY: number; maxX: number; maxY: number }, seed: string): string {
+function header(insUnits: number, bounds: { minX: number; minY: number; maxX: number; maxY: number }, seed: string, dimStyle = "Standard"): string {
   return (
     `0\nSECTION\n2\nHEADER\n` +
     `9\n$ACADVER\n1\nAC1032\n` +
@@ -154,12 +165,12 @@ function header(insUnits: number, bounds: { minX: number; minY: number; maxX: nu
     `9\n$CLAYER\n8\n0\n` +
     `9\n$TEXTSTYLE\n7\nStandard\n` +
     `9\n$CMLSTYLE\n2\nStandard\n` +
-    `9\n$DIMSTYLE\n2\nStandard\n` +
+    `9\n$DIMSTYLE\n2\n${dimStyle}\n` +
     `0\nENDSEC\n`
   );
 }
 
-function tablesSection(plan: Plan, layers: string[], blockDefs: readonly BlockDefinition[], textStyles: readonly TextStyle[] = []): string {
+function tablesSection(plan: Plan, layers: string[], blockDefs: readonly BlockDefinition[], textStyles: readonly TextStyle[] = [], dimStyles: readonly { name: string; vars: [number, number | string][] }[] = []): string {
   const { h, layerHandles, linetypeHandles } = plan;
   const layerEntries = layers.map((name) => layerEntry(layerHandles.get(name)!, h.layerTable, name));
   const ltypeEntries = [...linetypeHandles].map(([name, handle]) => ltypeEntry(handle, h.ltypeTable, name));
@@ -178,7 +189,10 @@ function tablesSection(plan: Plan, layers: string[], blockDefs: readonly BlockDe
       appidEntry(h.acadAppid, h.appidTable, "ACAD"),
       appidEntry(h.sketchorAppid, h.appidTable, "SKETCHOR"),
     ]) +
-    table("DIMSTYLE", h.dimstyleTable, [dimstyleEntry(h.standardDimstyle, h.dimstyleTable)], `100\nAcDbDimStyleTable\n71\n1\n`) +
+    table("DIMSTYLE", h.dimstyleTable, [
+      dimstyleEntry(h.standardDimstyle, h.dimstyleTable, "Standard", dimStyles.find((d) => d.name === "Standard")?.vars),
+      ...dimStyles.filter((d) => d.name !== "Standard").map((d) => dimstyleEntry(plan.alloc.alloc(), h.dimstyleTable, d.name, d.vars)),
+    ], `100\nAcDbDimStyleTable\n71\n${dimStyles.length}\n`) +
     table("BLOCK_RECORD", h.blockRecordTable, [
       blockRecordEntry(h.modelSpaceBlockRecord, h.blockRecordTable, "*Model_Space"),
       blockRecordEntry(h.paperSpaceBlockRecord, h.blockRecordTable, "*Paper_Space"),
@@ -271,6 +285,9 @@ export interface DxfWriteOptions2018 {
   blocks?: readonly BlockDefinition[];
   /** D-01: the drawing's `textStyles` records, written as STYLE table entries (TEXT group 7 names them). */
   textStyles?: readonly TextStyle[];
+  /** D-10: the drawing's `dimStyles` records (DIMSTYLE table entries; the full record also rides in the SKETCHOR data) and the current one (`$DIMSTYLE`). */
+  dimStyles?: readonly TableRecord[];
+  currentDimStyle?: string;
   /** X-09: unmodelled entities from an imported DXF, written back unchanged (new handles). Only those read in the output unit are written. */
   foreign?: readonly ForeignRecord[];
   /** X-05/X-08: the drawing's groups (written as DXF GROUP objects and, exactly, in the SKETCHOR record), constraints and `params` table. Not scaled: constraint values stay in mm. */
@@ -287,12 +304,37 @@ export interface DxfWriteOptions2018 {
  */
 export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions2018 = {}): string {
   const { insUnits = 0, scale = 1 } = options;
-  // D-02a: dimensions are written as their parts until D-10 adds real DIMENSION records.
-  const entities = explodeDimensions(entitiesIn);
-  const blockHost = styleOnlyHost(activeDimHost());
-  const blockDefs = (options.blocks ?? [])
-    .map((d) => (d.entities.some((e) => e.type === "dimension") ? { ...d, entities: explodeDimensions(d.entities, blockHost) } : d))
-    .map((d) => (scale !== 1 ? scaleBlockDefinition(d, scale) : d));
+  // D-10: dimensions with a DXF record type (linear, aligned, angular, radial, diametric, ordinate) are written as DIMENSION plus an anonymous `*D<n>` block holding their laid-out parts, so readers that do not recompute still draw our rendering; the rest (arc length, jogged) go in as their parts.
+  const dimHost = activeDimHost();
+  const dimBlocks: BlockDefinition[] = [];
+  const dimInfo = new Map<string, { block: string; style: string; textAt: { x: number; y: number }; measure: number }>();
+  const entities: Entity[] = [];
+  for (const e of entitiesIn) {
+    if (e.type !== "dimension") {
+      entities.push(e);
+      continue;
+    }
+    if (!hasDimensionRecord(e)) {
+      entities.push(...explodeDimensions([e]));
+      continue;
+    }
+    const layout = layoutOf(e, dimHost);
+    const block = `*D${dimBlocks.length + 1}`;
+    dimBlocks.push({ name: block, basePoint: { x: 0, y: 0 }, entities: explodeDimension(e, dimHost), attributeDefs: [], explodable: true, scaleUniformly: false });
+    const lengthy = e.kind !== "angular2l" && e.kind !== "angular3p";
+    dimInfo.set(e.id, {
+      block,
+      style: e.style || "Standard",
+      textAt: layout.text ? { x: layout.text.at.x * scale, y: layout.text.at.y * scale } : { x: e.defPoints[e.defPoints.length - 1].x * scale, y: e.defPoints[e.defPoints.length - 1].y * scale },
+      measure: layout.measure * (lengthy ? scale : 1),
+    });
+    entities.push(e);
+  }
+  const blockHost = styleOnlyHost(dimHost);
+  const blockDefs = [
+    ...(options.blocks ?? []).map((d) => (d.entities.some((e) => e.type === "dimension") ? { ...d, entities: explodeDimensions(d.entities, blockHost) } : d)),
+    ...dimBlocks,
+  ].map((d) => (scale !== 1 ? scaleBlockDefinition(d, scale) : d));
   const defByName = new Map(blockDefs.map((d) => [d.name, d]));
   const scaled = scale !== 1 ? entities.map((e) => scaleEntityKeepingInserts(e, scale)) : entities;
   const everyEntity = [...scaled, ...blockDefs.flatMap((d) => d.entities)];
@@ -332,12 +374,23 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
     if (e.type === "insert") {
       const def = defByName.get(e.block);
       text = def ? insertEntity2018(e, def, h, owner, next) : ""; // an insert of an unknown block draws nothing
+    } else if (e.type === "dimension") {
+      const info = dimInfo.get(e.id);
+      text = info ? `0\nDIMENSION\n` + entityHead(h, owner, e) + dimensionRecordText(e, { blockName: info.block, style: info.style, textAt: info.textAt, measure: info.measure }) + entityXdataText(e) : "";
     } else {
       text = entityDxf2018(e, h, owner, next);
     }
     const reactors = reactorsOf.get(e.id);
     return reactors && text ? text.replace(`5\n${h}\n`, `5\n${h}\n102\n{ACAD_REACTORS\n${reactors.map((r) => `330\n${r}\n`).join("")}102\n}\n`) : text;
   };
+  // D-10: DIMSTYLE records — every record of the table, plus any style a dimension names that the table lacks (a built-in preset's values, else the defaults).
+  const styleRecords: TableRecord[] = [...(options.dimStyles ?? [])];
+  for (const info of dimInfo.values()) {
+    if (styleRecords.some((r) => r.name === info.style)) continue;
+    const preset = DIM_STYLE_PRESETS.find((p) => p.name === info.style);
+    styleRecords.push(preset ? dimStyleRecord(preset) : { ...dimStyleRecord(DEFAULT_DIM_STYLE), name: info.style });
+  }
+  const dimStyleVars = styleRecords.map((r) => ({ name: r.name, vars: dimStyleToDxf(dimStyleOf(r), scale) }));
   const userBlocks = blockDefinitions2018(blockDefs, plan.blocks, next, write);
 
   // Infinite construction lines are drawing aids, not geometry: they stay out of the file (same rule as R12).
@@ -356,17 +409,29 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
     if (d.constraints?.length) x.constraints = [...d.constraints];
     if (Object.keys(x).length) blockExtras[d.name] = x;
   }
+  // D-10: exact dimension fields and full style records (what DXF groups cannot hold) ride in the SKETCHOR record, keyed by the ids XDATA restores.
+  const dimsData: Record<string, Partial<DimensionEntity>> = {};
+  for (const e of entitiesIn) {
+    if (e.type !== "dimension" || !dimInfo.has(e.id)) continue;
+    const { id, type, name, layer, color, fill, linetype, lineweight, construction, ...rest } = e;
+    void id; void type; void name; void layer; void color; void fill; void linetype; void lineweight; void construction;
+    dimsData[e.id] = rest;
+  }
   const docData: SketchorDocData = { v: 1 };
+  if (Object.keys(dimsData).length) docData.dims = dimsData;
+  if (styleRecords.length) docData.dimStyles = styleRecords.map((r) => ({ ...r }));
   if (groups.length) docData.groups = [...groups];
   if (options.constraints?.length) docData.constraints = [...options.constraints];
   if (options.params?.length) docData.params = [...options.params];
   if (Object.keys(blockExtras).length) docData.blocks = blockExtras;
   const objects = objectsSection(plan, groupsPart, Object.keys(docData).length > 1 ? docData : null);
 
+  // Tables allocate handles for their extra records, so build them before $HANDSEED is read.
+  const tablesText = tablesSection(plan, layers, blockDefs, options.textStyles, dimStyleVars);
   return (
-    header(insUnits, bounds, plan.alloc.seed()) +
+    header(insUnits, bounds, plan.alloc.seed(), options.currentDimStyle || "Standard") +
     `0\nSECTION\n2\nCLASSES\n${foreign.map(foreignClassText).join("")}0\nENDSEC\n` +
-    tablesSection(plan, layers, blockDefs, options.textStyles) +
+    tablesText +
     blocksSection(plan, userBlocks) +
     `0\nSECTION\n2\nENTITIES\n${entitiesText}0\nENDSEC\n` +
     objects +

@@ -86,7 +86,7 @@ export function blockDefinitions2018(
       const attdefs = d.attributeDefs.map((a) => attdef2018(a, alloc(), h.record)).join("");
       return (
         `0\nBLOCK\n5\n${h.begin}\n330\n${h.record}\n100\nAcDbEntity\n8\n0\n100\nAcDbBlockBegin\n` +
-        `2\n${d.name}\n70\n${d.attributeDefs.length > 0 ? 2 : 0}\n` +
+        `2\n${d.name}\n70\n${(d.name.startsWith("*D") ? 1 : 0) | (d.attributeDefs.length > 0 ? 2 : 0)}\n` +
         pair(10, d.basePoint.x) + pair(20, d.basePoint.y) + pair(30, 0) +
         `3\n${d.name}\n1\n\n` +
         body +

@@ -1,6 +1,6 @@
 import { parseDxfHatch } from "./hatch/hatchDxf";
 import { hatchArt } from "./hatch/render";
-import type { Entity, InsertEntity, SplineEntity } from "./entities";
+import type { DimensionEntity, Entity, InsertEntity, SplineEntity } from "./entities";
 import type { AttributeDef, BlockDefinition } from "./blocks/types";
 import { blockWouldCycle } from "./blocks/evaluate";
 import { imageCorners, newEntityId, polylineSegments, textCorners, transformed } from "./entities";
@@ -17,6 +17,10 @@ import { SKETCHOR_DICT_KEY, decodeDocData, parseEntityXdata, type SketchorDocDat
 import { newGroupId, type Group } from "./groups";
 import type { Constraint } from "./constraints";
 import type { TableRecord } from "./tables";
+import { dimensionFromRecord } from "./dimensions/dxfDim";
+import { dimStyleFromDxf } from "./dimensions/dxfVars";
+import { layoutDimension } from "./dimensions/layout";
+import { DEFAULT_DIM_STYLE } from "./dimensions/style";
 import type { ForeignRecord } from "./foreign";
 
 /** Minimal XML text-content escape for the thumbnail SVG. */
@@ -612,6 +616,8 @@ export interface DxfParseResult {
   unitSource: DxfUnitSource;
   /** D-01: the file's STYLE table as text styles (heights in mm); empty when it only has Standard defaults. */
   textStyles: TextStyle[];
+  /** D-10: the DIMSTYLE table as `dimStyles` records (lengths in mm), with the exact records of a Sketchor-written file where present. */
+  dimStyles: TableRecord[];
   /** X-05/X-08: groups (from the SKETCHOR record, else DXF GROUP objects), and the constraints / `params` records a Sketchor-written file carries. Entity ids match `entities`. */
   groups: Group[];
   constraints: Constraint[];
@@ -626,6 +632,29 @@ export function fontFromStyleFile(file: string): string {
   const m = /^(.*)\.(shx|ttf|otf|ttc)$/i.exec(f);
   if (!m || !m[1]) return "sketchor-stroke";
   return m[2].toLowerCase() === "shx" ? (m[1].toLowerCase() === "txt" ? "sketchor-stroke" : `shx:${m[1].toLowerCase()}`) : `ttf:${m[1]}`;
+}
+
+/** D-10: does the record's own measurement (group 42; mm/file units, or radians/degrees for angles) match the geometry its definition points describe? True when the file gives none. */
+function dimensionAgrees(e: Omit<DimensionEntity, "id">, measure: number | null): boolean {
+  if (measure === null) return true;
+  const lay = layoutDimension({ id: "_", ...e }, DEFAULT_DIM_STYLE, { pts: e.defPoints });
+  if (!Number.isFinite(lay.measure)) return false;
+  const close = (a: number, b: number) => Math.abs(a - b) <= 1e-3 * Math.max(1, Math.abs(a), Math.abs(b));
+  const angular = e.kind === "angular2l" || e.kind === "angular3p";
+  return angular ? close(lay.measure, measure) || close((lay.measure * 180) / Math.PI, measure) : close(lay.measure, measure);
+}
+
+/** D-10: the DIMSTYLE table as `dimStyles` records, lengths in mm (`k` mm per file unit). A bare default Standard carries no information. */
+function collectDimStyles(pairs: Pair[], k: number): TableRecord[] {
+  const out: TableRecord[] = [];
+  for (const r of collectSectionRecords(pairs, "TABLES")) {
+    if (r.type !== "DIMSTYLE") continue;
+    const name = str(r, 2, "");
+    if (!name) continue;
+    const rec = dimStyleFromDxf(name, r.pairs, k);
+    out.push(rec);
+  }
+  return out;
 }
 
 /** The STYLE table (TABLES section) as {@link TextStyle}s, scaled by `k` (mm per file unit). */
@@ -1071,6 +1100,14 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
         break;
       }
       case "DIMENSION": {
+        // D-10: a DIMENSION of a kind we model comes in as a real dimension, recomputed from its definition points and style. When the file's own measurement (group 42) disagrees with what those points give, the point layout was misread — fall through to the `*D` block, which holds exactly what the file's author drew.
+        if (ctx.keep) {
+          const d = dimensionFromRecord(raw, 1);
+          if (d && dimensionAgrees(d.entity, d.measure)) {
+            entities.push({ id: newEntityId(), ...d.entity, ...(layer && layer !== "0" ? { layer } : {}) } as Entity);
+            break;
+          }
+        }
         // F-04: with blocks expanded (thumbnails), a DIMENSION is drawn from the anonymous `*D` block that
         // holds its already-laid-out lines, arrows and text, at world position (no INSERT transform).
         const dimBlock = ctx.keep ? undefined : ctx.blocks.get(str(raw, 2, ""));
@@ -1180,9 +1217,24 @@ export function parseDxf(text: string, options: DxfParseOptions = {}): DxfParseR
     }
   }
 
+  // D-10: a Sketchor-written file restores each dimension's exact fields (associations, driving value, overrides) and the full style records.
+  if (sketchor.data?.dims) {
+    for (const e of entities) {
+      const x = e.type === "dimension" ? sketchor.data.dims[e.id] : undefined;
+      if (x) Object.assign(e, x);
+    }
+  }
+  const dimStyles = collectDimStyles(allPairs, MM_PER_INSUNIT[insUnits] || 1);
+  for (const exact of sketchor.data?.dimStyles ?? []) {
+    const i = dimStyles.findIndex((r) => r.name === exact.name);
+    if (i >= 0) dimStyles[i] = exact;
+    else dimStyles.push(exact);
+  }
+
   return {
     entities,
     blocks: blockDefs,
+    dimStyles: dimStyles.filter((r) => !(r.name === "Standard" && Object.keys(r).length === 1)),
     warnings: dedupe(warnings),
     report: buildImportReport(raws),
     insUnits,

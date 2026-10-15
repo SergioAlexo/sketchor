@@ -213,7 +213,7 @@ describe("style manager model", () => {
     const existing = [{ name: "A", textHeight: 4 }];
     const cmd = newStyleCommand(existing, existing[0], "B")!;
     expect(cmd.type).toBe("put-table-record");
-    expect((cmd as { record: { name: string; textHeight: number } }).record).toMatchObject({ name: "B", textHeight: 4 });
+    expect((cmd as unknown as { record: { name: string; textHeight: number } }).record).toMatchObject({ name: "B", textHeight: 4 });
     expect(newStyleCommand(existing, existing[0], "A")).toBeNull();
     expect(newStyleCommand(existing, existing[0], "  ")).toBeNull();
   });
