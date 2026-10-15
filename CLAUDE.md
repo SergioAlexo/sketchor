@@ -62,6 +62,10 @@ smart-DIM classification, baseline/continue, QDIM); `tools/dimTools.ts` only
 collects picks (tool `dim` = smart DIM; DLI/DAL/DAN/DRA/DDI/DAR/DOR/DJO/DBA/DCO/QDIM
 on the command line). D-10: DXF writes real DIMENSION + `*D` block + DIMSTYLE (`dxfDim.ts`, `dxfVars.ts`), exact data in the SKETCHOR record. D-03: `DimStyle` is the full DIMVAR set (`style.ts`; the manager form is data in `styleFields.ts`, edits go through `styleOps.ts` + `put-table-record`; `dimstyle`/`ddim` opens `dimstyles/DimStyleManager.tsx`); child styles via `dimStyleOf(rec, overrides, kind)`.
 
+## MTEXT (`packages/core/src/mtext/`, plan D-04)
+
+`MTextEntity.text` holds the MTEXT inline codes verbatim; `parse.ts` (`parseMtext`/`serializeMtext`, never throws) is the grammar, `layout.ts` (`layoutMText`) the one pure word-wrap layout (text measured by `setMTextMetrics`, default = stroke-font estimate) that the canvas draws and `explode.ts` turns into TEXT runs + rules + solid HATCH background. `explodeDimensions` also explodes MTEXT, which is how R12 DXF, SVG, PDF and EPS show it; AC1032 writes a real MTEXT (`dxfw/entities.ts`). The web editor (`apps/web/src/mtext/`) is a contentEditable bridged by `domCodec.ts` - the DOM is a view of the codes, never the source of truth.
+
 ## Hatching (`packages/core/src/hatch/`, plan §6)
 
 `HatchEntity {loops, paint, style}`: loops are chains of exact edges

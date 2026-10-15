@@ -323,7 +323,7 @@ export function entitiesToDxf(entitiesIn: Entity[], insUnits = 0, scale = 1, blo
   // D-02a: R12 has no DIMENSION worth writing; dimensions become their parts.
   const entities = explodeDimensions(entitiesIn);
   const blockHost = styleOnlyHost(activeDimHost());
-  const blocks = blocksIn.map((d) => (d.entities.some((e) => e.type === "dimension") ? { ...d, entities: explodeDimensions(d.entities, blockHost) } : d));
+  const blocks = blocksIn.map((d) => (d.entities.some((e) => e.type === "dimension" || e.type === "mtext") ? { ...d, entities: explodeDimensions(d.entities, blockHost) } : d));
   const scaled = scale !== 1 ? entities.map((e) => scaleEntityKeepingInserts(e, scale)) : entities;
   const blockDefs = blocks.map((d) => (scale !== 1 ? scaleBlockDefinition(d, scale) : d));
   const defByName = new Map(blockDefs.map((d) => [d.name, d]));

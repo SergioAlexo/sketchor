@@ -992,7 +992,9 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
           rotation: hasDir ? Math.atan2(num(raw, 21), num(raw, 11)) : (num(raw, 50, 0) * Math.PI) / 180,
           ...(style && style !== "Standard" ? { style } : {}),
           ...(spacing > 0 && spacing !== 1 ? { lineSpacing: spacing } : {}),
-          ...((Math.round(num(raw, 90, 0)) & 3) !== 0 ? { background: { ...(num(raw, 45, 0) > 0 ? { scale: num(raw, 45) } : {}) } } : {}),
+          ...((Math.round(num(raw, 90, 0)) & 3) !== 0
+            ? { background: { ...(Math.round(num(raw, 90, 0)) & 1 && raw.pairs.some((p) => p.code === 421) ? { color: `#${(Math.round(num(raw, 421, 0)) & 0xffffff).toString(16).padStart(6, "0")}` } : {}), ...(num(raw, 45, 0) > 0 ? { scale: num(raw, 45) } : {}) } }
+            : {}),
         });
         break;
       }

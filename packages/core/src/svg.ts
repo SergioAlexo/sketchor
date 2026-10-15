@@ -158,7 +158,7 @@ export function entitiesToSvgDocument(entitiesIn: Entity[], optsIn: SvgExportOpt
   // D-02a: dimensions are drawn as their parts (lines, arrow fills, centred text) so SVG matches the canvas.
   const entities = explodeDimensions(entitiesIn);
   const blockHost = styleOnlyHost(activeDimHost());
-  const opts: SvgExportOptions = optsIn.blocks?.some((d) => d.entities.some((e) => e.type === "dimension"))
+  const opts: SvgExportOptions = optsIn.blocks?.some((d) => d.entities.some((e) => e.type === "dimension" || e.type === "mtext"))
     ? { ...optsIn, blocks: optsIn.blocks.map((d) => ({ ...d, entities: explodeDimensions(d.entities, blockHost) })) }
     : optsIn;
   const padding = opts.padding ?? 5;

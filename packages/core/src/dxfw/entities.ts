@@ -1,4 +1,4 @@
-import type { HatchEntity, ArcEntity, CircleEntity, EllipseEntity, Entity, SplineEntity, ImageEntity, LineEntity, PointEntity, PolylineEntity, TextEntity } from "../entities";
+import type { HatchEntity, ArcEntity, CircleEntity, EllipseEntity, Entity, SplineEntity, ImageEntity, LineEntity, PointEntity, PolylineEntity, TextEntity, MTextEntity } from "../entities";
 import { imageCorners, layerOf } from "../entities";
 import { dist } from "../geometry";
 import { ellipseSweep, isFullEllipse } from "../ellipse";
@@ -181,6 +181,40 @@ export function textEntity2018(e: TextEntity, handle: string, owner: string): st
   );
 }
 
+/** D-10: a real MTEXT record - codes verbatim (chunks of 250 in group 3, the rest in group 1), wrap width, attachment, spacing, background mask. */
+export function mtextEntity2018(e: MTextEntity, handle: string, owner: string): string {
+  const chunks: string[] = [];
+  let rest = e.text;
+  while ([...rest].length > 250) {
+    const head = [...rest].slice(0, 250).join("");
+    // Never split an escape: a trailing lone backslash moves to the next chunk.
+    const cut = head.endsWith("\\") && !head.endsWith("\\\\") ? head.slice(0, -1) : head;
+    chunks.push(cut);
+    rest = rest.slice(cut.length);
+  }
+  const bg = e.background;
+  const rgb = bg?.color ? hexToRgb(bg.color) : null;
+  return (
+    `0\nMTEXT\n` +
+    entityHead(handle, owner, e) +
+    `100\nAcDbMText\n` +
+    pair(10, e.at.x) + pair(20, e.at.y) + pair(30, 0) +
+    pair(40, e.height) +
+    (e.width > 0 ? pair(41, e.width) : "") +
+    pair(71, Math.min(9, Math.max(1, Math.round(e.attachment || 1)))) +
+    pair(72, 1) +
+    chunks.map((c) => pair(3, c)).join("") +
+    pair(1, rest) +
+    pair(7, e.style || "Standard") +
+    (e.rotation ? pair(50, (e.rotation * 180) / Math.PI) : "") +
+    (e.lineSpacing && e.lineSpacing !== 1 ? pair(73, 1) + pair(44, e.lineSpacing) : "") +
+    (bg
+      ? pair(90, rgb ? 1 : 2) + pair(45, bg.scale ?? 1.5) + (rgb ? pair(63, nearestAci(bg.color!)) + pair(421, (rgb[0] << 16) | (rgb[1] << 8) | rgb[2]) : pair(63, 0))
+      : "") +
+    entityXdataText(e)
+  );
+}
+
 /**
  * DXF's IMAGE entity references an external raster file through a separate
  * IMAGEDEF object — there's no way to embed pixels inline — and a true
@@ -245,6 +279,8 @@ export function entityDxf2018(e: Entity, handle: string, owner: string, nextHand
       return polylineEntity2018(e, handle, owner);
     case "text":
       return textEntity2018(e, handle, owner);
+    case "mtext":
+      return mtextEntity2018(e, handle, owner);
     case "image":
       return imageEntity2018(e, handle, owner, nextHandle);
     case "hatch":
