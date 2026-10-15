@@ -47,7 +47,6 @@ export function entityAnchor(entity: Entity): Point | null {
       const i = Math.floor((entity.points.length - 1) / 2);
       return entity.points.length === 1 ? entity.points[0] : mid(entity.points[i], entity.points[i + 1]);
     }
-    case "text":
     case "image":
     default:
       return null;

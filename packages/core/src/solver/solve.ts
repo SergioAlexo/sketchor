@@ -77,8 +77,101 @@ export interface SolveOptions {
 const DEFAULT_TOLERANCE = 1e-12;
 const DEFAULT_MAX_ITERATIONS = 64;
 
-/** Solves `constraints` over `entities`, returning what moved and how constrained the sketch now is. */
+/**
+ * Solves `constraints` over `entities`, returning what moved and how constrained the sketch now is.
+ *
+ * K-02: the sketch is first split into independent connected components
+ * (entities linked by a constraint) and each is solved on its own, so a
+ * drawing with twenty constrained sketches in it costs twenty small solves
+ * rather than one system whose dense linear algebra grows with the cube of
+ * everything. Entities no constraint mentions are not solved at all; they
+ * only contribute their free parameters to the DoF count.
+ */
 export function solveSketch(
+  entities: readonly Entity[],
+  constraints: readonly Constraint[],
+  options: SolveOptions = {},
+): SolveResult {
+  const groups = components(constraints);
+
+  const owner = new Map<EntityId, number>();
+  groups.forEach((g, i) => g.entities.forEach((id) => owner.set(id, i)));
+  const members: Entity[][] = groups.map(() => []);
+  const loose: Entity[] = [];
+  for (const e of entities) {
+    const i = owner.get(e.id);
+    if (i === undefined) loose.push(e);
+    else members[i].push(e);
+  }
+  const dragAt = options.drag ? owner.get(options.drag.ref.entityId) : undefined;
+  const parts: SolveResult[] = groups.map((g, i) =>
+    solveComponent(members[i], g.constraints, {
+      ...options,
+      fixed: options.fixed?.filter((id) => owner.get(id) === i),
+      drag: i === dragAt ? options.drag : undefined,
+    }),
+  );
+  // Unconstrained geometry: nothing to solve, but its freedom still counts.
+  if (loose.length > 0) parts.push(solveComponent(loose, [], { ...options, drag: undefined, fixed: options.fixed?.filter((id) => !owner.has(id)) }));
+
+  const out: SolveResult = {
+    updates: [],
+    status: "fully-constrained",
+    dof: 0,
+    conflicts: [],
+    redundant: [],
+    underDefined: [],
+    residual: 0,
+    iterations: 0,
+    converged: true,
+  };
+  for (const r of parts) {
+    out.updates.push(...r.updates);
+    out.dof += r.dof;
+    out.conflicts.push(...r.conflicts);
+    out.redundant.push(...r.redundant);
+    out.underDefined.push(...r.underDefined);
+    out.residual = Math.max(out.residual, r.residual);
+    out.iterations += r.iterations;
+    out.converged = out.converged && r.converged;
+  }
+  out.status = out.conflicts.length > 0 ? "over-constrained" : out.dof === 0 ? "fully-constrained" : "under-constrained";
+  return out;
+}
+
+/** Constraints grouped by shared entities (union-find), each with the entity ids it touches. */
+function components(constraints: readonly Constraint[]): { constraints: Constraint[]; entities: Set<EntityId> }[] {
+  const parent = new Map<EntityId, EntityId>();
+  const find = (x: EntityId): EntityId => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    let cur = x;
+    while (cur !== root) {
+      const next = parent.get(cur)!;
+      parent.set(cur, root);
+      cur = next;
+    }
+    return root;
+  };
+  for (const c of constraints) {
+    const ids = constraintEntityIds(c);
+    for (const id of ids) if (!parent.has(id)) parent.set(id, id);
+    for (let i = 1; i < ids.length; i++) parent.set(find(ids[i]), find(ids[0]));
+  }
+  const byRoot = new Map<EntityId, { constraints: Constraint[]; entities: Set<EntityId> }>();
+  for (const c of constraints) {
+    const ids = constraintEntityIds(c);
+    if (ids.length === 0) continue;
+    const root = find(ids[0]);
+    let g = byRoot.get(root);
+    if (!g) byRoot.set(root, (g = { constraints: [], entities: new Set() }));
+    g.constraints.push(c);
+    for (const id of ids) g.entities.add(id);
+  }
+  return [...byRoot.values()];
+}
+
+function solveComponent(
   entities: readonly Entity[],
   constraints: readonly Constraint[],
   options: SolveOptions = {},
@@ -249,7 +342,9 @@ function solveLinear(a: number[][], b: number[]): number[] | null {
   const n = b.length;
   // Singularity is judged relative to the matrix's own scale, so the same
   // sketch drawn in metres and in millimetres is solved the same way.
-  const epsilon = Math.max(1e-300, ...a.map((row) => Math.max(...row.map(Math.abs)))) * 1e-14;
+  let biggest = 1e-300;
+  for (const row of a) for (const v of row) biggest = Math.max(biggest, Math.abs(v));
+  const epsilon = biggest * 1e-14;
   for (let col = 0; col < n; col++) {
     let pivot = col;
     for (let r = col + 1; r < n; r++) if (Math.abs(a[r][col]) > Math.abs(a[pivot][col])) pivot = r;
@@ -304,7 +399,8 @@ function rankOf(m: number[][], n: number): number {
 /** Gauss–Jordan elimination in place; returns the rank and which column each independent row pivots on. */
 function reduce(m: number[][], n: number): { rank: number; pivots: number[]; epsilon: number } {
   const pivots: number[] = [];
-  const scale = Math.max(1e-12, ...m.flat().map(Math.abs));
+  let scale = 1e-12;
+  for (const row of m) for (const v of row) scale = Math.max(scale, Math.abs(v));
   const epsilon = scale * 1e-9;
   let rank = 0;
   for (let col = 0; col < n && rank < m.length; col++) {
