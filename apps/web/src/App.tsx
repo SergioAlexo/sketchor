@@ -620,6 +620,8 @@ export function App() {
   const otrack = useTracking((s) => s.otrack);
   const autoConstrain = useApp((s) => s.autoConstrain);
   const setAutoConstrain = useApp((s) => s.setAutoConstrain);
+  const drawingMode = useApp((s) => s.drawingMode);
+  const setDrawingMode = useApp((s) => s.setDrawingMode);
   const commandLine = useApp((s) => s.commandLine);
   const toggleCommandLine = useApp((s) => s.toggleCommandLine);
   // The solver's verdict on the current sketch (T-40); null until the
@@ -1529,6 +1531,14 @@ export function App() {
               onClick={() => setAutoConstrain(!autoConstrain)}
             >
               AUTOCON
+            </button>
+            <button
+              className={`tracking-toggle ${drawingMode === "sketch" ? "active" : ""}`}
+              title="Sketch mode (auto-constraints on, dimensions driving) vs Drafting mode (AutoCAD feel: off, annotation)"
+              data-testid="toggle-drawing-mode"
+              onClick={() => setDrawingMode(drawingMode === "sketch" ? "drafting" : "sketch")}
+            >
+              {drawingMode === "sketch" ? "SKETCH" : "DRAFT"}
             </button>
             <SnapPopover />
             <SelectByPopover />

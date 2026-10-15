@@ -1,5 +1,6 @@
 import type { TextStyle } from "@sketchor/core";
 import { create } from "zustand";
+import { modeDefaults } from "../tools/drawingMode";
 import { newEntityId, type Group, type Constraint, type TableRecord, scaleBlockDefinition, scaleEntityKeepingInserts, setActiveBlocks, setActiveDimHost, blockEditChanges, blockEditDocument, getBlock, inPlaceBackdrop, instancesOf, type AttributeDef, type BlockDefinition } from "@sketchor/core";
 import type { Model3D } from "../model3d/types";
 import {
@@ -1016,6 +1017,9 @@ interface AppState {
   showConstraintGlyphs: boolean;
   /** AUTOCON (T-43): drawing tools add the constraints their snaps imply. Off by default until K-03's Sketch mode. */
   autoConstrain: boolean;
+  /** K-03: Sketch vs Drafting; switching sets the AUTOCON default (still individually toggleable). */
+  drawingMode: import("../tools/drawingMode").DrawingMode;
+  setDrawingMode: (m: import("../tools/drawingMode").DrawingMode) => void;
   /** T-44: tint constrained geometry by how much freedom it has left. */
   showDofColours: boolean;
   setShowDofColours: (v: boolean) => void;
@@ -1141,6 +1145,8 @@ export const useApp = create<AppState>((set, get) => ({
   toggleCommandLine: () => set((s) => ({ commandLine: !s.commandLine })),
   showConstraintGlyphs: true,
   autoConstrain: false,
+  drawingMode: "drafting",
+  setDrawingMode: (m) => set({ drawingMode: m, autoConstrain: modeDefaults(m).autoConstrain }),
   showDofColours: true,
   setShowDofColours: (v) => set({ showDofColours: v }),
   setAutoConstrain: (v) => set({ autoConstrain: v }),
