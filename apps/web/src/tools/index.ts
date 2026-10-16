@@ -60,6 +60,8 @@ const TOOLS: Partial<Record<ToolId, Tool>> = {
   dimjogged: new DimTool("dimjogged", "jogged"),
   dimbaseline: new DimTool("dimbaseline", "baseline"),
   dimcontinue: new DimTool("dimcontinue", "continue"),
+  dimcenter: new DimTool("dimcenter", "centermark"),
+  dimcenterline: new DimTool("dimcenterline", "centerline"),
   qdim: new DimTool("qdim", "qdim"),
 };
 
