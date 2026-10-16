@@ -29,6 +29,8 @@ export const FORMATS: readonly FormatInfo[] = [
   // EPS/AI: own PostScript-subset importer (core/eps, F-01); import-only (export is F-02).
   { ext: ["eps"], kind: "2d", label: "EPS drawing", mime: "application/postscript", writable: true, association: true, nativeThumbnail: true },
   { ext: ["ai"], kind: "2d", label: "Illustrator drawing", mime: "application/illustrator", writable: false, association: true, nativeThumbnail: true },
+  // PDF: vector import of one page (core/pdf, F-08); import-only, no Explorer association yet.
+  { ext: ["pdf"], kind: "2d", label: "PDF drawing", mime: "application/pdf", writable: false, association: false, nativeThumbnail: false },
   { ext: ["step", "stp"], kind: "3d", label: "STEP model", mime: "model/step", writable: false, association: true, nativeThumbnail: true },
   { ext: ["iges", "igs"], kind: "3d", label: "IGES model", mime: "model/iges", writable: false, association: true, nativeThumbnail: true },
   // Mesh formats (F-05): read in the model worker; OS association and Explorer thumbnails are not wired yet.

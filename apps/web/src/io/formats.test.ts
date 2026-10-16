@@ -20,7 +20,7 @@ describe("format registry", () => {
     expect(mimeOf("x.unknown")).toBe("application/dxf");
   });
   it("builds accept lists", () => {
-    expect(acceptList((f) => f.kind === "2d")).toBe(".dxf,.svg,.dwg,.eps,.ai");
+    expect(acceptList((f) => f.kind === "2d")).toBe(".dxf,.svg,.dwg,.eps,.ai,.pdf");
   });
   it("tauri.conf.json fileAssociations equal the association-flagged formats", () => {
     const conf = JSON.parse(tauriConfRaw);
