@@ -25,3 +25,6 @@ native/occt-import-js-build/build/
 # Machine-specific paths to real sample files (see docs/local-samples.example.md)
 docs/local-samples.md
 tools/dxf-audit/out/
+
+# Claude Code agent worktrees
+.claude/worktrees/
