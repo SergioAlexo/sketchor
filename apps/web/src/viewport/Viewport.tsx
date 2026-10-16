@@ -1,4 +1,5 @@
 import { settingsFromHatch } from "../tools/hatchTool";
+import { runDimEdit } from "../tools/dimEditCommands";
 import { hatchesTinted } from "./hatchRender";
 import { useEffect, useRef, useState } from "react";
 import { autoConstrainSuppressed, withAutoConstraints } from "../tools/autoConstrain";
@@ -1904,6 +1905,17 @@ export function Viewport() {
         if (!sel) return "attedit: select an insert first";
         app.setAttedit(sel.id);
         return "editing attributes";
+      }
+      case "dimTextReset":
+      case "dimTextLeader":
+      case "dimFlip":
+      case "dimSpace":
+      case "dimOblique":
+      case "dimRestyle":
+      case "dimReassoc": {
+        const r = runDimEdit(doc, app.selection, id, argument);
+        if (r.command) bus.execute(r.command);
+        return r.message;
       }
       case "dimStyles":
         useDimStyleUi.getState().setOpen(true);

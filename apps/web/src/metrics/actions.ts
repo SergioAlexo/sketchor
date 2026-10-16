@@ -264,6 +264,13 @@ export const COMMAND_LINE_ACTIONS: Record<AppCommandId, string> = {
   attEdit: "block.attedit",
   attExport: "block.attout",
   dimStyles: "dim.styles",
+  dimTextReset: "dim.textReset",
+  dimTextLeader: "dim.textLeader",
+  dimFlip: "dim.flipArrows",
+  dimSpace: "dim.space",
+  dimOblique: "dim.oblique",
+  dimRestyle: "dim.restyle",
+  dimReassoc: "dim.reassociate",
 };
 
 /** "palette"/"command-line" are sent by their own components; the listeners here only see the other two. */

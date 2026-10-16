@@ -296,12 +296,12 @@ export interface ParsedDimension {
   value?: number;
 }
 
-const DIM_KINDS: readonly DimKind[] = ["linear", "aligned", "angular2l", "angular3p", "radial", "diametric", "arclength", "ordinate", "jogged"];
+const DIM_KINDS: readonly DimKind[] = ["linear", "aligned", "angular2l", "angular3p", "radial", "diametric", "arclength", "ordinate", "jogged", "centermark", "centerline"];
 const DIM_HEAD_RE = /^dimension\s+([A-Za-z_]\w*)\s+([a-z0-9]+)\s*(.*)$/;
 const ANGULAR_KINDS = new Set<DimKind>(["angular2l", "angular3p"]);
 
 /** Points each dimension kind needs. */
-const DIM_POINTS: Record<DimKind, number> = { linear: 3, aligned: 3, angular2l: 5, angular3p: 4, radial: 2, diametric: 2, arclength: 4, ordinate: 3, jogged: 3 };
+const DIM_POINTS: Record<DimKind, number> = { linear: 3, aligned: 3, angular2l: 5, angular3p: 4, radial: 2, diametric: 2, arclength: 4, ordinate: 3, jogged: 3, centermark: 2, centerline: 4 };
 
 function parseDimension(row: string): ParsedDimension | string {
   const head = DIM_HEAD_RE.exec(row);
@@ -918,6 +918,10 @@ export function diffToCommands(doc: SketchDocument, parsed: ParsedEntity[]): Com
           if (existing.targets) updated.targets = existing.targets;
           if (existing.overrides) updated.overrides = existing.overrides;
           if (existing.expression) updated.expression = existing.expression;
+          // D-09: text leader, flipped arrows and oblique extension lines have no code word either.
+          if (existing.textLeader) updated.textLeader = true;
+          if (existing.flipArrows) updated.flipArrows = true;
+          if (existing.oblique !== undefined) updated.oblique = existing.oblique;
         }
         if (existing.type === "mtext" && updated.type === "mtext") {
           for (const k of ["style", "lineSpacing", "background"] as const) {

@@ -4,7 +4,8 @@ import type { Point } from "../geometry";
 import { distToSegment } from "../geometry";
 import { pointInPolygon } from "../regions";
 import { dimTextBox, dimTextStrokes } from "../dimensions/explode";
-import { layoutOf } from "../dimensions/resolve";
+import { activeDimHost } from "../dimensions/context";
+import { layoutOf, resolveGeometry } from "../dimensions/resolve";
 import { mapPoint, similarity } from "./affine";
 import { boundsOfPoints, type Affine, type EntityKind, type KindSnap } from "./registry";
 
@@ -31,8 +32,30 @@ export function locatorIndex(e: DimensionEntity): number {
       return 3;
     case "angular2l":
       return 4;
+    case "centermark":
+    case "centerline":
+      return -1; // nothing to place: they follow their geometry
     default:
       return 1;
+  }
+}
+
+/** D-09: the definition points that get a grip (their index in `defPoints`). Associated circle / arc dimensions only expose what the geometry does not decide. */
+export function gripIndices(e: DimensionEntity): number[] {
+  switch (e.kind) {
+    case "centermark":
+    case "centerline":
+      return [];
+    case "radial":
+    case "diametric":
+    case "arclength":
+      return e.target ? [locatorIndex(e)] : e.defPoints.map((_, i) => i);
+    case "jogged":
+      return e.target ? [1, 2] : e.defPoints.map((_, i) => i);
+    case "ordinate":
+      return [1, 2]; // the feature point and the leader end; the origin is a coordinate system, not a handle
+    default:
+      return e.defPoints.map((_, i) => i);
   }
 }
 
@@ -101,8 +124,11 @@ export const dimensionKind: EntityKind<DimensionEntity> = {
     const l = layoutOf(e);
     const out = [];
     if (l.text) out.push({ point: l.text.at, kind: "mid" as const, index: 0 });
-    const i = locatorIndex(e);
-    if (e.defPoints[i]) out.push({ point: e.defPoints[i], kind: "vertex" as const, index: DEF_POINT_GRIP + i });
+    const pts = resolveGeometry(e, (() => { const h = activeDimHost(); return h ? (id: string) => h.get(id) : undefined; })()).pts;
+    for (const i of gripIndices(e)) {
+      const p = pts[i] ?? e.defPoints[i];
+      if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) out.push({ point: p, kind: "vertex" as const, index: DEF_POINT_GRIP + i });
+    }
     return out;
   },
   applyGrip: (e, g, to) => {
@@ -111,7 +137,7 @@ export const dimensionKind: EntityKind<DimensionEntity> = {
     if (i < 0 || i >= e.defPoints.length) return e;
     const defPoints = e.defPoints.slice();
     defPoints[i] = { x: to.x, y: to.y };
-    // The ref (if any) for a located point is not an anchor to geometry: drop it so the move sticks.
+    // A dragged point is no longer an anchor to geometry (D-09: also for extension-line origins): drop its ref so the move sticks.
     const refs = e.refs ? e.refs.map((r, k) => (k === i ? null : r)) : undefined;
     return { ...e, defPoints, ...(refs ? { refs } : {}) };
   },

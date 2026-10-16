@@ -129,3 +129,44 @@ describe("DimTool", () => {
     expect(s.commits()).toBe(1);
   });
 });
+
+describe("DimTool: centre marks and centrelines (D-07)", () => {
+  const circ = (): Entity => ({ id: "c", type: "circle", center: { x: 0, y: 0 }, radius: 10 });
+
+  it("a click on a circle adds one associative centre mark and the tool stays idle", () => {
+    const { click, added } = setup([circ()]);
+    const t = tool("centermark");
+    click(t, { x: 10, y: 0 });
+    expect(added()).toHaveLength(1);
+    expect(added()[0].kind).toBe("centermark");
+    expect(added()[0].target).toBe("c");
+    expect(added()[0].linetype).toBeUndefined();
+    expect(t.busy()).toBe(false);
+  });
+
+  it("Alt-click makes the extended CENTER-linetype cross; a click on empty space adds nothing", () => {
+    const { ctx, click, added } = setup([circ()]);
+    const t = tool("centermark");
+    t.pick(ctx, { point: { x: 10, y: 0 }, world: { x: 10, y: 0 }, snap: null, shiftKey: false, ctrlKey: false, altKey: true } as unknown as Pick);
+    expect(added()[0].linetype).toBe("CENTER");
+    click(t, { x: 500, y: 500 });
+    expect(added()).toHaveLength(1);
+  });
+
+  it("two lines make one centreline; the same line twice, or Esc, make none", () => {
+    const s = setup([line("a", 0, 0, 40, 0), line("b", 0, 10, 40, 10)]);
+    const t = tool("centerline");
+    s.click(t, { x: 20, y: 0 });
+    expect(t.busy()).toBe(true);
+    s.click(t, { x: 10, y: 0 }); // the same line again
+    expect(s.added()).toHaveLength(0);
+    s.click(t, { x: 20, y: 10 });
+    expect(s.added()).toHaveLength(1);
+    expect(s.added()[0].kind).toBe("centerline");
+    expect(s.added()[0].targets).toEqual(["a", "b"]);
+    expect(t.busy()).toBe(false);
+    s.click(t, { x: 20, y: 0 });
+    t.cancel();
+    expect(t.busy()).toBe(false);
+  });
+});

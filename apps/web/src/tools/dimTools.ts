@@ -3,6 +3,8 @@ import {
   chainDimension,
   dimAngle3,
   dimBetweenPoints,
+  dimCenterLine,
+  dimCenterMark,
   dimOfArcLength,
   dimOfCircle,
   dimOfLine,
@@ -27,6 +29,8 @@ import { type Pick, type Tool, type ToolContext } from "./tool";
  *               object(s) places the dimension line.
  *  - explicit   DLI linear, DAL aligned, DAN angular, DRA radial, DDI diametric,
  *               DAR arc length, DOR ordinate, DJO jogged.
+ *  - DCE / DCL  centre mark on a circle or arc (Alt-click: extended, CENTER linetype)
+ *               and the centreline midway between two lines (D-07).
  *  - DBA / DCO  baseline / continue from an existing linear or aligned dimension.
  *  - QDIM       select geometry, Enter (or a click when something is already
  *               selected), then place the chain; B / C / O switch baseline,
@@ -36,7 +40,7 @@ import { type Pick, type Tool, type ToolContext } from "./tool";
  * (`dimensions/build.ts`, tested); this file only collects picks.
  */
 
-export type DimMode = "smart" | "linear" | "aligned" | "angular" | "radial" | "diametric" | "arclength" | "ordinate" | "jogged" | "baseline" | "continue" | "qdim";
+export type DimMode = "smart" | "linear" | "aligned" | "angular" | "radial" | "diametric" | "arclength" | "ordinate" | "jogged" | "baseline" | "continue" | "centermark" | "centerline" | "qdim";
 
 const PREVIEW_ID = "__dim_preview__";
 /** Snap kinds that mean "this exact point", not "this entity". */
@@ -45,6 +49,7 @@ const POINT_SNAPS = new Set(["endpoint", "midpoint", "center", "quadrant", "inte
 type Stage =
   | { s: "first" }
   | { s: "line"; line: LineEntity }
+  | { s: "cl2"; line: LineEntity }
   | { s: "lines"; a: LineEntity; b: LineEntity }
   | { s: "round"; entity: Entity }
   | { s: "pt2"; p1: Point; r1: PointRef | null }
@@ -110,10 +115,13 @@ export class DimTool implements Tool {
           case "angular": return "Angle: click the first line (or the vertex for a three-point angle)";
           case "radial": case "diametric": case "jogged": case "arclength": return "Click a circle or arc";
           case "ordinate": return "Ordinate (from 0,0): click the feature point";
+          case "centermark": return "Centre mark: click a circle or arc (Alt-click for the extended cross)";
+          case "centerline": return "Centreline: click the first line";
           case "baseline": case "continue": return "Click the linear dimension to continue from";
           case "qdim": return "Quick dimension: click objects, Enter when done";
         }
         break;
+      case "cl2": return "Click the second line";
       case "line": return "Click to place the dimension line (click another line for the angle between them)";
       case "lines": case "round": case "pt3": return "Click to place the dimension";
       case "pt2": return "Click the second point";
@@ -150,6 +158,13 @@ export class DimTool implements Tool {
     const pointSnap = !!p.snap && POINT_SNAPS.has(p.snap.kind);
     switch (s.s) {
       case "first": return this.first(ctx, p, pointSnap);
+      case "cl2": {
+        const other = this.hit(ctx, p.world);
+        if (!other || other.type !== "line" || other.id === s.line.id) return;
+        const d = dimCenterLine(s.line, other, o);
+        if (d) this.commit(ctx, [d]);
+        return this.done(ctx);
+      }
       case "line": {
         const other = !p.shiftKey && !pointSnap ? this.hit(ctx, p.world) : undefined;
         const second = other && other.type === "line" && other.id !== s.line.id && this.mode !== "linear" && this.mode !== "aligned";
@@ -241,6 +256,15 @@ export class DimTool implements Tool {
         return;
       case "ordinate":
         this.st = { s: "ordinate", feature: p.point };
+        return;
+      case "centermark":
+        if (e && (e.type === "circle" || e.type === "arc")) {
+          const d = dimCenterMark(e, this.opts(ctx), { extended: p.altKey });
+          if (d) this.commit(ctx, [d]);
+        }
+        return;
+      case "centerline":
+        if (e?.type === "line") this.st = { s: "cl2", line: e };
         return;
       case "baseline": case "continue": {
         const d = ctx.hitTest(p.world).map((id) => ctx.doc.get(id)).find((x): x is DimensionEntity => x?.type === "dimension" && (x.kind === "linear" || x.kind === "aligned"));

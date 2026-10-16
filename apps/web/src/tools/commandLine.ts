@@ -35,7 +35,14 @@ export type AppCommandId =
   | "blockClose"
   | "attEdit"
   | "attExport"
-  | "dimStyles";
+  | "dimStyles"
+  | "dimTextReset"
+  | "dimTextLeader"
+  | "dimFlip"
+  | "dimSpace"
+  | "dimOblique"
+  | "dimRestyle"
+  | "dimReassoc";
 
 export type ParsedCommand =
   /** Activate a tool; `argument` is the rest of the line (a radius, a distance), passed on as typed input. */
@@ -102,6 +109,11 @@ export const TOOL_ALIASES: Record<string, ToolId> = {
   dimbaseline: "dimbaseline",
   dco: "dimcontinue",
   dimcontinue: "dimcontinue",
+  dce: "dimcenter",
+  dimcenter: "dimcenter",
+  centermark: "dimcenter",
+  dcl: "dimcenterline",
+  centerline: "dimcenterline",
   qdim: "qdim",
   h: "fill",
   hatch: "fill",
@@ -199,6 +211,14 @@ export const APP_ALIASES: Record<string, AppCommandId> = {
   dimstyle: "dimStyles",
   ddim: "dimStyles",
   dimstyles: "dimStyles",
+  dimreset: "dimTextReset",
+  dimtextreset: "dimTextReset",
+  dimleader: "dimTextLeader",
+  dimflip: "dimFlip",
+  dimspace: "dimSpace",
+  dimoblique: "dimOblique",
+  dimupdate: "dimRestyle",
+  dimreassoc: "dimReassoc",
 };
 
 /** Anything that looks like a coordinate or a measurement rather than a word. */

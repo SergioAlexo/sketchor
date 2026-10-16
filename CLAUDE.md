@@ -61,6 +61,7 @@ in `diffToCommands`. Dimension *creation* is pure too (`dimensions/build.ts`:
 smart-DIM classification, baseline/continue, QDIM); `tools/dimTools.ts` only
 collects picks (tool `dim` = smart DIM; DLI/DAL/DAN/DRA/DDI/DAR/DOR/DJO/DBA/DCO/QDIM
 on the command line). D-10: DXF writes real DIMENSION + `*D` block + DIMSTYLE (`dxfDim.ts`, `dxfVars.ts`), exact data in the SKETCHOR record. D-03: `DimStyle` is the full DIMVAR set (`style.ts`; the manager form is data in `styleFields.ts`, edits go through `styleOps.ts` + `put-table-record`; `dimstyle`/`ddim` opens `dimstyles/DimStyleManager.tsx`); child styles via `dimStyleOf(rec, overrides, kind)`.
+D-07: centre marks/centrelines are `DimensionEntity` kinds `centermark` (target circle/arc) and `centerline` (refs to two lines' ends) - no new entity type; both have no DIMENSION record, so DXF writes them exploded (CENTER linetype). D-09: `dimensions/edit.ts` holds the pure edits (reset/move text + leader, flip arrows, oblique ext lines, DIMSPACE, restyle, reassociate) returning replacement dimensions; `updateCommands` makes them one undo step, `tools/dimEditCommands.ts` binds them to the command line (`dimreset dimleader dimflip dimspace dimoblique dimupdate dimreassoc`). Fields `textLeader/flipArrows/oblique` ride the SKETCHOR dims record and `diffToCommands`.
 
 ## MTEXT (`packages/core/src/mtext/`, plan D-04)
 

@@ -488,7 +488,7 @@ export interface InsertEntity {
 }
 
 /** The dimension forms (D-02). */
-export type DimKind = "linear" | "aligned" | "angular2l" | "angular3p" | "radial" | "diametric" | "arclength" | "ordinate" | "jogged";
+export type DimKind = "linear" | "aligned" | "angular2l" | "angular3p" | "radial" | "diametric" | "arclength" | "ordinate" | "jogged" | "centermark" | "centerline";
 
 /**
  * A dimension (D-02a): measured value, extension lines, dimension line,
@@ -533,6 +533,12 @@ export interface DimensionEntity {
   axis?: "x" | "y";
   /** Text centre when moved off its default place. */
   textPos?: Point;
+  /** D-09: with a moved `textPos`, draw a leader from the dimension line to the text. */
+  textLeader?: boolean;
+  /** D-09: swaps the arrows between inside and outside the extension lines. */
+  flipArrows?: boolean;
+  /** D-09: direction of the extension lines of a linear / aligned dimension, radians (DIMOBLIQUE); absent = perpendicular. */
+  oblique?: number;
   /** Replaces the measured text; `<>` stands for it. */
   textOverride?: string;
   /** `dimStyles` record name (absent = built-in default). */

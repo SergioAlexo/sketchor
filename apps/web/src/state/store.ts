@@ -469,6 +469,8 @@ export type ToolId =
   | "dimjogged"
   | "dimbaseline"
   | "dimcontinue"
+  | "dimcenter"
+  | "dimcenterline"
   | "qdim"
   | "pan"
   | "move"
@@ -521,6 +523,8 @@ export const TOOL_HINTS: Record<ToolId, string> = {
   dimordinate: "Ordinate dimension (from 0,0): click the feature point, then the end of the leader - up/down reads X, sideways reads Y",
   dimjogged: "Jogged radius: click a circle or arc, then where the dimension goes",
   dimbaseline: "Baseline dimension: click an existing linear dimension, then each next point - Esc finishes",
+  dimcenter: "Centre mark: click a circle or arc (Alt-click for an extended centre-line cross)",
+  dimcenterline: "Centreline: click two lines - the centreline runs midway between them",
   dimcontinue: "Continue dimension: click an existing linear dimension, then each next point - Esc finishes",
   qdim: "Quick dimension: select objects (or click them), Enter, then place the chain - B baseline, C continued, O ordinate",
   pan: "Drag to pan the view - pinch with two fingers to zoom - double-tap to fit the drawing",

@@ -29,6 +29,8 @@ export interface DimLayout {
   text: DimText | null;
   /** Measured value: mm, or radians for angular kinds; NaN if degenerate. */
   measure: number;
+  /** Where a leader to a moved text starts (middle of the dimension line / arc, tip of a radial leader). */
+  anchor?: Point;
 }
 
 /** A circle/arc a radial-family dimension measures. */
@@ -84,7 +86,9 @@ function arcPoints(c: Point, r: number, start: number, sweep: number): Point[] {
 class Builder {
   lines: Point[][] = [];
   fills: Point[][] = [];
-  constructor(readonly st: DimStyle, readonly k: number) {}
+  /** D-09: arrows swapped between inside and outside. */
+  anchor: Point | undefined;
+  constructor(readonly st: DimStyle, readonly k: number, readonly flip = false) {}
   line(...pts: Point[]): void {
     if (pts.length >= 2) this.lines.push(pts);
   }
@@ -114,7 +118,8 @@ function dimensionLine(b: Builder, A: Point, B: Point, u: Point, label: string, 
   const up = { x: -Math.sin(rho), y: Math.cos(rho) };
   const onLine = textOnLine(st);
   const side = textSide(st);
-  const arrowsInside = L >= 2.2 * arrow;
+  const arrowsInside = (L >= 2.2 * arrow) !== b.flip;
+  b.anchor = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
   // Text along the line needs w + gaps (+ arrows when it sits in the line's gap).
   const along = horizontal ? w * Math.abs(Math.cos(lineAngle)) + h * Math.abs(Math.sin(lineAngle)) : w;
   const textInside = (st.textInside && !textPos) || (L >= along + 2 * gap + (onLine ? 2 * arrow : 0) && arrowsInside);
@@ -177,25 +182,29 @@ function linearLike(e: DimensionEntity, st: DimStyle, k: number, geo: DimGeometr
   const u = { x: Math.cos(theta), y: Math.sin(theta) };
   const n = { x: -u.y, y: u.x };
   const measure = Math.abs(dot(sub(p2, p1), u));
-  const b = new Builder(st, k);
-  const foot = (p: Point): Point => add(p, mul(n, dot(sub(loc, p), n)));
+  const b = new Builder(st, k, e.flipArrows);
+  // D-09: oblique extension lines run along `w` instead of the normal (ignored when parallel to the dimension line).
+  const ob = e.oblique !== undefined && Number.isFinite(e.oblique) ? { x: Math.cos(e.oblique), y: Math.sin(e.oblique) } : null;
+  const w = ob && Math.abs(dot(ob, n)) > 1e-6 ? ob : n;
+  const reach = (p: Point): number => dot(sub(loc, p), n) / dot(w, n);
+  const foot = (p: Point): Point => add(p, mul(w, reach(p)));
   const f1 = foot(p1);
   const f2 = foot(p2);
   // The extension line at p1 is the "first" one (DIMSE1), at p2 the second — as the points were picked, not as they sit on screen.
   ([[p1, f1, st.suppressExt1], [p2, f2, st.suppressExt2]] as const).forEach(([p, f, off]) => {
     if (off) return;
-    const d = dot(sub(loc, p), n);
+    const d = reach(p);
     const s = d < 0 ? -1 : 1;
-    const end = add(f, mul(n, s * st.extExtend * k));
+    const end = add(f, mul(w, s * st.extExtend * k));
     // DIMFXL: a fixed length measured back from the dimension line, ignoring the offset.
-    const start = st.extFixedLength > 0 ? sub(end, mul(n, s * st.extFixedLength * k)) : add(p, mul(n, s * Math.min(Math.abs(d), st.extOffset * k)));
+    const start = st.extFixedLength > 0 ? sub(end, mul(w, s * st.extFixedLength * k)) : add(p, mul(w, s * Math.min(Math.abs(d), st.extOffset * k)));
     b.line(start, end);
   });
   // Orient A→B along +u.
   const [A, B] = dot(sub(f2, f1), u) >= 0 ? [f1, f2] : [f2, f1];
   if (len(sub(B, A)) < 1e-9) return { lines: b.lines, fills: [], text: null, measure };
   const text = dimensionLine(b, A, B, u, label(measure), e.textPos, theta);
-  return { lines: b.lines, fills: b.fills, text, measure };
+  return { lines: b.lines, fills: b.fills, text, measure, anchor: b.anchor };
 }
 
 /** Pulls a (start, sweep) arc from ray angles a1→a2 choosing the side that contains `through`. */
@@ -219,8 +228,9 @@ function arcDimension(b: Builder, V: Point, start: number, sweep: number, R: num
     if (Math.abs(R - r0) > st.extOffset * k) b.line(polar(V, r0 + s * st.extOffset * k, ang), polar(V, R + s * st.extExtend * k, ang));
   });
   const arcLen = R * sweep;
-  const inside = arcLen >= 2.2 * arrow;
+  const inside = (arcLen >= 2.2 * arrow) !== b.flip;
   const mid = start + sweep / 2;
+  b.anchor = polar(V, R, mid);
   const horizontal = st.textHorizontal;
   const tangent = mid + Math.PI / 2;
   const rho = horizontal ? 0 : upright(tangent);
@@ -257,14 +267,14 @@ function angular3(e: DimensionEntity, st: DimStyle, k: number, V: Point, P1: Poi
   const aa = Math.atan2(AP.y - V.y, AP.x - V.x);
   const R = Math.max(len(sub(AP, V)), 1e-6);
   const { start, sweep } = sectorThrough(a1, a2, aa);
-  const b = new Builder(st, k);
+  const b = new Builder(st, k, e.flipArrows);
   const r1 = len(sub(P1, V));
   const r2 = len(sub(P2, V));
   // The point nearest the start ray gets the first ext line.
   const startIsA1 = Math.abs(norm(a1 - start)) < 1e-9 || Math.abs(norm(a1 - start) - TAU) < 1e-9;
   const extFrom: [number, number] = startIsA1 ? [r1, r2] : [r2, r1];
   const text = arcDimension(b, V, start, sweep, R, extFrom, label(sweep), e.textPos);
-  return { lines: b.lines, fills: b.fills, text, measure: sweep };
+  return { lines: b.lines, fills: b.fills, text, measure: sweep, anchor: b.anchor };
 }
 
 function lineIntersection(a: Point, b: Point, c: Point, d: Point): Point | null {
@@ -330,6 +340,7 @@ function radialText(b: Builder, C: Point, r: number, phi: number, label: string,
   const w = estWidth(label, h);
   const rad = { x: Math.cos(phi), y: Math.sin(phi) };
   const T = add(C, mul(rad, r));
+  b.anchor = T;
   const fits = !textPos && w + 2 * gap + 2 * arrow < r;
   if (fits) {
     const horizontal = st.textHorizontal;
@@ -371,6 +382,15 @@ export function layoutDimension(e: DimensionEntity, st: DimStyle, geo: DimGeomet
     const reach = (st.centerMark === "line" ? r : 0) + st.centerSize * k;
     out.lines.push([{ x: c.x - reach, y: c.y }, { x: c.x + reach, y: c.y }], [{ x: c.x, y: c.y - reach }, { x: c.x, y: c.y + reach }]);
   }
+  // D-09: a moved text keeps a leader back to the dimension line.
+  if (e.textLeader && e.textPos && out.text && out.text.text && out.anchor) {
+    const t = out.text;
+    const dir = { x: Math.cos(t.rotation), y: Math.sin(t.rotation) };
+    const reach = t.width / 2 + st.gap * k;
+    const l = sub(t.at, mul(dir, reach));
+    const r = add(t.at, mul(dir, reach));
+    out.lines.push([out.anchor, len(sub(l, out.anchor)) <= len(sub(r, out.anchor)) ? l : r]);
+  }
   // A frame around the text (DIMGAP < 0, and basic dimensions).
   if ((st.textFrame || st.tolMode === "basic") && out.text && out.text.text) {
     const t = out.text;
@@ -406,13 +426,13 @@ function layoutKind(e: DimensionEntity, st: DimStyle, geo: DimGeometry): DimLayo
       if (!c || !(c.radius > 0)) return empty;
       const ref = need(2) ? sub(pts[1], c.center) : { x: 1, y: 0 };
       const phi = len(ref) < 1e-12 ? 0 : Math.atan2(ref.y, ref.x);
-      const b = new Builder(st, k);
+      const b = new Builder(st, k, e.flipArrows);
       if (e.kind === "diametric") {
         const rad = { x: Math.cos(phi), y: Math.sin(phi) };
         const A = add(c.center, mul(rad, -c.radius));
         const B = add(c.center, mul(rad, c.radius));
         const t = dimensionLine(b, A, B, rad, text(2 * c.radius), e.textPos, phi);
-        return { lines: b.lines, fills: b.fills, text: t, measure: 2 * c.radius };
+        return { lines: b.lines, fills: b.fills, text: t, measure: 2 * c.radius, anchor: b.anchor };
       }
       if (e.kind === "jogged") {
         const J = pts[2] ?? c.center;
@@ -435,7 +455,7 @@ function layoutKind(e: DimensionEntity, st: DimStyle, geo: DimGeometry): DimLayo
         return { lines: b.lines, fills: b.fills, text: { at, text: label, height: h, rotation: rho, width: w }, measure: c.radius };
       }
       const t = radialText(b, c.center, c.radius, phi, text(c.radius), e.textPos, false);
-      return { lines: b.lines, fills: b.fills, text: t, measure: c.radius };
+      return { lines: b.lines, fills: b.fills, text: t, measure: c.radius, anchor: b.anchor };
     }
     case "arclength": {
       if (!need(4)) return empty;
@@ -454,9 +474,34 @@ function layoutKind(e: DimensionEntity, st: DimStyle, geo: DimGeometry): DimLayo
         if (sweep < 1e-12) sweep = TAU;
       } else ({ start, sweep } = sectorThrough(aS, aE, aP));
       const R = Math.max(len(sub(AP, C)), 1e-6);
-      const b = new Builder(st, k);
+      const b = new Builder(st, k, e.flipArrows);
       const t = arcDimension(b, C, start, sweep, R, [rArc, rArc], text(rArc * sweep), e.textPos);
-      return { lines: b.lines, fills: b.fills, text: t, measure: rArc * sweep };
+      return { lines: b.lines, fills: b.fills, text: t, measure: rArc * sweep, anchor: b.anchor };
+    }
+    case "centermark": {
+      // D-07: a cross at the centre; "mark" style = a short cross, otherwise it runs past the circle by the mark size.
+      if (!need(1)) return empty;
+      const c = geo.circle ?? { center: pts[0], radius: need(2) ? len(sub(pts[1], pts[0])) : 0 };
+      if (!(c.radius >= 0) || !Number.isFinite(c.radius)) return empty;
+      const size = st.centerSize * k;
+      const reach = (st.centerMark === "mark" ? 0 : c.radius) + size;
+      if (!(reach > 0)) return empty;
+      const o = c.center;
+      return { lines: [[{ x: o.x - reach, y: o.y }, { x: o.x + reach, y: o.y }], [{ x: o.x, y: o.y - reach }, { x: o.x, y: o.y + reach }]], fills: [], text: null, measure: c.radius };
+    }
+    case "centerline": {
+      // D-07: the line midway between two lines (pts = a1 b1 a2 b2), reaching past their ends by the mark size.
+      if (!need(4)) return empty;
+      const [a1, b1] = pts;
+      let [, , a2, b2] = pts;
+      if (dot(sub(b1, a1), sub(b2, a2)) < 0) [a2, b2] = [b2, a2];
+      const s0 = { x: (a1.x + a2.x) / 2, y: (a1.y + a2.y) / 2 };
+      const s1 = { x: (b1.x + b2.x) / 2, y: (b1.y + b2.y) / 2 };
+      const L = len(sub(s1, s0));
+      if (!(L > 1e-9) || len(sub(b1, a1)) < 1e-9 || len(sub(b2, a2)) < 1e-9) return empty;
+      const dir = unit(sub(s1, s0));
+      const ext = st.centerSize * k;
+      return { lines: [[sub(s0, mul(dir, ext)), add(s1, mul(dir, ext))]], fills: [], text: null, measure: L };
     }
     case "ordinate": {
       if (!need(3)) return empty;

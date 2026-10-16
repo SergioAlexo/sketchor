@@ -37,6 +37,7 @@ export * from "./dimensions/context";
 export * from "./dimensions/styleFields";
 export * from "./dimensions/styleOps";
 export * from "./dimensions/build";
+export * from "./dimensions/edit";
 export * from "./layerTable";
 export * from "./commands";
 export * from "./sketchtext";

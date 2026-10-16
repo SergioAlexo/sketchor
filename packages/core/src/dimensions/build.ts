@@ -255,3 +255,46 @@ export function quickDimension(
   }
   return out;
 }
+
+/* --------------------- D-07: centre marks and centrelines --------------------- */
+
+/**
+ * A centre mark on a circle or arc. It follows the entity (`target`), so moving
+ * or resizing the circle moves the cross. `extended` runs the cross past the
+ * circle in the CENTER linetype (a centre-line cross); otherwise it is the short
+ * solid cross of DIMCEN "mark".
+ */
+export function dimCenterMark(c: Entity, o: DimBuildOptions = {}, opts: { extended?: boolean } = {}): DimensionEntity | null {
+  if (c.type !== "circle" && c.type !== "arc") return null;
+  if (!(c.radius > 0) || !Number.isFinite(c.radius)) return null;
+  const extended = !!opts.extended;
+  return base("centermark", [c.center, { x: c.center.x + c.radius, y: c.center.y }], o, {
+    target: c.id,
+    overrides: { centerMark: extended ? "line" : "mark" },
+    ...(extended ? { linetype: "CENTER" } : {}),
+  });
+}
+
+/**
+ * The centreline midway between two lines (a slot, a bar, a shaft): from the
+ * midpoint of their start points to the midpoint of their end points, reaching
+ * past by the style's centre-mark size. Both lines are followed (associative).
+ * Null for a zero-length line, or when the midline collapses to a point.
+ */
+export function dimCenterLine(l1: Entity, l2: Entity, o: DimBuildOptions = {}): DimensionEntity | null {
+  if (l1.type !== "line" || l2.type !== "line" || l1.id === l2.id) return null;
+  if (len(sub(l1.b, l1.a)) < 1e-12 || len(sub(l2.b, l2.a)) < 1e-12) return null;
+  // Pair the ends that point the same way, whichever way each line was drawn.
+  const flip = dot(sub(l1.b, l1.a), sub(l2.b, l2.a)) < 0;
+  const a2 = flip ? l2.b : l2.a;
+  const b2 = flip ? l2.a : l2.b;
+  const rA2: PointRef = { entityId: l2.id, point: flip ? "b" : "a" };
+  const rB2: PointRef = { entityId: l2.id, point: flip ? "a" : "b" };
+  const mid = len(sub(mul(add(l1.b, b2), 0.5), mul(add(l1.a, a2), 0.5)));
+  if (mid < 1e-9) return null;
+  return base("centerline", [l1.a, l1.b, a2, b2], o, {
+    refs: [{ entityId: l1.id, point: "a" }, { entityId: l1.id, point: "b" }, rA2, rB2],
+    targets: [l1.id, l2.id],
+    linetype: "CENTER",
+  });
+}

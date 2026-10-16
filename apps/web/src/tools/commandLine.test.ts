@@ -64,7 +64,7 @@ describe("the alias tables", () => {
   it("map only to tools the app has", () => {
     const known = new Set([
       "select", "line", "polyline", "rectangle", "circle", "arc", "ellipse", "spline", "splinedit", "polygon", "slot", "point", "image",
-      "measure", "straighten", "fill", "text", "mtext", "dim", "dimlinear", "dimaligned", "dimangular", "dimradial", "dimdiametric", "dimarc", "dimordinate", "dimjogged", "dimbaseline", "dimcontinue", "qdim", "pan", "move", "copy", "rotate", "scale", "mirror",
+      "measure", "straighten", "fill", "text", "mtext", "dim", "dimlinear", "dimaligned", "dimangular", "dimradial", "dimdiametric", "dimarc", "dimordinate", "dimjogged", "dimbaseline", "dimcontinue", "dimcenter", "dimcenterline", "qdim", "pan", "move", "copy", "rotate", "scale", "mirror",
       "trim", "split", "fillet", "chamfer", "offset", "zoom", "divide", "align", "lengthen", "match", "stretch", "block", "blockbase", "insert", "attdef",
     ]);
     for (const [alias, tool] of Object.entries(TOOL_ALIASES)) {
