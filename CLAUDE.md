@@ -253,6 +253,33 @@ preview becomes an image entity; PDF-based `.ai` → a message, no crash).
 260 MB. Real customer files are never copied into the repo; tests use inline
 synthetic fixtures (`eps.test.ts`). `export.ts` writes EPS (`entitiesToEps`, and `entitiesToEpsFile` with an optional DOS header + TIFF preview): geometry is translated to the lower-left corner and `%%SketchorOrigin x y mm` carries the offset so the importer restores absolute positions — `export.test.ts` pins the 0.001 mm round trip; keep it green when touching either side.
 
+## PDF import (`packages/core/src/pdf/`, plan F-08)
+
+`importPdf(bytes, {page})` reads **one page's vector content** (page 1 by
+default) into mm entities, page lower-left at the origin (CropBox ∩ MediaBox,
+`/Rotate` baked into the base matrix). Dependency-free: `objects.ts` (lexer/parser,
+depth-capped), `doc.ts` (`PdfDoc`: classic xref + xref streams + `/Prev` and
+hybrid `/XRefStm`, object streams, filters Flate/LZW/ASCIIHex/ASCII85/RunLength
+with PNG/TIFF predictors, page tree with inheritance, and a **linear rebuild
+scan** when the xref is wrong or missing), `inflate.ts` (own *synchronous*
+DEFLATE, output-capped — `DecompressionStream` is async-only), `font.ts`
+(ToUnicode CMaps, `/Differences`, `/Widths`/`/W` advances; no glyph outlines),
+`interp.ts` (content-stream interpreter). Painting goes through `eps/paint.ts`
+exactly like the EPS importer (polyline / exact cubic spline / circle / solid
+hatch; B = one entity carrying fill + stroke; black stays automatic). Form
+XObjects recurse (depth + cycle guard); optional-content groups (`/OC … BDC`,
+`/OCProperties /OFF`) name the layer and hidden ones are skipped; text becomes
+one TEXT entity per `Tj`/`TJ` (composite fonts without ToUnicode are skipped
+with a warning). Not imported (counted in `warnings`): raster images,
+shadings, pattern fills, clip *effects* (cropping clips are reported only).
+Encrypted files return `error` ("password-protected…") — never decrypted. It
+never throws: failures come back as `result.error` (also in `warnings`).
+Hostile input terminates: op budget (20 M), entity cap, q-depth 256, Form depth
+12, operand stack cap, finite/|v|<1e9 coordinate filter. Tests build PDFs inline
+(`pdfImport.test.ts`); never commit real files. Web: `.pdf` is in the format
+registry (Open / drop / overlay, no OS association or Explorer thumbnail yet);
+`io/drawingFile.ts` feeds the result through `importEpsResult`.
+
 ## Build & run
 
 ```bash

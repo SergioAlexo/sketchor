@@ -57,6 +57,7 @@ export * from "./svg";
 export * from "./kinds/registry";
 import "./kinds/builtin";
 export * from "./pdf";
+export * from "./pdf/index";
 export * from "./entitiesPdf";
 export * from "./font";
 export * from "./heal";

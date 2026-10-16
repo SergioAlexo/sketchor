@@ -1,4 +1,4 @@
-import { type BlockDefinition, type ForeignRecord, type TextStyle, decodeDxfBytes, sizeWarning, entitiesToDxf, entitiesToDxf2018, entitiesToEps, entitiesToEpsFile, entitiesToSvgDocument, flattenInserts } from "@sketchor/core";
+import { type BlockDefinition, importPdf, type ForeignRecord, type TextStyle, decodeDxfBytes, sizeWarning, entitiesToDxf, entitiesToDxf2018, entitiesToEps, entitiesToEpsFile, entitiesToSvgDocument, flattenInserts } from "@sketchor/core";
 import { DWG_UNREADABLE, dwgToDxfText } from "../browser/dwgImport";
 import { isModelFile, loadModel } from "../model3d/stepImport";
 import { acceptList, allExtensions, formatOf } from "./formats";
@@ -236,7 +236,7 @@ function defaultSaveName(format: SaveFormat): string {
   const base = target?.name ?? getSessions().find((s) => s.id === activeSessionId() && s.named)?.name;
   const ext = fileExtension(format);
   if (!base) return `drawing.${ext}`;
-  return `${base.replace(/\.(dxf|svg|dwg|eps|ai|step|stp|iges|igs)$/i, "")}.${ext}`;
+  return `${base.replace(/\.(dxf|svg|dwg|eps|ai|pdf|step|stp|iges|igs)$/i, "")}.${ext}`;
 }
 
 /** Saves the current drawing as DXF or SVG. No-op if the location prompt is cancelled. */
@@ -370,6 +370,9 @@ async function loadDrawingFileInner(name: string, file: File): Promise<void> {
   } else if (/\.(eps|ai)$/i.test(name)) {
     const eps = await importEpsBlob(file);
     openIntoSession(name, () => importEpsResult(eps.entities, eps.warnings));
+  } else if (/\.pdf$/i.test(name)) {
+    const pdf = importPdf(new Uint8Array(await file.arrayBuffer()));
+    openIntoSession(name, () => importEpsResult(pdf.entities, pdf.warnings));
   } else if (/\.dwg$/i.test(name)) {
     const text = await dwgToDxfText(await file.arrayBuffer());
     openIntoSession(name, () => (text ? importDxfText(text) : importEntities([], [DWG_UNREADABLE])));
@@ -422,7 +425,7 @@ export async function openDrawing(): Promise<void> {
  * the other and toggle its layer to spot what changed.
  */
 export async function overlayDrawingFile(name: string, file: File): Promise<{ count: number; warnings: string[]; layer: string }> {
-  const label = name.replace(/\.(dxf|svg|dwg|eps|ai)$/i, "");
+  const label = name.replace(/\.(dxf|svg|dwg|eps|ai|pdf)$/i, "");
   if (isModelFile(name)) {
     const warnings = ["3D models open in their own tab and can't be overlaid on a drawing"];
     useApp.getState().setFileWarnings(warnings);
@@ -435,6 +438,10 @@ export async function overlayDrawingFile(name: string, file: File): Promise<{ co
   if (/\.(eps|ai)$/i.test(name)) {
     const eps = await importEpsBlob(file);
     return overlayEpsResult(eps.entities, eps.warnings, label);
+  }
+  if (/\.pdf$/i.test(name)) {
+    const pdf = importPdf(new Uint8Array(await file.arrayBuffer()));
+    return overlayEpsResult(pdf.entities, pdf.warnings, label);
   }
   if (/\.dwg$/i.test(name)) {
     const text = await dwgToDxfText(await file.arrayBuffer());
