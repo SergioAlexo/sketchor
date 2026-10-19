@@ -197,8 +197,89 @@ fn place(shapes: &[Shape], base: Pt, at: Pt, sx: f64, sy: f64, rot: f64, out: &m
     }
 }
 
+/// Samples a (rational) B-spline with de Boor's algorithm. Empty when the data is inconsistent.
+fn bspline_points(degree: usize, knots: &[f64], ctrl: &[Pt], weights: &[f64]) -> Vec<Pt> {
+    let n = ctrl.len();
+    if degree < 1 || n < degree + 1 || knots.len() != n + degree + 1 {
+        return Vec::new();
+    }
+    let (t0, t1) = (knots[degree], knots[n]);
+    if !(t1 > t0) {
+        return Vec::new();
+    }
+    let w = |i: usize| weights.get(i).copied().filter(|v| *v != 0.0).unwrap_or(1.0);
+    let samples = (n * 8).clamp(32, 800);
+    let mut out = Vec::with_capacity(samples + 1);
+    for s in 0..=samples {
+        let t = if s == samples { t1 } else { t0 + (t1 - t0) * (s as f64 / samples as f64) };
+        // Span k with knots[k] <= t < knots[k+1], within [degree, n-1].
+        let mut k = degree;
+        while k + 1 < n && t >= knots[k + 1] {
+            k += 1;
+        }
+        let mut d: Vec<(f64, f64, f64)> = (0..=degree)
+            .map(|j| {
+                let i = k - degree + j;
+                (ctrl[i].x * w(i), ctrl[i].y * w(i), w(i))
+            })
+            .collect();
+        for r in 1..=degree {
+            for j in (r..=degree).rev() {
+                let i = k - degree + j;
+                let den = knots[i + degree - r + 1] - knots[i];
+                let a = if den.abs() < 1e-12 { 0.0 } else { (t - knots[i]) / den };
+                d[j] = (
+                    (1.0 - a) * d[j - 1].0 + a * d[j].0,
+                    (1.0 - a) * d[j - 1].1 + a * d[j].1,
+                    (1.0 - a) * d[j - 1].2 + a * d[j].2,
+                );
+            }
+        }
+        let h = d[degree];
+        if h.2.abs() > 1e-12 && h.0.is_finite() && h.1.is_finite() {
+            out.push(Pt { x: h.0 / h.2, y: h.1 / h.2 });
+        }
+    }
+    out
+}
+
+/// A B-spline from a group-pair slice: knots are every `knot_code`, control points the 10/20 pairs, weights `weight_code`.
+fn spline_from_pairs(seg: &[(i32, String)], degree: usize, knot_code: i32, weight_code: i32) -> Vec<Pt> {
+    let val = |c: i32| -> Vec<f64> { seg.iter().filter(|(k, _)| *k == c).filter_map(|(_, v)| v.trim().parse().ok()).collect() };
+    let knots = val(knot_code);
+    let (xs, ys) = (val(10), val(20));
+    let ctrl: Vec<Pt> = (0..xs.len().min(ys.len())).map(|i| Pt { x: xs[i], y: ys[i] }).collect();
+    bspline_points(degree, &knots, &ctrl, &val(weight_code))
+}
+
+/// A polyline as connected `Line`s.
+fn polyline_lines(pts: &[Pt], closed: bool, out: &mut Vec<Shape>) {
+    for i in 0..pts.len().saturating_sub(1) {
+        out.push(Shape::Line(pts[i], pts[i + 1]));
+    }
+    if closed && pts.len() > 2 {
+        out.push(Shape::Line(pts[pts.len() - 1], pts[0]));
+    }
+}
+
+/// Elliptical arc points (angles in radians, as the DXF parameter; ccw sweep from `a0` to `a1`).
+fn ellipse_points(c: Pt, major: Pt, ratio: f64, a0: f64, a1: f64) -> Vec<Pt> {
+    let mut sweep = (a1 - a0).rem_euclid(std::f64::consts::TAU);
+    if sweep < 1e-9 {
+        sweep = std::f64::consts::TAU;
+    }
+    let steps = ((sweep / 0.1).ceil() as usize).clamp(8, 128);
+    let minor = Pt { x: -major.y * ratio, y: major.x * ratio };
+    (0..=steps)
+        .map(|k| {
+            let t = a0 + sweep * (k as f64 / steps as f64);
+            Pt { x: c.x + major.x * t.cos() + minor.x * t.sin(), y: c.y + major.y * t.cos() + minor.y * t.sin() }
+        })
+        .collect()
+}
+
 /// HATCH boundary loops (polyline paths and line/arc edge paths) as rings.
-/// A loop containing an ellipse or spline edge is dropped (the outline is unreadable here).
+/// A loop with an unreadable edge is dropped.
 fn hatch_rings(raw: &Raw) -> Vec<Vec<Pt>> {
     let p = &raw.pairs;
     let n = |i: usize| p[i].1.trim().parse::<f64>().unwrap_or(0.0);
@@ -280,6 +361,30 @@ fn hatch_rings(raw: &Raw) -> Vec<Vec<Pt>> {
                             }
                         }
                     }
+                    3 => {
+                        let c = Pt { x: g(10).unwrap_or(0.0), y: g(20).unwrap_or(0.0) };
+                        let major = Pt { x: g(11).unwrap_or(0.0), y: g(21).unwrap_or(0.0) };
+                        let ratio = g(40).unwrap_or(1.0);
+                        let (a0, a1) = (g(50).unwrap_or(0.0).to_radians(), g(51).unwrap_or(360.0).to_radians());
+                        let ccw = g(73).unwrap_or(1.0) != 0.0;
+                        let mut pts = if ccw { ellipse_points(c, major, ratio, a0, a1) } else { ellipse_points(c, major, ratio, a1, a0) };
+                        if !ccw {
+                            pts.reverse();
+                        }
+                        if pts.is_empty() {
+                            ok = false;
+                        }
+                        ring.extend(pts);
+                    }
+                    4 => {
+                        let degree = g(94).unwrap_or(3.0).max(1.0) as usize;
+                        // Knots follow the 95/96 counts; weights are 42, control points 10/20.
+                        let pts = spline_from_pairs(seg, degree, 40, 42);
+                        if pts.is_empty() {
+                            ok = false;
+                        }
+                        ring.extend(pts);
+                    }
                     _ => ok = false,
                 }
             }
@@ -355,6 +460,23 @@ fn convert(raws: &[Raw], blocks: &HashMap<String, Block>, depth: usize, out: &mu
                         out,
                     );
                 }
+            }
+            "SPLINE" => {
+                let degree = num(raw, 71, 3.0).max(1.0) as usize;
+                let closed = (num(raw, 70, 0.0) as i64) & 1 == 1;
+                let mut pts = spline_from_pairs(&raw.pairs, degree, 40, 41);
+                if pts.is_empty() {
+                    // No usable control net: fall back to the fit points (11/21).
+                    let (xs, ys) = (nums(raw, 11), nums(raw, 21));
+                    pts = (0..xs.len().min(ys.len())).map(|i| Pt { x: xs[i], y: ys[i] }).collect();
+                }
+                polyline_lines(&pts, closed && pts.len() > 2, out);
+            }
+            "ELLIPSE" => {
+                let c = Pt { x: num(raw, 10, 0.0), y: num(raw, 20, 0.0) };
+                let major = Pt { x: num(raw, 11, 0.0), y: num(raw, 21, 0.0) };
+                let pts = ellipse_points(c, major, num(raw, 40, 1.0), num(raw, 41, 0.0), num(raw, 42, std::f64::consts::TAU));
+                polyline_lines(&pts, false, out);
             }
             "LWPOLYLINE" => {
                 let xs = nums(raw, 10);
@@ -589,5 +711,21 @@ mod tests {
         assert!(parse("0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nNOPE\n0\nENDSEC\n").is_empty());
         assert!(parse("not a dxf at all").is_empty());
         let _ = parse("0\nSECTION\n2\nENTITIES\n0\nHATCH\n91\n9\n92\n2\n93\n5\n10\n1\n0\nENDSEC\n");
+    }
+}
+
+#[cfg(test)]
+mod spline_tests {
+    use super::*;
+
+    #[test]
+    fn spline_entity_and_spline_hatch_edge_are_drawn() {
+        // Quadratic clamped B-spline, 3 control points.
+        let spline = "0\nSECTION\n2\nENTITIES\n0\nSPLINE\n70\n8\n71\n2\n72\n6\n73\n3\n40\n0\n40\n0\n40\n0\n40\n1\n40\n1\n40\n1\n10\n0\n20\n0\n10\n5\n20\n10\n10\n10\n20\n0\n0\nENDSEC\n0\nEOF\n";
+        let shapes = parse(spline);
+        assert!(shapes.iter().filter(|s| matches!(s, Shape::Line(..))).count() > 10);
+        let hatch = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n2\nSOLID\n70\n1\n91\n1\n92\n0\n93\n1\n72\n4\n94\n2\n73\n0\n74\n0\n95\n6\n96\n3\n40\n0\n40\n0\n40\n0\n40\n1\n40\n1\n40\n1\n10\n0\n20\n0\n10\n5\n20\n10\n10\n10\n20\n0\n97\n0\n75\n0\n0\nENDSEC\n0\nEOF\n";
+        let shapes = parse(hatch);
+        assert!(shapes.iter().any(|s| matches!(s, Shape::Fill(_))));
     }
 }
