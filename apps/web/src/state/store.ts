@@ -1402,6 +1402,14 @@ export function newTab(): void {
   bumpSessionsVersion();
 }
 
+/** Opens a new, empty tab with a given display name (a plugin's result) and switches to it. */
+export function openNamedTab(name: string): void {
+  const s = newSession(name);
+  sessions.push(s);
+  switchToSession(s.id);
+  bumpSessionsVersion();
+}
+
 /** Closes a tab (prompting if it has unsaved changes); always leaves at least one tab open. */
 export function closeTab(id: string): void {
   const idx = sessions.findIndex((s) => s.id === id);

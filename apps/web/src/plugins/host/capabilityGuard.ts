@@ -38,6 +38,8 @@ const REQUIRED: Record<string, Permission | null> = {
   "ui.readPickedFile": null,
   "app.displayUnit": null,
   "app.onDisplayUnitChange": null,
+  // Creates a tab and writes a drawing into it - same power as document.apply.
+  "app.openDocumentTab": "write-document",
 };
 
 export class UnknownMethodError extends Error {

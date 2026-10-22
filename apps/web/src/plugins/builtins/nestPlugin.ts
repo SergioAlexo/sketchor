@@ -1,7 +1,7 @@
 import {
   area as polygonArea,
   bounds,
-  buildTrueNestLayout,
+  buildSideBySideLayout,
   checkNestOverlaps,
   clearPreviousLayout,
   computeJobMetrics,
@@ -13,6 +13,7 @@ import {
   cutTableRowFor,
   extractParts,
   extractPartsWithDiagnostics,
+  groupIdenticalSheets,
   materializeInstance,
   nestTrueShapeSearch,
   NEST_HOLES_LAYER,
@@ -587,8 +588,12 @@ const plugin: PluginModule = {
           };
           const sheetLabels = result.sheets.map((s, i) => sheetLabel(s, i));
 
-          const layoutCommands = buildTrueNestLayout(result.sheets, placements, sheetLabel);
-          await sketchor.document.apply([...clearPreviousLayout(model), ...layoutCommands]);
+          // RN-40 (NF-07): the result opens in its own tab so the source
+          // drawing stays clean; identical sheets are drawn once with "xN".
+          const sheetGroups = groupIdenticalSheets(result.sheets, result.placed);
+          const layoutCommands = buildSideBySideLayout(result.sheets, placements, sheetGroups, sheetLabel);
+          const tabName = `Nest – ${result.placed.length} part${result.placed.length === 1 ? "" : "s"}, ${result.sheets.length} sheet${result.sheets.length === 1 ? "" : "s"}`;
+          await sketchor.app.openDocumentTab(tabName, layoutCommands);
 
           const metricsGeoMap = new Map(withSettings.map((p) => [p.key, { outer: p.outer, holes: p.holes }]));
           const jobMetrics: JobMetrics = computeJobMetrics(result, metricsGeoMap, state.stock, DEFAULT_CUT_TABLE, { gravity: state.gravity });

@@ -57,6 +57,13 @@ export interface AppApi {
   displayUnit(): Promise<DisplayUnitInfo>;
   /** Fires whenever the user changes the display unit. Returns an unsubscribe function. */
   onDisplayUnitChange(listener: (info: DisplayUnitInfo) => void): Promise<Unsubscribe>;
+  /**
+   * Requires `write-document`. Opens a NEW document tab named `name`, switches
+   * to it, applies `commands` there as a single undo step and fits the view.
+   * The source drawing is left untouched. Later `document.*` calls address
+   * the new (now active) tab. Added in 0.10.0.
+   */
+  openDocumentTab(name: string, commands?: Command[]): Promise<void>;
 }
 
 export interface DocumentApi {
@@ -331,6 +338,7 @@ export interface ImporterContext {
  * `ui.saveFile(name, data, filters)`, a save-as dialog a plugin can trigger
  * directly — additive. 0.9.0 added `ui.pickFolder()` / `ui.readPickedFile()`,
  * a folder picker that lists files (subfolders included) and reads them back
- * — additive.
+ * — additive. 0.10.0 added `app.openDocumentTab(name, commands)`, which opens a
+ * new tab holding a plugin-built drawing (the nest result) — additive.
  */
-export const HOST_API_VERSION = "0.9.0";
+export const HOST_API_VERSION = "0.10.0";

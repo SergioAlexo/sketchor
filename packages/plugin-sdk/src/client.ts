@@ -87,6 +87,7 @@ export function createClient(transport: RpcTransport): PluginHostApi {
       displayUnit: () => transport.call("app.displayUnit", []) as Promise<DisplayUnitInfo>,
       onDisplayUnitChange: (listener: (info: DisplayUnitInfo) => void): Promise<Unsubscribe> =>
         transport.subscribe("app.onDisplayUnitChange", [], (p) => listener(p as DisplayUnitInfo)),
+      openDocumentTab: (name: string, commands?: Command[]) => transport.call("app.openDocumentTab", [name, commands ?? []]) as Promise<void>,
     },
 
     // Contribution registration is local to the sandbox — no RPC. Handlers land

@@ -8,7 +8,7 @@ import {
   type SaveFileResult,
   type UiShowOptions,
 } from "@sketchor/core";
-import { bus, doc, useApp } from "../../state/store";
+import { bus, doc, openNamedTab, useApp } from "../../state/store";
 import { factorFromMm, type DisplayUnit } from "../../units";
 import { hidePanel, postToPanel, showPanel, subscribeToPanel } from "./uiManager";
 import { printHtml } from "../../print/printHtml";
@@ -224,6 +224,19 @@ export async function dispatchCall(ctx: HostContext, method: string, args: unkno
 
     case "app.displayUnit":
       return currentDisplayUnit();
+
+    case "app.openDocumentTab": {
+      const commands = args[1] ?? [];
+      assertCommands(commands);
+      openNamedTab(String(args[0] ?? "Plugin").slice(0, 120) || "Plugin");
+      // `bus`/`doc` are live bindings: they now point at the new tab.
+      if (commands.length > 0) {
+        bus.execute({ type: "batch", commands });
+        useApp.getState().syncLayersFromDoc();
+      }
+      useApp.getState().requestFit();
+      return undefined;
+    }
 
     default:
       throw new Error(`Unhandled call method "${method}"`);
