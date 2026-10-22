@@ -94,4 +94,18 @@ export const BUILTIN_MANIFESTS: PluginManifest[] = [
     },
     permissions: ["read-document", "write-document", "storage"],
   },
+  {
+    id: "com.sketchor.sheet-nesting",
+    version: "1.0.0",
+    name: "Sheet Nesting",
+    description: "Raster-first sheet nesting with a true-shape option: materials, sheet stock, groups from a parts list, KPIs, DXF/ZIP and G-code.",
+    publisher: "Sketchor",
+    engines: { sketchor: `^${HOST_API_VERSION}` },
+    main: "sheetNestingPlugin.ts",
+    ui: "sheetNesting.html",
+    contributes: {
+      commands: [{ id: "sheet-nesting.open", title: "Sheet Nesting (panel)" }],
+    },
+    permissions: ["read-document", "write-document", "storage"],
+  },
 ];

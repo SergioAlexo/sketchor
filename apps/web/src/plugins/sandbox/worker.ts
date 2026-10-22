@@ -21,6 +21,7 @@ const BUILTINS: Record<string, () => Promise<{ default: PluginModule }>> = {
   "com.sketchor.truck-nesting": () => import("../builtins/truckNestingPlugin"),
   "com.sketchor.gcode": () => import("../builtins/gcodePlugin"),
   "com.sketchor.nest": () => import("../builtins/nestPlugin"),
+  "com.sketchor.sheet-nesting": () => import("../builtins/sheetNestingPlugin"),
 };
 
 const transport = new WorkerTransport();

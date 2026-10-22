@@ -98,7 +98,7 @@ export function computeJobMetrics(
   parts: Map<string, PartGeometry>,
   stock: StockRow[],
   cutTable: CutTableRow[],
-  opts: { remnantMinHeight?: number; margin?: number; gravity?: Gravity } = {},
+  opts: { remnantMinHeight?: number; margin?: number; gravity?: Gravity; cut?: ReadonlyMap<string, { cutLength: number; pierceCount: number }> } = {},
 ): JobMetrics {
   const remnantMinHeight = opts.remnantMinHeight ?? DEFAULT_REMNANT_MIN_HEIGHT;
   const margin = opts.margin ?? 0;
@@ -126,8 +126,10 @@ export function computeJobMetrics(
       const geo = parts.get(placement.partId);
       if (!geo) continue;
       netPartAreaTotal += netArea(geo);
-      cutLengthMm += perimeter(geo.outer) + geo.holes.reduce((sum, h) => sum + perimeter(h), 0);
-      pierceCount += 1 + geo.holes.length;
+      // RN-43: exact cut length / pierces from part extraction (true arc lengths) when given, so the panel KPIs and the report agree.
+      const exact = opts.cut?.get(placement.partId);
+      cutLengthMm += exact ? exact.cutLength : perimeter(geo.outer) + geo.holes.reduce((sum, h) => sum + perimeter(h), 0);
+      pierceCount += exact ? exact.pierceCount : 1 + geo.holes.length;
 
       const box = bounds(localFrame(geo.outer, placement.rotationDeg, placement.mirrored));
       if (topGravity) {

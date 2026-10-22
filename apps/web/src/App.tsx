@@ -698,6 +698,9 @@ export function App() {
       } else if (matchesBinding(e, "app.sheetNest")) {
         e.preventDefault();
         void runCommand("nest.open");
+      } else if (matchesBinding(e, "app.sheetNesting")) {
+        e.preventDefault();
+        void runCommand("sheet-nesting.open");
       } else if (matchesBinding(e, "app.shortcuts")) {
         e.preventDefault();
         setShowShortcuts(true);
@@ -1375,6 +1378,21 @@ export function App() {
               <rect x="6" y="7" width="5" height="5" stroke="currentColor" strokeWidth="1.4" fill="none" />
               <circle cx="16" cy="10" r="2.5" stroke="currentColor" strokeWidth="1.4" fill="none" />
               <path d="M6 15h5l-2 3H6z" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            className="action"
+            title={withKey("Sheet Nesting — raster-first nesting, groups from a parts list — right-click to add a shortcut", "app.sheetNesting")}
+            data-testid="sheet-nesting-open"
+            onClick={() => void runCommand("sheet-nesting.open")}
+            onContextMenu={rebind("app.sheetNesting")}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18">
+              <rect x="3" y="3" width="18" height="18" rx="1.5" stroke="currentColor" strokeWidth="1.6" fill="none" />
+              <rect x="5.5" y="5.5" width="7" height="4.5" fill="currentColor" opacity="0.85" />
+              <rect x="13.5" y="5.5" width="5" height="9" fill="currentColor" opacity="0.85" />
+              <rect x="5.5" y="11.5" width="3.5" height="7" fill="currentColor" opacity="0.85" />
+              <rect x="10" y="15.5" width="7" height="3" fill="currentColor" opacity="0.85" />
             </svg>
           </button>
           <button

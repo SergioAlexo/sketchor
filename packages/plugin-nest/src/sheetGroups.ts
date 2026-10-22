@@ -1,6 +1,7 @@
-import { translated } from "@sketchor/core";
-import { add, text, type Command } from "@sketchor/plugin-sdk";
-import { NEST_HOLES_LAYER, NEST_LABELS_LAYER, NEST_PARTS_LAYER, newGroupId } from "./layout";
+import { translated, type Entity } from "@sketchor/core";
+import { add, line, text, type Command } from "@sketchor/plugin-sdk";
+import { NEST_HOLES_LAYER, NEST_LABELS_LAYER, NEST_PARTS_LAYER, NEST_SHEET_LAYER, newGroupId } from "./layout";
+import { clampStripRect } from "./sheetNesting";
 import { sheetOutlineEntities, type SheetPlacementEntities } from "./trueLayout";
 import type { TrueNestPlacement, TrueNestSheet } from "./trueNest";
 
@@ -66,6 +67,31 @@ export function describeGroup(indices: number[]): string {
   return `Sheets ${contiguous ? `${n[0]}–${n[n.length - 1]}` : n.join("+")} ×${n.length}`;
 }
 
+/**
+ * RN-22: the clamp strip drawn hatched on a sheet (sheet-local mm): the strip's
+ * outline plus 45-degree hatch lines clipped to it, on the sheet layer. The
+ * strip is where the engines keep parts out, so the picture shows why that
+ * edge is empty. Line count is capped so a huge sheet cannot flood the canvas.
+ */
+export function clampHatchEntities(sheet: { width: number; height: number }, clamp: number): Entity[] {
+  const r = clampStripRect(sheet, clamp);
+  if (!r) return [];
+  const step = Math.max(15, (r.w + r.h) / 300);
+  const out: Entity[] = [];
+  const o = { layer: NEST_SHEET_LAYER };
+  const x1 = r.x + r.w;
+  const y1 = r.y + r.h;
+  out.push(line({ x: r.x, y: r.y }, { x: x1, y: r.y }, o), line({ x: x1, y: r.y }, { x: x1, y: y1 }, o), line({ x: x1, y: y1 }, { x: r.x, y: y1 }, o), line({ x: r.x, y: y1 }, { x: r.x, y: r.y }, o));
+  // hatch lines x - y = c, clipped to the rectangle
+  for (let c = r.x - y1; c <= x1 - r.y; c += step) {
+    const xa = Math.max(r.x, c + r.y);
+    const xb = Math.min(x1, c + y1);
+    if (xb - xa < 1e-6) continue;
+    out.push(line({ x: xa, y: xa - c }, { x: xb, y: xb - c }, o));
+  }
+  return out;
+}
+
 /** Gap between side-by-side sheets, mm. */
 const SIDE_GAP = 200;
 
@@ -80,6 +106,7 @@ export function buildSideBySideLayout(
   placements: SheetPlacementEntities[],
   groups: SheetGroup[],
   sheetLabel: (sheet: TrueNestSheet, index: number) => string,
+  opts: { clamp?: number } = {},
 ): Command[] {
   const commands: Command[] = [];
   let x = 0;
@@ -95,6 +122,7 @@ export function buildSideBySideLayout(
     const { outline, title } = sheetOutlineEntities(sheet, label);
     push(translated(outline, x, 0));
     push(translated(title, x, 0));
+    for (const e of clampHatchEntities(sheet, opts.clamp ?? 0)) push(translated(e, x, 0));
     for (const p of placements.filter((p) => p.sheet === first)) {
       for (const e of p.outerEntities) push({ ...translated(e, x, 0), layer: NEST_PARTS_LAYER });
       for (const e of p.holeEntities) push({ ...translated(e, x, 0), layer: NEST_HOLES_LAYER });

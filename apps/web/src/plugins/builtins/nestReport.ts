@@ -40,6 +40,14 @@ export interface LastNest {
   /** Every working-set part that had quantity > 0 when nested, for ordered-vs-placed. */
   ordered: { key: string; name: string; quantity: number }[];
   unit: { perMm: number; label: string };
+  /** RN-42: a credit / footer line printed at the end of the report. */
+  footer?: string;
+  /** RN-42: job-level KPIs, stock usage and group names, already formatted by the caller. */
+  summary?: {
+    kpis: { sheets: number; toPurchase: number; utilisation: number; placed: number; required: number; cutLengthMm: number; pierces: number; unplaced: number };
+    stock: { name: string; size: string; used: number; purchased: number; available: number | null }[];
+    groups: string[];
+  };
 }
 
 function placementsOn(lastNest: LastNest, sheetIdx: number): LastNestPlacement[] {

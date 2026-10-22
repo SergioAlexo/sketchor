@@ -25,3 +25,4 @@ export * from "./catalog";
 export * from "./cnc";
 export * from "./nestJob";
 export * from "./nestEngine";
+export * from "./sheetNesting";

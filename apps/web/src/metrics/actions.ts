@@ -67,6 +67,7 @@ export const TRACKED_BUTTONS: Record<string, string> = {
   "toggle-closed-regions": "view.closedRegions",
   "truck-nesting-open": "app.truckNesting",
   "sheet-nest-open": "app.sheetNest",
+  "sheet-nesting-open": "app.sheetNesting",
   "toggle-shortcuts": "app.shortcuts",
   "toggle-touch-mode": "app.touchMode",
   "check-updates": "app.updateMenu",

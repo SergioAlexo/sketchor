@@ -61,6 +61,8 @@ is listed under Later. The sheet calculator has four pieces:
    examples from the reference in tracked files or fixtures (the BOM hint text
    uses real-looking numbers — replace with `PN-0001` style).
 
+5. **Separate plugin (2026-10-22).** New functionality ships as a separate plugin `Sheet Nesting` (`com.sketchor.sheet-nesting`); the old Sheet Metal Nest is left unchanged.
+
 ## 4. Work items
 
 ### Phase 1 — Engine (packages/plugin-nest/src/raster/)
@@ -266,3 +268,6 @@ One row per landed item, newest last. Agents append in the same commit as the it
 | RN-40 | this commit | `sheetGroups.ts`: `groupIdenticalSheets` (size + sorted placements rounded to 1e-3, mirrors `sigOf`/`groupSheets`), `describeGroup`, `buildSideBySideLayout` (groups left to right on the four existing layers, "Sheets 3-7 x5" in the title). Host API 0.10.0: additive `app.openDocumentTab(name, commands?)` (needs `write-document`; new tab, one undo step, fit view). The nest plugin now draws its result there instead of stacking sheets in the source drawing; `clearPreviousLayout` is still used by "Clear". Ported from the Sheet Nesting Calculator by Oleksandr Borenko. |
 | RN-06 | this commit | `nestEngine.ts`: `NestEngine {id, label, supports(req)->Unsupported[], run(req,hooks)}` for `raster` and `true-shape` over `NestRequest {job: NestJob, parts}`; both return `RasterNestResult` (superset of `TrueNestResult`: effective `stock`, `purchased[]`, notes). True shape gains stock qty + purchase size (appended qty-null row) and clamp (short side reduced, placements shifted back). 600-instance cap reported by `supports` (`quantity`), not as a failure. NFP engine untouched. Tests run every case against both ids. |
 | True shape fix | this commit | NFP candidates now include NFP-edge x sheet-boundary crossings; 60 rects 4 -> 2 sheets, bench table updated. |
+| RN-06/20 wiring | this commit | New plugin `sheetNestingPlugin.ts` (id `com.sketchor.sheet-nesting`, command `sheet-nesting.open`, toolbar button, rebindable `app.sheetNesting`): state is a `NestJob` (fresh storage; `jobFromLegacyState` not used), Nest runs `engineFor(job.engine)` with `nest-progress` streaming and a working Stop, result opens in a canvas tab (RN-40), G-code + DXF/ZIP kept. `sheetNesting.ts` holds the pure helpers (readiness, `combineResults`, KPIs, stock usage, job file). |
+| RN-43 | this commit | `computeJobMetrics` takes `opts.cut` (partExtraction cut length + pierces per part), so panel KPIs and report agree. |
+| RN-30/11/32/22 | this commit | Panel: job card (material, sheet per material incl. custom add/remove, stock on hand + buy extra, thickness + gauge picker, machine), engine selector with unsupported options greyed + reason, collapsible cutting parameters (fraction input), parts table (thumb, size, holes, notes, CNC router checks, qty, rotation, per-file unit), Add selection / Add files (DXF, DWG; SVG not readable in the plugin worker - no DOMParser), Calculate/Stop/Clear with orange/green fields; results: KPI row, stock usage, unplaced names, identical sheets collapsed, per-sheet DXF, ZIP, G-code; clamp strip hatched on the canvas + bed-size warning. |
