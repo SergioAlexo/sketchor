@@ -178,6 +178,30 @@ is listed under Later. The sheet calculator has four pieces:
   `src/trueShape/` next to `src/raster/`; update `sheet-metal-nesting-plan.md`
   and cad-fidelity group 14 checkboxes. **S**
 
+### RN-05 benchmark results (2026-10-22, dev PC, spacing 3 mm, margin 5 mm, raster accuracy "normal" = 1.25 mm cell)
+
+Reproduce: `SKETCHOR_NEST_BENCH=1 npx vitest run packages/plugin-nest/src/raster/rasterBench`.
+"NFP quick" = single pass, "NFP normal" = 3 s search; "raster 1-pass" = no budget, "raster 3 s" = 3 s restarts.
+Utilisation = net part area / area of sheets used (same stock size for both engines; NFP also shrinks its last sheet).
+
+| Job | NFP quick | NFP normal (3 s) | Raster 1-pass | Raster 3 s |
+|---|---|---|---|---|
+| 60 rects 100x60, 600x400 | 4 sh, 37.5 %, 21 ms | 4 sh, 3.0 s | 2 sh, 75.0 %, 5 ms | 2 sh, 75.0 % |
+| 14 large L 400/150, 1500x1000 | 3 sh, 30.3 %, 1 ms | 3 sh | 2 sh, 45.5 %, 9 ms | 2 sh |
+| mixed rect+L+disc (24/30/42), 2000x1000 | 2 sh, 33.9 %, 1.8 s | 2 sh, 4.2 s | 1 sh, 67.7 %, 36 ms | 1 sh |
+| 6 rings with hole + 36 plugs, 1500x1000 | 1 sh, 33.9 %, 319 ms | 1 sh | 1 sh, 33.9 %, 9 ms | 1 sh |
+| 150 tags 60x25, 400x300 | 5 sh, 37.5 %, 98 ms | 5 sh | 3 sh, 62.5 %, 2 ms | 3 sh |
+| 600 identical 80x40, 1500x1000 (NFP cap) | 3 sh, 42.7 %, 10.9 s | 3 sh, 10.0 s | 2 sh, 64.0 %, 8 ms | 2 sh |
+
+Reading: on these axis-aligned / quarter-turn jobs the raster engine is as good or
+better in every case and 100-1000x faster; the 600-instance case that takes NFP ~10 s
+is 8 ms. NFP's strengths are not visible here (the table is about density): exact
+clearance (no up-to-one-cell extra gap), explicit `allowInHoles` control, mirroring.
+Suggested panel hint: "Raster: default - fast, handles any quantity. True shape: pick for
+few large parts with tight kerf, or when you need exact clearance or mirroring."
+Caveat: the NFP engine is run with its default candidate set; the gap on rectangles
+(4 vs 2 sheets) looks larger than inherent to NFP and is worth a look in RN-06.
+
 ## 5. Order of work
 
 RN-01 → RN-02 → RN-03 → RN-04 → RN-05 → RN-06 → RN-10 → RN-20/21 → RN-30 →
@@ -231,3 +255,4 @@ One row per landed item, newest last. Agents append in the same commit as the it
 | RN-21 | this commit | `catalog.ts`: materials, default sheets, gauge/thickness lists, machine defaults, rotation codes (`rotationAngles`, `defaultRotationFor`), accuracy cells. Inches with `unit: "in"`, `estimate: true` on every table; defaults return fresh copies. Ported from the Sheet Nesting Calculator by Oleksandr Borenko. |
 | RN-50 | this commit | `cnc.ts`: inscribedR, cncInfo/cncInfoForPart (hole diameters, unreachable inside corners >40 deg turn), cncWarnings(info, bit) as structured data (UI formats). Ported from the Sheet Nesting Calculator by Oleksandr Borenko. |
 | RN-41 | this commit | `zip.ts` (store-only ZIP + `readZip` for the round-trip test, CRC32, UTF-8 flag only for non-ASCII names) and `dxfPreset.ts` (CAM preset: CUT_OUTER/CUT_INNER, optional SHEET, no labels, sheet-local lower-left origin, materialized arcs/bulges kept). **CAM is the default** (plan Q5 recommendation); `msg.preset:"nest"` keeps the old canvas-layer export. Panel unchanged: the existing "All sheets" option now downloads a ZIP of one DXF per sheet; `preset`/`includeSheet` are accepted on the `export-dxf` message for the later panel wave. Ported from the Sheet Nesting Calculator by Oleksandr Borenko. |
+| RN-05 | this commit | `raster/rasterBench.test.ts` (env `SKETCHOR_NEST_BENCH=1` prints table; always-on tiny sanity). Results in "RN-05 benchmark results" above. |
