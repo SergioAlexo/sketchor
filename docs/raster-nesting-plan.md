@@ -11,7 +11,13 @@ toolpath/writer, Check nest.
 
 ## 1. What the reference is
 
-A single offline HTML file (the user's own tool, two calculators in one shell:
+**Credit:** the reference calculator — its raster engine, DXF-to-part rules,
+job setup and parts-list intake — was developed by **Oleksandr Borenko**.
+Every file ported from it says so in its header docblock, and the nest panel's
+footer and the printed report show "Nesting engine based on the Sheet Nesting
+Calculator by Oleksandr Borenko".
+
+A single offline HTML file (two calculators in one shell:
 **bar cutting** and **sheet nesting**). Only sheet nesting is in scope; bar cutting
 is listed under Later. The sheet calculator has four pieces:
 
