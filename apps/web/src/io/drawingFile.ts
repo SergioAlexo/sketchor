@@ -1,3 +1,4 @@
+import { emitFileSaved } from "./savedFiles";
 import { type BlockDefinition, importPdf, type ForeignRecord, type TextStyle, decodeDxfBytes, sizeWarning, entitiesToDxf, entitiesToDxf2018, entitiesToEps, entitiesToEpsFile, entitiesToSvgDocument, flattenInserts } from "@sketchor/core";
 import { DWG_UNREADABLE, dwgToDxfText } from "../browser/dwgImport";
 import { isModelFile, loadModel } from "../model3d/stepImport";
@@ -198,11 +199,14 @@ async function writeTarget(target: SaveTarget, text: string | Uint8Array): Promi
     const writable = await target.handle.createWritable();
     await writable.write(text);
     await writable.close();
+    emitFileSaved({ name: target.name, handle: target.handle });
     return;
   }
   const { invoke } = await import("@tauri-apps/api/core");
   if (typeof text === "string") await invoke("write_drawing_file", { path: target.path, contents: text });
   else await invoke("write_drawing_bytes", { path: target.path, base64: toBase64(text) });
+  // Tell the file browser: its cached text/thumbnail/size for this file are now stale.
+  emitFileSaved({ name: target.name, path: target.path });
 }
 
 function noticeSaved(name: string): void {

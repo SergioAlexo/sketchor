@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useTheme } from "../theme/themeStore";
 import { decodeDxfBytes, parseSvgText } from "@sketchor/core";
 import { getSessions, importDxfText, importEpsResult, importSvgText, openIntoSession, useApp } from "../state/store";
+import { TextCache, entryMatchesSaved, onFileSaved, type SavedFile } from "../io/savedFiles";
 import { bindDxfVersion, bindSaveHandle, bindSavePath, fileDxfText, openModelBytes } from "../io/drawingFile";
 import { isModelFile } from "../model3d/stepImport";
 import { acceptList, browserAddFilter, mimeOf } from "../io/formats";
@@ -22,6 +23,8 @@ interface Entry {
   mtime?: number;
   /** File size in bytes, when known. */
   size?: number;
+  /** Bumped when the file is known to have changed on disk (a save); re-triggers the thumbnail. */
+  rev?: number;
 }
 
 type SortMode = "name" | "date" | "size";
@@ -367,7 +370,9 @@ export function FileExplorerPanel({ hidden, onClose }: { hidden: boolean; onClos
    * starts synchronously — there's no chance to await a read once `dragstart`
    * fires, so every draggable file's text has to already be here.
    */
-  const textCache = useRef(new Map<string, string>());
+  const textCache = useRef(new TextCache());
+  const entriesRef = useRef<Entry[]>([]);
+  entriesRef.current = entries;
   const desktopDir = useApp((s) => s.fileBrowserDesktopDir);
   const activeSessionId = useApp((s) => s.activeSessionId);
 
@@ -568,10 +573,66 @@ export function FileExplorerPanel({ hidden, onClose }: { hidden: boolean; onClos
     const key = tagKey(entry);
     const hit = textCache.current.get(key);
     if (hit !== undefined) return hit;
+    const gen = textCache.current.generation(key);
     const text = await readEntryText(entry);
-    textCache.current.set(key, text);
+    textCache.current.set(key, text, gen); // dropped if a save invalidated the entry mid-read
     return text;
   };
+
+  /**
+   * Always re-reads from disk (and refreshes the cache): used when opening, so
+   * a stale cached copy — from a save, or an edit made outside the app — can
+   * never be what gets loaded. If the content differs from what the card was
+   * showing, the card is told to redraw its thumbnail.
+   */
+  const freshTextOf = (entry: Entry) => async (): Promise<string> => {
+    const key = tagKey(entry);
+    const before = textCache.current.get(key);
+    textCache.current.invalidate(key);
+    const gen = textCache.current.generation(key);
+    const text = await readEntryText(entry);
+    textCache.current.set(key, text, gen);
+    if (before !== undefined && before !== text) bumpEntry(key, {});
+    return text;
+  };
+
+  /** Patches one entry in place (new object, so memoised lists and thumbnail effects see the change) and bumps its `rev`. */
+  const bumpEntry = (key: string, patch: Partial<Entry>) =>
+    setEntries((prev) => prev.map((e) => (tagKey(e) === key ? { ...e, ...patch, rev: (e.rev ?? 0) + 1 } : e)));
+
+  // A save (drawingFile.ts) just rewrote a file: drop every cached view of it
+  // so thumbnails, drag-out and the size/date columns show the new content.
+  useEffect(
+    () =>
+      onFileSaved((saved: SavedFile) => {
+        void (async () => {
+          for (const entry of entriesRef.current) {
+            if (!(await entryMatchesSaved(entry, saved))) continue;
+            const key = tagKey(entry);
+            textCache.current.invalidate(key);
+            const patch: Partial<Entry> = {};
+            try {
+              if (entry.handle) {
+                const f = await entry.handle.getFile();
+                patch.mtime = f.lastModified;
+                patch.size = f.size;
+              } else if (entry.path) {
+                const t = tauri();
+                const bytes = t ? ((await t.core.invoke("read_file_bytes", { path: entry.path })) as ArrayBuffer) : null;
+                if (bytes) patch.size = bytes.byteLength;
+                patch.mtime = Date.now();
+              }
+            } catch {
+              // stat failed: the thumbnail/text still refresh, only the size/date columns stay as they were
+            }
+            bumpEntry(key, patch);
+            if (!isEpsFile(entry.name) && !isModelFile(entry.name)) void warmText({ ...entry, ...patch });
+          }
+        })();
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const warmText = async (entry: Entry): Promise<void> => {
     try {
@@ -822,6 +883,7 @@ export function FileExplorerPanel({ hidden, onClose }: { hidden: boolean; onClos
                 onDragStart={onItemDragStart(entry)}
                 onPointerHint={onItemPointerHint(entry)}
                 getText={textOf(entry)}
+                getFreshText={freshTextOf(entry)}
               />
             ))}
           </div>
@@ -854,6 +916,7 @@ export function FileExplorerPanel({ hidden, onClose }: { hidden: boolean; onClos
                   onDragStart={onItemDragStart(entry)}
                   onPointerHint={onItemPointerHint(entry)}
                   getText={textOf(entry)}
+                getFreshText={freshTextOf(entry)}
                 />
               ))}
             </div>
@@ -892,6 +955,8 @@ interface FileItemProps {
   onPointerHint: () => void;
   /** Read-through accessor for the file's text; fills the panel's shared cache. */
   getText: () => Promise<string>;
+  /** Bypasses the cache and re-reads the file; used when opening it. */
+  getFreshText: () => Promise<string>;
 }
 
 /** A clickable list-view column title; clicking the active one flips direction. */
@@ -1009,11 +1074,11 @@ function useThumbnail(
       cancelQueued?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entry.name, size, canvasTheme]);
+  }, [entry.name, entry.rev, size, canvasTheme]);
   return svg;
 }
 
-function FileCard({ entry, activeSessionId, tags, reserveTags, selected, onToggleSelect, onEditTags, onDragStart, onPointerHint, getText }: FileItemProps) {
+function FileCard({ entry, activeSessionId, tags, reserveTags, selected, onToggleSelect, onEditTags, onDragStart, onPointerHint, getText, getFreshText }: FileItemProps) {
   const cardRef = useRef<HTMLButtonElement>(null);
   const svg = useThumbnail(entry, getText, 110, cardRef);
 
@@ -1021,7 +1086,7 @@ function FileCard({ entry, activeSessionId, tags, reserveTags, selected, onToggl
   const isActive = activeName === entry.name;
 
   // Model files read their own bytes inside openEntry; no need for the text.
-  const handleOpen = async () => openEntry(entry, isModelFile(entry.name) ? "" : await getText());
+  const handleOpen = async () => openEntry(entry, isModelFile(entry.name) ? "" : await getFreshText());
 
   return (
     <button
@@ -1057,7 +1122,7 @@ function FileCard({ entry, activeSessionId, tags, reserveTags, selected, onToggl
   );
 }
 
-function FileRow({ entry, activeSessionId, tags, selected, onToggleSelect, onEditTags, onDragStart, onPointerHint, getText }: FileItemProps) {
+function FileRow({ entry, activeSessionId, tags, selected, onToggleSelect, onEditTags, onDragStart, onPointerHint, getText, getFreshText }: FileItemProps) {
   // Rows put tags inline on a fixed-height line, so they need no reservation.
   const rowRef = useRef<HTMLButtonElement>(null);
   // A small geometry preview, so the list is still scannable by shape and not
@@ -1068,7 +1133,7 @@ function FileRow({ entry, activeSessionId, tags, selected, onToggleSelect, onEdi
   const isActive = activeName === entry.name;
 
   // Model files read their own bytes inside openEntry; no need for the text.
-  const handleOpen = async () => openEntry(entry, isModelFile(entry.name) ? "" : await getText());
+  const handleOpen = async () => openEntry(entry, isModelFile(entry.name) ? "" : await getFreshText());
 
   return (
     <button
