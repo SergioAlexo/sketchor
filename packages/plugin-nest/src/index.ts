@@ -16,3 +16,4 @@ export * from "./search";
 export * from "./raster/engine";
 export * from "./bom";
 export * from "./partLookup";
+export * from "./units";
