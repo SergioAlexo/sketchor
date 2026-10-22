@@ -695,6 +695,9 @@ export function App() {
       } else if (matchesBinding(e, "app.truckNesting")) {
         e.preventDefault();
         void runCommand("truck-nesting.open");
+      } else if (matchesBinding(e, "app.sheetNest")) {
+        e.preventDefault();
+        void runCommand("nest.open");
       } else if (matchesBinding(e, "app.shortcuts")) {
         e.preventDefault();
         setShowShortcuts(true);
@@ -1358,6 +1361,20 @@ export function App() {
                 fill="none"
                 strokeLinejoin="round"
               />
+            </svg>
+          </button>
+          <button
+            className="action"
+            title={withKey("Sheet Metal Nest — right-click to add a shortcut", "app.sheetNest")}
+            data-testid="sheet-nest-open"
+            onClick={() => void runCommand("nest.open")}
+            onContextMenu={rebind("app.sheetNest")}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18">
+              <rect x="3" y="4" width="18" height="16" rx="1.5" stroke="currentColor" strokeWidth="1.6" fill="none" />
+              <rect x="6" y="7" width="5" height="5" stroke="currentColor" strokeWidth="1.4" fill="none" />
+              <circle cx="16" cy="10" r="2.5" stroke="currentColor" strokeWidth="1.4" fill="none" />
+              <path d="M6 15h5l-2 3H6z" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinejoin="round" />
             </svg>
           </button>
           <button
