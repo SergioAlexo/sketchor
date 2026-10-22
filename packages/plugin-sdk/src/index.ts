@@ -72,6 +72,8 @@ export type {
   NotifyOptions,
   SaveFileFilter,
   SaveFileResult,
+  PickedFile,
+  PickedFolder,
   Unsubscribe,
   Command,
   Entity,

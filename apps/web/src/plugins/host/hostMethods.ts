@@ -2,6 +2,7 @@ import {
   projectDocument,
   type Command,
   type DisplayUnitInfo,
+  type PickedFolder,
   type PrintFolderInfo,
   type SaveFileFilter,
   type SaveFileResult,
@@ -11,6 +12,7 @@ import { bus, doc, useApp } from "../../state/store";
 import { factorFromMm, type DisplayUnit } from "../../units";
 import { hidePanel, postToPanel, showPanel, subscribeToPanel } from "./uiManager";
 import { printHtml } from "../../print/printHtml";
+import { listDirectory, readPickedFile, type DirHandleLike } from "./pickedFolder";
 import { autosaveEnabled, autosaveFolderLabel, pickAutosaveFolder, setAutosaveEnabled, supportsAutosave } from "../../io/autosaveFolder";
 
 /** The autosave folder, as the plugin-facing {@link PrintFolderInfo}. */
@@ -77,6 +79,29 @@ async function hostSaveFile(name: string, data: Uint8Array | string, filters?: S
   a.click();
   URL.revokeObjectURL(url);
   return { saved: true, name };
+}
+
+/** The folder each plugin last picked with `ui.pickFolder` - the only place `ui.readPickedFile` can read. */
+const pickedRoots = new Map<string, DirHandleLike>();
+
+/**
+ * `ui.pickFolder` (host API 0.9.0): `showDirectoryPicker` works in Tauri's
+ * WebView2 as well (same reasoning as `hostSaveFile`), so desktop needs no
+ * Rust command. Cancel resolves null.
+ */
+async function hostPickFolder(pluginId: string): Promise<PickedFolder | null> {
+  const w = window as unknown as { showDirectoryPicker?: (o?: { mode?: "read" }) => Promise<DirHandleLike & { name: string }> };
+  if (typeof w.showDirectoryPicker !== "function") throw new Error("Folder picking isn't supported in this browser");
+  let dir: DirHandleLike & { name: string };
+  try {
+    dir = await w.showDirectoryPicker({ mode: "read" });
+  } catch (err) {
+    if ((err as DOMException)?.name === "AbortError") return null;
+    throw err;
+  }
+  pickedRoots.set(pluginId, dir);
+  const { files, truncated } = await listDirectory(dir);
+  return { name: dir.name, files, ...(truncated ? { truncated: true } : {}) };
 }
 
 /** The current display unit as the plugin-facing {@link DisplayUnitInfo}. */
@@ -186,6 +211,15 @@ export async function dispatchCall(ctx: HostContext, method: string, args: unkno
       // activation too.
       const data = args[1] as Uint8Array | string;
       return hostSaveFile(String(args[0]), data, args[2] as SaveFileFilter[] | undefined);
+    }
+
+    case "ui.pickFolder":
+      // Inside the click from the panel iframe, like ui.saveFile.
+      return hostPickFolder(ctx.pluginId);
+    case "ui.readPickedFile": {
+      const root = pickedRoots.get(ctx.pluginId);
+      if (!root) throw new Error("No folder picked - call ui.pickFolder first");
+      return readPickedFile(root, String(args[0]), args[1] === "bytes" ? "bytes" : "text");
     }
 
     case "app.displayUnit":

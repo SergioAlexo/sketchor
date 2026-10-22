@@ -16,6 +16,7 @@ import type {
   PrintOptions,
   SaveFileFilter,
   SaveFileResult,
+  PickedFolder,
   UiShowOptions,
   Unsubscribe,
 } from "@sketchor/core";
@@ -77,6 +78,9 @@ export function createClient(transport: RpcTransport): PluginHostApi {
       pickPrintFolder: () => transport.call("ui.pickPrintFolder", []) as Promise<PrintFolderInfo>,
       saveFile: (name: string, data: Uint8Array | string, filters?: SaveFileFilter[]) =>
         transport.call("ui.saveFile", [name, data, filters]) as Promise<SaveFileResult>,
+      pickFolder: () => transport.call("ui.pickFolder", []) as Promise<PickedFolder | null>,
+      readPickedFile: (relPath: string, as?: "text" | "bytes") =>
+        transport.call("ui.readPickedFile", [relPath, as]) as Promise<string | Uint8Array>,
     },
 
     app: {

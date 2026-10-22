@@ -161,6 +161,39 @@ export interface UiApi {
    * so a plugin can tell "nothing happened" from a real failure.
    */
   saveFile(name: string, data: Uint8Array | string, filters?: SaveFileFilter[]): Promise<SaveFileResult>;
+  /**
+   * Opens an OS folder picker and lists every file under the chosen folder,
+   * subfolders included (capped - see {@link PickedFolder.truncated}). Like
+   * {@link pickPrintFolder}, must be called from a real click. Resolves `null`
+   * if the user cancels. The plugin never sees a path: it gets the folder's
+   * display name and `/`-separated paths relative to it, and can read those
+   * files back through {@link readPickedFile}. Picking again replaces the
+   * previous grant.
+   */
+  pickFolder(): Promise<PickedFolder | null>;
+  /**
+   * Reads one file of the folder last picked with {@link pickFolder}, by the
+   * `relPath` it was listed under. `"text"` (default) decodes UTF-8; `"bytes"`
+   * returns the raw `Uint8Array`. Rejects if nothing has been picked, the path
+   * escapes the folder, or the file can no longer be read.
+   */
+  readPickedFile(relPath: string, as?: "text" | "bytes"): Promise<string | Uint8Array>;
+}
+
+/** One file of a {@link PickedFolder}. */
+export interface PickedFile {
+  /** Path relative to the picked folder, `/`-separated, no leading slash. */
+  relPath: string;
+  /** Size in bytes. */
+  size: number;
+}
+
+export interface PickedFolder {
+  /** The folder's display name (never its full path). */
+  name: string;
+  files: PickedFile[];
+  /** True when the folder held more than the host's listing cap, so `files` is incomplete. */
+  truncated?: boolean;
 }
 
 /** One entry of a save dialog's format filter, e.g. `{ description: "DXF", accept: { "application/dxf": [".dxf"] } }`. */
@@ -296,6 +329,8 @@ export interface ImporterContext {
  * `ui.pickPrintFolder` pair, so a plugin can offer that folder in its own
  * panel instead of only in the print bar — additive. 0.8.0 added
  * `ui.saveFile(name, data, filters)`, a save-as dialog a plugin can trigger
- * directly — additive.
+ * directly — additive. 0.9.0 added `ui.pickFolder()` / `ui.readPickedFile()`,
+ * a folder picker that lists files (subfolders included) and reads them back
+ * — additive.
  */
-export const HOST_API_VERSION = "0.8.0";
+export const HOST_API_VERSION = "0.9.0";
