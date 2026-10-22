@@ -16,4 +16,8 @@ export * from "./search";
 export * from "./raster/engine";
 export * from "./bom";
 export * from "./partLookup";
+<<<<<<< HEAD
 export * from "./units";
+=======
+export * from "./raster/rasterNest";
+>>>>>>> 9ca38e5 (RN-04: mm adapter for the raster engine (placements, cell choice, hole nesting))
