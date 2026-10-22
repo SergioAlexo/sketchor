@@ -1,4 +1,4 @@
-import { drawEntitiesToPdf, entitiesToSvgDocument, PdfBuilder, PDF_LETTER, type Entity } from "@sketchor/core";
+import { drawEntitiesToPdf, entitiesToSvgDocument, PdfBuilder, PDF_LETTER, rotated, textWidth, translated, type Entity } from "@sketchor/core";
 import { text } from "@sketchor/plugin-sdk";
 import { NEST_LABELS_LAYER, sheetOutlineEntities, type JobMetrics, type TrueNestResult, type TrueNestSheet } from "@sketchor/plugin-nest";
 
@@ -48,6 +48,16 @@ export interface LastNest {
     stock: { name: string; size: string; used: number; purchased: number; available: number | null }[];
     groups: string[];
   };
+  /** Sheet Nesting: report heading; the older nest panel leaves it unset ("Sheet Metal Nest Report"). */
+  title?: string;
+  /** Sheet Nesting: lengths / areas in the job's display unit (the older panel leaves it unset and gets the plain unit above). */
+  format?: { len(mm: number): string; area(mm2: number): string };
+  /** Sheet Nesting: job header, label / value pairs already formatted. */
+  details?: [string, string][];
+  /** Sheet Nesting groups mode: one section per group, replacing the single ordered-vs-placed table. */
+  groupSections?: { title: string; sheets: string[]; parts: { name: string; ordered: number; placed: number; unplaced: number }[] }[];
+  /** Sheet Nesting: draw a tall sheet rotated to landscape and cap the drawing height so a sheet fits one page (print only). */
+  fitPage?: boolean;
 }
 
 function placementsOn(lastNest: LastNest, sheetIdx: number): LastNestPlacement[] {
@@ -62,7 +72,21 @@ function sheetDrawingEntities(lastNest: LastNest, sheetIdx: number): Entity[] {
     entities.push(...p.outerEntities, ...p.holeEntities);
     entities.push(text(p.label.at, String(p.number), { layer: NEST_LABELS_LAYER, height: p.label.height }));
   }
-  return entities;
+  const sheet = lastNest.sheets[sheetIdx];
+  return lastNest.fitPage && isTall(sheet) ? entities.map((e) => toLandscape(e, sheet.height)) : entities;
+}
+
+/** True for a sheet taller than wide: the print drawing turns it a quarter turn so it uses the page width. */
+export function isTall(sheet: { width: number; height: number }): boolean {
+  return sheet.height > sheet.width * 1.0001;
+}
+
+/** Rotates sheet-local geometry 90 degrees counter-clockwise into landscape (x' = H - y, y' = x). Text keeps reading upright; only its anchor moves. */
+function toLandscape(e: Entity, sheetHeight: number): Entity {
+  if (e.type !== "text") return translated(rotated(e, { x: 0, y: 0 }, Math.PI / 2), sheetHeight, 0);
+  const w = textWidth(e.text, e.height);
+  const cx = e.at.x + w / 2, cy = e.at.y + e.height / 2;
+  return { ...e, at: { x: sheetHeight - cy - w / 2, y: cx - e.height / 2 } };
 }
 
 const toU = (mm: number, perMm: number): number => Math.round(mm * perMm * 100) / 100;
@@ -71,12 +95,16 @@ function fmtTime(sec: number | null): string {
   return sec == null ? "—" : `${Math.round(sec / 6) / 10} min (est.)`;
 }
 
-function fmtRemnant(remnant: { width: number; height: number } | null, unit: LastNest["unit"]): string {
+function fmtRemnant(remnant: { width: number; height: number } | null, lastNest: LastNest): string {
+  const unit = lastNest.unit;
   if (!remnant) return "none";
+  if (lastNest.format) return `${lastNest.format.len(remnant.width)} × ${lastNest.format.len(remnant.height)}`;
   return `${Math.round(toU(remnant.width, unit.perMm))}×${Math.round(toU(remnant.height, unit.perMm))} ${unit.label}`;
 }
 
-function fmtArea(mm2: number, unit: LastNest["unit"]): string {
+function fmtArea(mm2: number, lastNest: LastNest): string {
+  const unit = lastNest.unit;
+  if (lastNest.format) return lastNest.format.area(mm2);
   return `${Math.round(toU(mm2, unit.perMm * unit.perMm))} ${unit.label}²`;
 }
 
@@ -136,7 +164,7 @@ export function reportSummaryLines(lastNest: LastNest): { kpis: [string, string]
     ...(buy ? ([["To purchase", String(k.toPurchase)]] as [string, string][]) : []),
     ["Utilisation", `${Math.round(k.utilisation * 1000) / 10}%`],
     ["Parts placed", `${k.placed} of ${k.required}`],
-    ["Cut length", `${Math.round(toU(k.cutLengthMm, lastNest.unit.perMm))} ${lastNest.unit.label}`],
+    ["Cut length", lastNest.format ? lastNest.format.len(k.cutLengthMm) : `${Math.round(toU(k.cutLengthMm, lastNest.unit.perMm))} ${lastNest.unit.label}`],
     ["Pierces", String(k.pierces)],
   ];
   const stock = s.stock.map((r) => `${r.size}: ${r.used} used${buy ? `, ${r.purchased} to purchase` : ""}${r.available === null ? "" : `, ${r.available} in stock`}`);
@@ -145,8 +173,11 @@ export function reportSummaryLines(lastNest: LastNest): { kpis: [string, string]
 
 const esc = (s: string): string => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
+/** Cap on a printed sheet drawing's height (CSS px) so the drawing and its parts table share one page. */
+export const FIT_PAGE_MAX_HEIGHT_PX = 460;
+
 export function buildNestReportHtml(lastNest: LastNest): string {
-  const { metrics, unit } = lastNest;
+  const { metrics } = lastNest;
   const { totalPlaced, totalUnplaced, sheetRows, orderedRows } = reportSpine(lastNest);
   const extra = reportSummaryLines(lastNest);
   const extraHtml = extra.kpis.length
@@ -158,7 +189,7 @@ export function buildNestReportHtml(lastNest: LastNest): string {
   const coverRows = sheetRows
     .map(
       (r) =>
-        `<tr><td>${esc(r.label)}</td><td>${Math.round(r.utilisation * 100)}%</td><td>${esc(fmtRemnant(r.remnant, unit))}</td>` +
+        `<tr><td>${esc(r.label)}</td><td>${Math.round(r.utilisation * 100)}%</td><td>${esc(fmtRemnant(r.remnant, lastNest))}</td>` +
         `<td>${fmtTime(r.cuttingTimeSec)}</td><td>${r.weightKg != null ? r.weightKg.toFixed(2) + " kg" : "—"}</td>` +
         `<td>${r.cost != null ? r.cost.toFixed(2) : "—"}</td></tr>`,
     )
@@ -167,11 +198,12 @@ export function buildNestReportHtml(lastNest: LastNest): string {
   const sheetsHtml = lastNest.sheets
     .map((_sheet, i) => {
       const entities = sheetDrawingEntities(lastNest, i);
-      const svg = entitiesToSvgDocument(entities, { strokeColor: "#111111", unit: "none" }).replace(/<\?xml[^>]*\?>\s*/, "");
+      let svg = entitiesToSvgDocument(entities, { strokeColor: "#111111", unit: "none" }).replace(/<\?xml[^>]*\?>\s*/, "");
+      if (lastNest.fitPage) svg = svg.replace("<svg ", `<svg style="max-height:${FIT_PAGE_MAX_HEIGHT_PX}px;width:auto" `);
       const rows = placementsOn(lastNest, i)
         .map(
           (p) =>
-            `<tr><td>${p.number}</td><td>${esc(p.name)}</td><td>${p.rotationDeg}°${p.mirrored ? " (mirrored)" : ""}</td><td>${esc(fmtArea(p.area, unit))}</td></tr>`,
+            `<tr><td>${p.number}</td><td>${esc(p.name)}</td><td>${p.rotationDeg}°${p.mirrored ? " (mirrored)" : ""}</td><td>${esc(fmtArea(p.area, lastNest))}</td></tr>`,
         )
         .join("");
       return (
@@ -181,9 +213,14 @@ export function buildNestReportHtml(lastNest: LastNest): string {
     })
     .join("");
 
-  const summaryRows = orderedRows
-    .map((r) => `<tr><td>${esc(r.name)}</td><td>${r.ordered}</td><td>${r.placed}</td><td>${r.unplaced}</td></tr>`)
-    .join("");
+  const detailsHtml = lastNest.details?.length
+    ? `<table><tbody>${lastNest.details.map(([l, v]) => `<tr><th style="width:30%">${esc(l)}</th><td>${esc(v)}</td></tr>`).join("")}</tbody></table>`
+    : "";
+  const partsTable = (rows: { name: string; ordered: number; placed: number; unplaced: number }[]) =>
+    `<table><thead><tr><th>Part</th><th>Ordered</th><th>Placed</th><th>Unplaced</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.ordered}</td><td>${r.placed}</td><td>${r.unplaced}</td></tr>`).join("")}</tbody></table>`;
+  const bottomHtml = lastNest.groupSections
+    ? lastNest.groupSections.map((g) => `<h2>${esc(g.title)}</h2><p>${g.sheets.map(esc).join("<br>") || "No sheets"}</p>${partsTable(g.parts)}`).join("")
+    : `<h2>Parts ordered vs. placed</h2>\n    ${partsTable(orderedRows)}`;
 
   return `<style>
     .nest-report { font: 13px system-ui, -apple-system, sans-serif; color: #111111; }
@@ -194,19 +231,18 @@ export function buildNestReportHtml(lastNest: LastNest): string {
     .nest-report svg { max-width: 100%; height: auto; border: 1px solid #dddddd; }
   </style>
   <div class="nest-report">
-    <h1>Sheet Metal Nest Report</h1>
+    <h1>${esc(lastNest.title ?? "Sheet Metal Nest Report")}</h1>${detailsHtml}
     <p>${totalPlaced} part(s) placed on ${lastNest.sheets.length} sheet(s)${totalUnplaced ? `, ${totalUnplaced} didn't fit` : ""}. Overall utilisation ${Math.round(metrics.totalUtilisation * 100)}%.</p>
     ${extraHtml}
     <table><thead><tr><th>Sheet</th><th>Utilisation</th><th>Reusable remnant</th><th>Cutting time</th><th>Weight</th><th>Cost</th></tr></thead><tbody>${coverRows}</tbody></table>
     ${sheetsHtml}
-    <h2>Parts ordered vs. placed</h2>
-    <table><thead><tr><th>Part</th><th>Ordered</th><th>Placed</th><th>Unplaced</th></tr></thead><tbody>${summaryRows}</tbody></table>
+    ${bottomHtml}
     ${lastNest.footer ? `<p style="margin-top:16px;font-size:11px;color:#666666">${esc(lastNest.footer)}</p>` : ""}
   </div>`;
 }
 
 export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
-  const { metrics, unit } = lastNest;
+  const { metrics } = lastNest;
   const { totalPlaced, totalUnplaced, sheetRows, orderedRows } = reportSpine(lastNest);
 
   const pdf = new PdfBuilder(PDF_LETTER);
@@ -224,7 +260,7 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
     afterBreak?.();
   };
 
-  pdf.text(margin, y, "Sheet Metal Nest Report", { size: 16, bold: true });
+  pdf.text(margin, y, lastNest.title ?? "Sheet Metal Nest Report", { size: 16, bold: true });
   y += 20;
   pdf.text(
     margin,
@@ -233,6 +269,14 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
     { size: 10 },
   );
   y += 18;
+  if (lastNest.details?.length) {
+    for (let i = 0; i < lastNest.details.length; i += 2) {
+      need(12);
+      lastNest.details.slice(i, i + 2).forEach(([l, v], c) => pdf.text(margin + c * 270, y, `${l}: ${v}`, { size: 8 }));
+      y += 11;
+    }
+    y += 4;
+  }
   const extra = reportSummaryLines(lastNest);
   if (extra.kpis.length > 0) {
     pdf.text(margin, y, extra.kpis.map(([l, v]) => `${l}: ${v}`).join("   "), { size: 9, bold: true });
@@ -262,7 +306,7 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
     need(14, coverHeader);
     pdf.text(coverCols[0], y, r.label, { size: 9 });
     pdf.text(coverCols[1], y, `${Math.round(r.utilisation * 100)}%`, { size: 9 });
-    pdf.text(coverCols[2], y, fmtRemnant(r.remnant, unit), { size: 9 });
+    pdf.text(coverCols[2], y, fmtRemnant(r.remnant, lastNest), { size: 9 });
     pdf.text(coverCols[3], y, fmtTime(r.cuttingTimeSec), { size: 9 });
     pdf.text(coverCols[4], y, r.weightKg != null ? `${r.weightKg.toFixed(2)} kg` : "—", { size: 9 });
     pdf.text(coverCols[5], y, r.cost != null ? r.cost.toFixed(2) : "—", { size: 9 });
@@ -296,15 +340,11 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
       pdf.text(partCols[0], y, String(p.number), { size: 9 });
       pdf.text(partCols[1], y, p.name, { size: 9 });
       pdf.text(partCols[2], y, `${p.rotationDeg}°${p.mirrored ? " (mirrored)" : ""}`, { size: 9 });
-      pdf.text(partCols[3], y, fmtArea(p.area, unit), { size: 9 });
+      pdf.text(partCols[3], y, fmtArea(p.area, lastNest), { size: 9 });
       y += 14;
     }
   }
 
-  pdf.addPage();
-  y = margin + 12;
-  pdf.text(margin, y, "Parts ordered vs. placed", { size: 13, bold: true });
-  y += 20;
   const sumCols = [margin, margin + 220, margin + 320, margin + 420];
   const sumHeader = () => {
     const labels = ["Part", "Ordered", "Placed", "Unplaced"];
@@ -313,14 +353,29 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
     pdf.line({ x: margin, y }, { x: right, y }, { stroke: "#999999", width: 0.5 });
     y += 10;
   };
-  sumHeader();
-  for (const r of orderedRows) {
-    need(14, sumHeader);
-    pdf.text(sumCols[0], y, r.name, { size: 9 });
-    pdf.text(sumCols[1], y, String(r.ordered), { size: 9 });
-    pdf.text(sumCols[2], y, String(r.placed), { size: 9, color: r.placed < r.ordered ? "#c0392b" : undefined });
-    pdf.text(sumCols[3], y, String(r.unplaced), { size: 9, color: r.unplaced > 0 ? "#c0392b" : undefined });
-    y += 14;
+  const sections = lastNest.groupSections ?? [{ title: "Parts ordered vs. placed", sheets: [], parts: orderedRows }];
+  pdf.addPage();
+  y = margin + 12;
+  for (const sec of sections) {
+    need(60);
+    pdf.text(margin, y, sec.title, { size: 13, bold: true });
+    y += 18;
+    for (const l of sec.sheets) {
+      need(12);
+      pdf.text(margin, y, l, { size: 9 });
+      y += 11;
+    }
+    if (sec.sheets.length > 0) y += 4;
+    sumHeader();
+    for (const r of sec.parts) {
+      need(14, sumHeader);
+      pdf.text(sumCols[0], y, r.name, { size: 9 });
+      pdf.text(sumCols[1], y, String(r.ordered), { size: 9 });
+      pdf.text(sumCols[2], y, String(r.placed), { size: 9, color: r.placed < r.ordered ? "#c0392b" : undefined });
+      pdf.text(sumCols[3], y, String(r.unplaced), { size: 9, color: r.unplaced > 0 ? "#c0392b" : undefined });
+      y += 14;
+    }
+    y += 12;
   }
 
   if (lastNest.footer) {

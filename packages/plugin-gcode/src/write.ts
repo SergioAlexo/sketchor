@@ -35,6 +35,8 @@ export interface GcodeWriteOptions {
   feedRateMmPerMin: number;
   pierceTimeSec: number;
   sheetLabel?: string;
+  /** Header comment title. Default "Sheet Metal Nest" (the older nest panel); Sheet Nesting passes its own name. */
+  title?: string;
   profile?: PostProfile;
   /** Decimal places for coordinates. Default 4. */
   decimals?: number;
@@ -55,7 +57,7 @@ export function writeGcode(features: CutFeature[], opts: GcodeWriteOptions): str
   const fmt = (n: number) => round(n * scale, decimals).toFixed(decimals);
   const lines: string[] = [];
 
-  lines.push(profile.comment(`Sheet Metal Nest${opts.sheetLabel ? ` — ${opts.sheetLabel}` : ""}`));
+  lines.push(profile.comment(`${opts.title ?? "Sheet Metal Nest"}${opts.sheetLabel ? ` — ${opts.sheetLabel}` : ""}`));
   lines.push(profile.comment(`Post: ${profile.name}`));
   lines.push("G90");
   lines.push(opts.unit === "in" ? "G20" : "G21");

@@ -111,3 +111,12 @@ describe("N-44: round trip (emit -> gcodeToEntities) stays within tolerance of t
     expect(recoveredOuter).toBeDefined();
   });
 });
+
+describe("header title", () => {
+  it("defaults to the older panel's wording and takes the Sheet Nesting title when given (older output unchanged)", () => {
+    const plan = buildCutPlan([rectWithHole], { kerf: 0.2 });
+    const base = { unit: "mm" as const, scale: 1, feedRateMmPerMin: 1000, pierceTimeSec: 0.5, sheetLabel: "Sheet 1/1" };
+    expect(writeGcode(plan.features, base).split("\n")[0]).toBe("(Sheet Metal Nest — Sheet 1/1)");
+    expect(writeGcode(plan.features, { ...base, title: "Sheet Nesting" }).split("\n")[0]).toBe("(Sheet Nesting — Sheet 1/1)");
+  });
+});
