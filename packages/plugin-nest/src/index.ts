@@ -11,6 +11,8 @@ export * from "./rotation";
 export * from "./stock";
 export * from "./trueNest";
 export * from "./trueLayout";
+export * from "./zip";
+export * from "./dxfPreset";
 export * from "./metrics";
 export * from "./search";
 export * from "./raster/engine";

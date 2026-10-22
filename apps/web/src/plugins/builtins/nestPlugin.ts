@@ -5,17 +5,20 @@ import {
   checkNestOverlaps,
   clearPreviousLayout,
   computeJobMetrics,
+  makeZip,
+  sheetDxfEntities,
+  sheetDxfFileName,
+  stackedSheetsDxfEntities,
+  type DxfPreset,
   cutTableRowFor,
   extractParts,
   extractPartsWithDiagnostics,
   materializeInstance,
   nestTrueShapeSearch,
   NEST_HOLES_LAYER,
-  NEST_LABELS_LAYER,
   NEST_PARTS_LAYER,
   placementTransform,
   sheetOffsets,
-  sheetOutlineEntities,
   type CutTableRow,
   type Gravity,
   type JobMetrics,
@@ -26,8 +29,8 @@ import {
   type TrueNestSheet,
 } from "@sketchor/plugin-nest";
 import { buildCutPlan, writeGcode, type GcodePlacement } from "@sketchor/plugin-gcode";
-import { entitiesToDxf, entityPoints, textWidth, translated, type Entity } from "@sketchor/core";
-import { text, type DisplayUnitInfo, type PluginModule } from "@sketchor/plugin-sdk";
+import { entitiesToDxf, entityPoints, textWidth, type Entity } from "@sketchor/core";
+import { type DisplayUnitInfo, type PluginModule } from "@sketchor/plugin-sdk";
 import { displayUnitToDxfCode, factorFromMm } from "../../units";
 import { buildNestReportHtml, buildNestReportPdf, type LastNest, type LastNestPlacement } from "./nestReport";
 
@@ -624,43 +627,45 @@ const plugin: PluginModule = {
           void sketchor.ui.postMessage({ type: "error", message: "Nothing to export — nest some parts first." });
           return;
         }
-        // sheetIndex: -1 (or absent) = all sheets, stacked exactly like the
-        // canvas (via translated(), the same shift buildTrueNestLayout
-        // applies); a real index = that one sheet alone, in its own local
-        // (unshifted) coordinates — a file meant for one physical sheet.
+        // sheetIndex: -1 (or absent) = all sheets (a ZIP of one DXF each; the
+        // "nest" preset keeps the old single stacked file); a real index =
+        // that one sheet alone, in its own local (unshifted) coordinates — a
+        // file meant for one physical sheet.
         const sheetIndex = typeof msg.sheetIndex === "number" ? msg.sheetIndex : -1;
         if (sheetIndex >= lastNest.sheets.length) {
           void sketchor.ui.postMessage({ type: "error", message: "That sheet no longer exists — nest again." });
           return;
         }
 
-        const labelEntity = (p: LastNestPlacement, dy: number): Entity =>
-          translated(text(p.label.at, String(p.number), { layer: NEST_LABELS_LAYER, height: p.label.height }), 0, dy);
+        // RN-41: "cam" (CUT_OUTER / CUT_INNER, no labels, sheet-local origin)
+        // is the default preset; "nest" keeps the earlier canvas-layer export.
+        const preset: DxfPreset = msg.preset === "nest" ? "nest" : "cam";
+        const dxfUnit = displayUnitToDxfCode(unit.unit);
+        const dxfScale = factorFromMm(unit.unit);
+        const sheetDxf = (i: number): string =>
+          entitiesToDxf(sheetDxfEntities(lastNest!.sheets[i], i, lastNest!.sheetLabels[i], lastNest!.placements, { preset, includeSheetOutline: msg.includeSheet === true }), dxfUnit, dxfScale);
 
-        let entities: Entity[];
-        let fileName: string;
-        if (sheetIndex < 0) {
-          const offsets = sheetOffsets(lastNest.sheets);
-          entities = lastNest.sheets.flatMap((sheet, i) => {
-            const { outline, title } = sheetOutlineEntities(sheet, lastNest!.sheetLabels[i]);
-            return [translated(outline, 0, offsets[i]), translated(title, 0, offsets[i])];
-          });
-          for (const p of lastNest.placements) {
-            const dy = offsets[p.sheet];
-            entities.push(...p.outerEntities.map((e) => translated(e, 0, dy)), ...p.holeEntities.map((e) => translated(e, 0, dy)), labelEntity(p, dy));
-          }
-          fileName = "nest-all.dxf";
-        } else {
-          const { outline, title } = sheetOutlineEntities(lastNest.sheets[sheetIndex], lastNest.sheetLabels[sheetIndex]);
-          entities = [outline, title];
-          for (const p of lastNest.placements.filter((p) => p.sheet === sheetIndex)) {
-            entities.push(...p.outerEntities, ...p.holeEntities, labelEntity(p, 0));
-          }
-          fileName = `nest-sheet-${sheetIndex + 1}.dxf`;
+        if (sheetIndex >= 0) {
+          const fileName = sheetDxfFileName(sheetIndex);
+          const res = await sketchor.ui.saveFile(fileName, sheetDxf(sheetIndex), [{ description: "DXF Drawing", accept: { "application/dxf": [".dxf"] } }]);
+          if (res.saved) sketchor.ui.notify(`Saved ${res.name ?? fileName}.`);
+          return;
         }
-        const dxf = entitiesToDxf(entities, displayUnitToDxfCode(unit.unit), factorFromMm(unit.unit));
-        const res = await sketchor.ui.saveFile(fileName, dxf, [{ description: "DXF Drawing", accept: { "application/dxf": [".dxf"] } }]);
-        if (res.saved) sketchor.ui.notify(`Saved ${res.name ?? fileName}.`);
+        if (preset === "nest") {
+          const dxf = entitiesToDxf(stackedSheetsDxfEntities(lastNest.sheets, lastNest.sheetLabels, lastNest.placements), dxfUnit, dxfScale);
+          const res = await sketchor.ui.saveFile("nest-all.dxf", dxf, [{ description: "DXF Drawing", accept: { "application/dxf": [".dxf"] } }]);
+          if (res.saved) sketchor.ui.notify(`Saved ${res.name ?? "nest-all.dxf"}.`);
+          return;
+        }
+        // All sheets: one DXF per sheet, zipped (a single sheet is just the DXF).
+        if (lastNest.sheets.length === 1) {
+          const res = await sketchor.ui.saveFile(sheetDxfFileName(0), sheetDxf(0), [{ description: "DXF Drawing", accept: { "application/dxf": [".dxf"] } }]);
+          if (res.saved) sketchor.ui.notify(`Saved ${res.name ?? sheetDxfFileName(0)}.`);
+          return;
+        }
+        const zip = makeZip(lastNest.sheets.map((_, i) => ({ name: sheetDxfFileName(i), data: sheetDxf(i) })));
+        const res = await sketchor.ui.saveFile("nest-sheets.zip", zip, [{ description: "ZIP archive", accept: { "application/zip": [".zip"] } }]);
+        if (res.saved) sketchor.ui.notify(`Saved ${res.name ?? "nest-sheets.zip"} (${lastNest.sheets.length} sheets).`);
         return;
       }
 
