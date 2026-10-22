@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { entitiesToDxf } from "@sketchor/core";
+import { entitiesToDxf, parseDxf, type Entity } from "@sketchor/core";
 import { circle, polyline } from "@sketchor/plugin-sdk";
 import { reportSummaryLines } from "./nestReport";
 import { loadDxfFile, PANEL_HTML, recFromExtracted, snapshotCanvasPart } from "./sheetNestingPlugin";
-import { extractPartsWithDiagnostics, groupsFromRows, parseSheetText, resolveItem, sumRepeatedRows } from "@sketchor/plugin-nest";
+import { defaultJob, extractPartsWithDiagnostics, groupsFromRows, materializeInstance, NEST_HOLES_LAYER, NEST_PARTS_LAYER, parseJobFile, parseNestJob, parseSheetText, placementTransform, resolveItem, serializeJobFile, sheetDxfEntities, sumRepeatedRows } from "@sketchor/plugin-nest";
 
 /**
  * The panel runs in a sandboxed iframe a test cannot drive, so these pin the
@@ -116,5 +116,48 @@ describe("snapshotCanvasPart", () => {
     const snap = snapshotCanvasPart(parts[0]!, lookup, "cv2").parts[0]!;
     expect(snap.cutLength).toBeCloseTo(live.cutLength, 3);
     expect(snap.area).toBeCloseTo(live.area, 2);
+  });
+});
+
+describe("Add files: a DXF with a hole", () => {
+  it("exports the hole on CUT_INNER and the outline on CUT_OUTER", () => {
+    const text = entitiesToDxf([rect(100, 60), circle({ x: 50, y: 30 }, 10)], 4, 1);
+    const f = loadDxfFile("f1", "plate.dxf", text, null);
+    expect(f.error).toBeUndefined();
+    const rec = f.parts[0]!;
+    expect(rec.holeCount).toBe(1);
+    // the same steps presentResult takes for a placed part
+    const source = (ids: string[]) => ids.map((id) => rec.lookup.get(id)).filter((e): e is Entity => e !== undefined);
+    const transform = placementTransform(rec.outer, { rotationDeg: 0, mirrored: false, translation: { x: 5, y: 5 } });
+    const outerEntities = materializeInstance(source(rec.outerSourceIds), transform).map((e) => ({ ...e, layer: NEST_PARTS_LAYER }));
+    const holeEntities = materializeInstance(source(rec.holeSourceIds.flat()), transform).map((e) => ({ ...e, layer: NEST_HOLES_LAYER }));
+    const dxf = entitiesToDxf(sheetDxfEntities({ stockIndex: 0, width: 200, height: 100 }, 0, "S", [{ sheet: 0, number: 1, outerEntities, holeEntities, label: { at: { x: 0, y: 0 }, height: 5 } }]), 4, 1);
+    const back = parseDxf(dxf, { blocks: "explode" }).entities;
+    expect(back.filter((e) => e.layer === "CUT_INNER").length).toBeGreaterThan(0);
+    expect(back.filter((e) => e.layer === "CUT_OUTER").length).toBeGreaterThan(0);
+    expect(back.some((e) => e.type === "circle" && e.layer === "CUT_INNER")).toBe(true);
+  });
+});
+
+describe("Open job", () => {
+  it("restores the saved job and every part's snapshot with its geometry", () => {
+    const plate = rect(100, 60);
+    const hole = circle({ x: 50, y: 30 }, 10);
+    const lookup = new Map([plate, hole].map((e) => [e.id, e]));
+    const { parts } = extractPartsWithDiagnostics([plate, hole], new Set([plate.id, hole.id]));
+    const snap = snapshotCanvasPart(parts[0]!, lookup, "cv9");
+    const job = { ...defaultJob(), parts: [{ key: "cv9#0", sourceIds: [], name: "plate", qty: 4, rotation: "r90" as const, mirror: false, allowInHoles: true }] };
+    const text = serializeJobFile(job, [{ key: snap.key, name: snap.name, kind: "dxf", text: snap.text, unit: snap.unit }]);
+    // what the "open-job" message does
+    const jf = parseJobFile(text)!;
+    const restored = parseNestJob(jf.job);
+    const files = new Map(jf.files.map((fl) => [fl.key, loadDxfFile(fl.key, fl.name, fl.text, fl.unit)]));
+    expect(restored.parts).toHaveLength(1);
+    expect(restored.parts[0]).toMatchObject({ key: "cv9#0", qty: 4, rotation: "r90", allowInHoles: true });
+    const rec = files.get("cv9")!.parts.find((p) => p.key === restored.parts[0]!.key)!;
+    expect(rec.holeCount).toBe(1);
+    expect(rec.area).toBeCloseTo(snap.parts[0]!.area, 6);
+    // a truncated file is refused, not half-opened
+    expect(parseJobFile(text.slice(0, text.length / 2))).toBeNull();
   });
 });

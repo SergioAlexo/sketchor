@@ -18,9 +18,12 @@ import {
   describeNotes,
   effectiveClamp,
   engineFor,
+  engineHintLines,
   extractPartsWithDiagnostics,
   fmtMm,
-  groupIdenticalSheets,
+  fmtMm2,
+  groupIdenticalSheetsPerRun,
+  problemHint,
   groupsFromRows,
   parseSheetText,
   resolveItem,
@@ -339,6 +342,32 @@ const plugin: PluginModule = {
 
     const groupProblemCount = () => job.groups.reduce((n, g) => n + (g.items.length === 0 ? 1 : g.items.filter((it) => itemStatus(it).state !== "ok").length), 0);
 
+    /**
+     * Names what blocks Calculate on the parts: "PN-0009: no DXF file found in
+     * the folder" (up to 3, then "+N more"), rather than the bare field name.
+     * Empty when nothing is wrong with the parts.
+     */
+    const partsProblem = (recs: Map<string, PartRec>): string => {
+      if (job.mode === "groups") {
+        if (job.groups.length === 0) return "no groups yet - paste a parts list and click Groups from the list";
+        if (!folder) return "no drawing folder chosen";
+        const probs: { name: string; reason: string }[] = [];
+        for (const g of job.groups) {
+          if (g.items.length === 0) probs.push({ name: `${MATERIAL_NAMES[g.material] ?? g.material} ${g.thickness}"`, reason: "group has no parts" });
+          for (const it of g.items) {
+            const st = itemStatus(it);
+            if (st.state === "missing") probs.push({ name: it.num, reason: "no DXF file found in the folder" });
+            else if (st.state === "failed") probs.push({ name: it.num, reason: st.error ?? "the drawing could not be read" });
+          }
+        }
+        return problemHint(probs);
+      }
+      const probs = job.parts.filter((x) => !recs.has(x.key)).map((x) => ({ name: x.name ?? x.key, reason: "drawing no longer found - add it again" }));
+      if (probs.length > 0) return problemHint(probs);
+      if (job.parts.length === 0) return "no parts added";
+      return job.parts.some((x) => x.qty > 0) ? "" : "every quantity is 0";
+    };
+
     const buildGroupRuns = (): Run[] => {
       const runs: Run[] = [];
       for (const g of job.groups) {
@@ -478,6 +507,8 @@ const plugin: PluginModule = {
         bomText,
         folder: folder ? { name: folder.name, count: folder.files.length, truncated: !!folder.truncated } : null,
         unsupported,
+        engineHint: engineHintLines(job.engine, job, unsupported),
+        partsProblem: partsProblem(recs),
         bedWarn,
         sheetOptions: sheetsFor(job.material).map((s) => ({ w: s.size.w, h: s.size.h, custom: s.custom, label: `${fmtMm(s.size.w * MM_PER_IN, job.outputUnit)} × ${fmtMm(s.size.h * MM_PER_IN, job.outputUnit)}` })),
         thicknessOptions: thicknessesFor(job.material).map((t) => ({ value: t.value, label: t.label ? `${t.value}" · ${t.label}` : `${t.value}"` })),
@@ -607,6 +638,31 @@ const plugin: PluginModule = {
       }
     };
 
+    /** The report's job header: material, thickness as entered, machine, engine, cutting parameters and sheet source. Groups mode carries material / thickness per group instead. */
+    const reportDetails = (grouped: boolean): [string, string][] => {
+      const field = (f: LengthField) => (f.v.trim() === "" ? "-" : `${f.v} ${f.u}`);
+      const rows: [string, string][] = [];
+      if (!grouped) {
+        rows.push(["Material", MATERIAL_NAMES[job.material] ?? job.material]);
+        rows.push(["Thickness", field(job.thickness)]);
+      }
+      rows.push(["Machine", { laser: "Laser", waterjet: "Waterjet", router: "CNC router", other: "Other" }[job.machine] ?? job.machine]);
+      rows.push(["Engine", job.engine === "raster" ? "Raster" : "True shape"]);
+      rows.push([job.machine === "router" ? "Bit diameter (kerf)" : "Kerf", field(job.params.kerf)]);
+      rows.push(["Web (gap)", field(job.params.web)]);
+      rows.push(["Edge margin", field(job.params.margin)]);
+      if (job.machine === "laser") rows.push(["Clamp strip", field(job.params.clamp)]);
+      rows.push([
+        "Sheet source",
+        grouped
+          ? "Standard sheet per group"
+          : job.sheetSource === "stock"
+            ? `Stock on hand (${job.stock.map((r) => `${r.size.name} ${fmt(r.size.width)} × ${fmt(r.size.height)}${r.qty === null ? "" : ` x${r.qty}`}`).join(", ")})`
+            : `Standard sheet ${fmt(job.sheet.w * MM_PER_IN)} × ${fmt(job.sheet.h * MM_PER_IN)}`,
+      ]);
+      return rows;
+    };
+
     const presentResult = async (runs: Run[], result: RasterNestResult, sheetRun: number[], unsupported: { option: string; reason: string }[], stopped: boolean) => {
       const recByKey = new Map<string, PartRec>();
       const orderedMap = new Map<string, { key: string; name: string; quantity: number }>();
@@ -652,13 +708,13 @@ const plugin: PluginModule = {
         });
       }
 
-      const grouped = runs.length > 1;
+      const grouped = job.mode === "groups" && runs.length > 0;
       const sheetLabel = (sheet: TrueNestSheet, i: number): string => {
         const run = runs[sheetRun[i] ?? 0];
-        return `${grouped && run ? run.label + " – " : ""}Sheet ${i + 1}/${result.sheets.length} – ${fmt(sheet.width)} × ${fmt(sheet.height)}`;
+        return `Sheet ${i + 1}/${result.sheets.length}${grouped && run ? " – " + run.label : ""} – ${fmt(sheet.width)} × ${fmt(sheet.height)}`;
       };
       const sheetLabels = result.sheets.map((s, i) => sheetLabel(s, i));
-      const groups = groupIdenticalSheets(result.sheets, result.placed);
+      const groups = groupIdenticalSheetsPerRun(result.sheets, result.placed, sheetRun);
       const clamp = runs[0] ? lengthMm(effectiveClamp(runs[0].job)) : 0;
       const layout = buildSideBySideLayout(result.sheets, placements, groups, sheetLabel, { clamp });
       await sketchor.app.openDocumentTab(`Nest – ${result.placed.length} part${result.placed.length === 1 ? "" : "s"}, ${result.sheets.length} sheet${result.sheets.length === 1 ? "" : "s"}`, layout);
@@ -684,6 +740,22 @@ const plugin: PluginModule = {
         ordered: [...orderedMap.values()],
         unit: { perMm: unit.perMm, label: unit.label },
         footer: NEST_CREDIT,
+        title: "Sheet Nesting Report",
+        format: { len: fmt, area: (mm2) => fmtMm2(mm2, job.outputUnit) },
+        fitPage: true,
+        details: reportDetails(grouped),
+        groupSections: grouped
+          ? runs.map((run, ri) => ({
+              title: `${run.label} - sheet ${fmt(run.job.sheet.w * MM_PER_IN)} × ${fmt(run.job.sheet.h * MM_PER_IN)}`,
+              sheets: sheetLabels.filter((_, i) => (sheetRun[i] ?? 0) === ri),
+              parts: run.job.parts
+                .filter((jp) => jp.qty > 0 && run.recs.has(jp.key))
+                .map((jp) => {
+                  const placedN = result.placed.filter((pl) => pl.partId === jp.key && (sheetRun[pl.sheet] ?? 0) === ri).length;
+                  return { name: run.recs.get(jp.key)!.name, ordered: jp.qty, placed: placedN, unplaced: Math.max(0, jp.qty - placedN) };
+                }),
+            }))
+          : undefined,
         summary: {
           kpis,
           stock: usage.map((u) => ({ ...u, size: `${fmt(u.width)} × ${fmt(u.height)}` })),
@@ -765,11 +837,7 @@ const plugin: PluginModule = {
         if (res.saved) notify(`Saved ${res.name ?? "nest-all.dxf"}.`);
         return;
       }
-      if (ln.sheets.length === 1) {
-        const res = await sketchor.ui.saveFile(sheetDxfFileName(0), sheetDxf(0), filters);
-        if (res.saved) notify(`Saved ${res.name ?? sheetDxfFileName(0)}.`);
-        return;
-      }
+      // "All as ZIP" always makes a .zip, even for one sheet; a single DXF is the per-sheet button.
       const zip = makeZip(ln.sheets.map((_, i) => ({ name: sheetDxfFileName(i), data: sheetDxf(i) })));
       const res = await sketchor.ui.saveFile("nest-sheets.zip", zip, [{ description: "ZIP archive", accept: { "application/zip": [".zip"] } }]);
       if (res.saved) notify(`Saved ${res.name ?? "nest-sheets.zip"} (${ln.sheets.length} sheets).`);
@@ -794,6 +862,7 @@ const plugin: PluginModule = {
         feedRateMmPerMin: cutRow?.feedRateMmPerMin ?? 2000,
         pierceTimeSec: cutRow?.pierceTimeSec ?? 0.5,
         sheetLabel: ln.sheetLabels[sheetIndex],
+        title: "Sheet Nesting",
       });
       const name = `nest-sheet-${sheetIndex + 1}.nc`;
       const res = await sketchor.ui.saveFile(name, gcode, [{ description: "G-code", accept: { "text/plain": [".nc", ".gcode", ".tap"] } }]);
@@ -1119,7 +1188,7 @@ const plugin: PluginModule = {
     const pushStatusOnly = () => {
       void (async () => {
         const v = await buildView();
-        post({ type: "status", status: v.status, canCalculate: v.canCalculate });
+        post({ type: "status", status: v.status, canCalculate: v.canCalculate, partsProblem: v.partsProblem });
       })();
     };
 

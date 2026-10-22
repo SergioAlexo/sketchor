@@ -1,7 +1,9 @@
 import { defaultRotationFor, defaultSheets, type LengthField, type MaterialId } from "./catalog";
 import type { CncInfo, CncWarning } from "./cnc";
 import type { ExtractNote } from "./partExtraction";
-import { lengthMm, type JobGroup, type NestJob } from "./nestJob";
+import { lengthMm, type EngineId, type JobGroup, type NestJob } from "./nestJob";
+import { groupIdenticalSheets, type SheetGroup, type SignaturePlacement } from "./sheetGroups";
+import type { TrueNestSheet } from "./trueNest";
 import type { RasterNestResult } from "./raster/rasterNest";
 import type { SheetRow } from "./bom";
 import { formatLen, parseLen, type LengthFormat } from "./units";
@@ -100,6 +102,24 @@ export function fmtMm(mm: number, unit: LengthFormat): string {
   return formatLen(mm / 25.4, unit);
 }
 
+const MM2_PER_IN2 = 25.4 * 25.4;
+
+/** Square millimetres in the job's display format: in² for the inch formats and feet-inches, otherwise mm² / cm² / m². */
+export function fmtMm2(mm2: number, unit: LengthFormat): string {
+  if (!Number.isFinite(mm2)) return "";
+  const r = (x: number, n: number) => String(Math.round(x * 10 ** n) / 10 ** n);
+  switch (unit) {
+    case "mm":
+      return `${r(mm2, 0)} mm²`;
+    case "cm":
+      return `${r(mm2 / 100, 2)} cm²`;
+    case "m":
+      return `${r(mm2 / 1e6, 4)} m²`;
+    default:
+      return `${r(mm2 / MM2_PER_IN2, 2)} in²`;
+  }
+}
+
 /** The unit a bare number means for a display format. */
 export function bareUnitFor(unit: LengthFormat): LengthField["u"] {
   return unit === "mm" ? "mm" : unit === "cm" ? "cm" : unit === "m" ? "m" : "in";
@@ -126,6 +146,40 @@ export function describeCnc(warnings: readonly CncWarning[], unit: LengthFormat)
 
 export function cncInfoSummary(info: CncInfo): string {
   return `${info.holes.length} hole${info.holes.length === 1 ? "" : "s"}, ${info.corners} inside corner${info.corners === 1 ? "" : "s"}`;
+}
+
+// ---------- hints ----------
+
+/**
+ * Names the problems behind a disabled Calculate ("PN-0009: no DXF file found
+ * in the folder") instead of the bare field name. Lists up to `max`, then
+ * "+N more".
+ */
+export function problemHint(problems: readonly { name: string; reason: string }[], max = 3): string {
+  const shown = problems.slice(0, max).map((p) => `${p.name}: ${p.reason}`);
+  if (problems.length > max) shown.push(`+${problems.length - max} more`);
+  return shown.join("; ");
+}
+
+const ENGINE_BLURB: Record<EngineId, string> = {
+  raster: "Raster: the default - fast, handles any quantity and fills part holes automatically. Pick True shape for few large parts with tight kerf, or when you need exact clearance or mirroring.",
+  "true-shape": "True shape: exact outlines, no grid rounding. Best for few large parts, tight kerf, exact clearance or mirroring; slower, and limited to a few hundred pieces per run.",
+};
+
+/** What the raster engine reports after a run when a part opts out of hole filling; shown before Calculate too. */
+export const RASTER_HOLE_NOTE = "The raster engine fills part holes automatically; per-part hole opt-out is ignored.";
+
+/**
+ * The text under the Engine select: the selected engine's description first,
+ * then every reason it cannot honour an option the job asks for (its
+ * `supports()` result, plus the raster hole opt-out note that is otherwise
+ * only reported after a run).
+ */
+export function engineHintLines(engine: EngineId, job: Pick<NestJob, "parts">, unsupported: readonly { reason: string }[]): string[] {
+  const lines = [ENGINE_BLURB[engine]];
+  for (const u of unsupported) if (!lines.includes(u.reason)) lines.push(u.reason);
+  if (engine === "raster" && job.parts.some((p) => p.qty > 0 && !p.allowInHoles) && !lines.includes(RASTER_HOLE_NOTE)) lines.push(RASTER_HOLE_NOTE);
+  return lines;
 }
 
 // ---------- groups ----------
@@ -198,6 +252,26 @@ export function combineResults(results: readonly RasterNestResult[]): CombinedRe
   });
   out.utilisation = area > 0 ? net / area : 0;
   return { result: out, sheetRun };
+}
+
+/**
+ * `groupIdenticalSheets` per group (run): sheets of two groups never merge,
+ * even when size and layout happen to match (they are different material or
+ * thickness). Result is ordered by each group's first sheet.
+ */
+export function groupIdenticalSheetsPerRun(
+  sheets: readonly TrueNestSheet[],
+  placements: readonly (SignaturePlacement & { sheet: number })[],
+  sheetRun: readonly number[],
+): SheetGroup[] {
+  const out: SheetGroup[] = [];
+  for (const run of new Set(sheetRun)) {
+    const idx = sheets.map((_, i) => i).filter((i) => (sheetRun[i] ?? 0) === run);
+    const local = new Map(idx.map((g, l) => [g, l]));
+    const sub = placements.filter((p) => local.has(p.sheet)).map((p) => ({ ...p, sheet: local.get(p.sheet)! }));
+    for (const g of groupIdenticalSheets(idx.map((i) => sheets[i]!), sub)) out.push({ ...g, indices: g.indices.map((l) => idx[l]!) });
+  }
+  return out.sort((a, b) => a.indices[0]! - b.indices[0]!);
 }
 
 export interface StockUsageRow {

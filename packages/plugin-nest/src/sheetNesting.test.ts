@@ -6,7 +6,12 @@ import {
   bedWarning,
   clampStripRect,
   combineResults,
+  engineHintLines,
+  fmtMm2,
+  groupIdenticalSheetsPerRun,
   groupsFromRows,
+  problemHint,
+  RASTER_HOLE_NOTE,
   jobReadiness,
   lengthStatus,
   parseJobFile,
@@ -155,5 +160,47 @@ describe("job file", () => {
       expect(parseJobFile(bad)).toBeNull();
     }
     expect(parseJobFile('{"format":"sketchor-nest","job":{},"files":[1,{"key":1}]}')!.files).toEqual([]);
+  });
+});
+
+describe("report / hint helpers", () => {
+  it("fmtMm2 matches the length unit's system", () => {
+    expect(fmtMm2(645.16, "in")).toBe("1 in²");
+    expect(fmtMm2(645.16, "indec")).toBe("1 in²");
+    expect(fmtMm2(100, "mm")).toBe("100 mm²");
+    expect(fmtMm2(NaN, "mm")).toBe("");
+  });
+
+  it("problemHint names up to three problems, then counts the rest", () => {
+    const p = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `PN-000${i}`, reason: "no DXF file found in the folder" }));
+    expect(problemHint([])).toBe("");
+    expect(problemHint(p(1))).toBe("PN-0000: no DXF file found in the folder");
+    expect(problemHint(p(3)).split(";")).toHaveLength(3);
+    expect(problemHint(p(5))).toMatch(/PN-0002: [^;]+; \+2 more$/);
+  });
+
+  it("engineHintLines describes the selected engine and lists what it cannot honour", () => {
+    const job = defaultJob();
+    const raster = engineHintLines("raster", job, []);
+    const exact = engineHintLines("true-shape", job, []);
+    expect(raster[0]).toMatch(/^Raster/);
+    expect(exact[0]).toMatch(/^True shape/);
+    expect(raster[0]).not.toBe(exact[0]);
+    expect(engineHintLines("raster", job, [{ reason: "gravity is a True shape option" }])).toContain("gravity is a True shape option");
+    // the raster hole opt-out note shows before Calculate, not only after the run
+    const optOut = { ...job, parts: [{ key: "k", sourceIds: [], qty: 2, rotation: "none" as const, mirror: false, allowInHoles: false }] };
+    expect(engineHintLines("raster", optOut, [])).toContain(RASTER_HOLE_NOTE);
+    expect(engineHintLines("true-shape", optOut, [])).not.toContain(RASTER_HOLE_NOTE);
+  });
+});
+
+describe("groupIdenticalSheetsPerRun", () => {
+  it("never merges sheets of different groups even when size and layout match, and keeps identical ones inside a group", () => {
+    const sheets = [0, 1, 2, 3].map(() => ({ stockIndex: 0, width: 100, height: 200 }));
+    const placed = sheets.map((_, i) => ({ partId: "p", sheet: i, rotationDeg: 0, mirrored: false, translation: { x: 1, y: 2 } }));
+    const groups = groupIdenticalSheetsPerRun(sheets, placed, [0, 0, 1, 1]);
+    expect(groups.map((g) => g.indices)).toEqual([[0, 1], [2, 3]]);
+    expect(groupIdenticalSheetsPerRun(sheets, placed, [0, 0, 0, 0]).map((g) => g.indices)).toEqual([[0, 1, 2, 3]]);
+    expect(groupIdenticalSheetsPerRun([], [], [])).toEqual([]);
   });
 });

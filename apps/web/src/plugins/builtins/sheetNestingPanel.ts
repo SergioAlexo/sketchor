@@ -170,7 +170,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         }
         h += "<div class='grid2'><label class='fld'><span class='t'>" + T.machine + "</span><select data-id='machine' data-set='machine'>" + optionsHtml(T.machines, j.machine) + "</select></label>";
         h += "<label class='fld'><span class='t'>" + T.engine + "</span><select data-id='engine' data-set='engine'><option value='raster'" + (j.engine === "raster" ? " selected" : "") + ">" + T.raster + "</option><option value='true-shape'" + (j.engine === "true-shape" ? " selected" : "") + ">" + T.trueShape + "</option></select></label></div>";
-        h += "<div class='muted' style='font-size:10px'>" + T.engineHint + "</div>";
+        h += (V.engineHint && V.engineHint.length ? V.engineHint : [T.engineHint]).map((l, i) => "<div class='muted' style='font-size:10px" + (i > 0 ? ";color:var(--sk-warn,#e0a030)" : "") + "'>" + esc(l) + "</div>").join("");
         return h + "</div>";
       }
 
@@ -286,7 +286,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (!V) { $("app").innerHTML = "<div class='muted'>Loading...</div>"; return; }
         const a = document.activeElement;
         focusState = a && a.dataset && a.dataset.id ? { id: a.dataset.id, s: a.selectionStart, e: a.selectionEnd } : null;
-        V.statusList = Object.keys(V.status).filter((k) => V.status[k] !== "ok").map((k) => ({ thickness: "thickness", kerf: "kerf", web: "web", margin: "margin", clamp: "clamp", bedW: "bed width", bedH: "bed height", parts: "parts", sheet: "sheet" }[k] || k));
+        V.statusList = Object.keys(V.status).filter((k) => V.status[k] !== "ok").map((k) => ({ thickness: "thickness", kerf: "kerf", web: "web", margin: "margin", clamp: "clamp", bedW: "bed width", bedH: "bed height", parts: V.partsProblem || "parts", sheet: "sheet" }[k] || k));
         const modeBar = "<div class='seg'><button data-act='mode' data-v='manual' class='" + (V.job.mode === "manual" ? "on" : "") + "'>" + T.manual + "</button><button data-act='mode' data-v='groups' class='" + (V.job.mode === "groups" ? "on" : "") + "'>" + T.groupsMode + "</button></div>";
         const body = V.job.mode === "groups" ? bomCard() + groupsCard() : partsCard();
         $("app").innerHTML = modeBar + jobCard() + cuttingCard() + body + actionsCard() + resultCard() + "<div class='credit'>" + T.credit + "</div>";
@@ -385,7 +385,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         const m = e.data && e.data.pluginMessage;
         if (!m) return;
         if (m.type === "view") { V = m; if (!V.running) progress = null; render(); return; }
-        if (m.type === "status") { if (V) { V.status = m.status; V.canCalculate = m.canCalculate && !V.running; render(); } return; }
+        if (m.type === "status") { if (V) { V.status = m.status; V.partsProblem = m.partsProblem; V.canCalculate = m.canCalculate && !V.running; render(); } return; }
         if (m.type === "nest-progress") { progress = m; const el = document.querySelector(".msg.ok"); if (el && V && V.running) el.textContent = progressText(); return; }
         if (m.type === "result") { R = m; message = null; render(); return; }
         if (m.type === "cleared") { R = null; message = null; render(); return; }
