@@ -135,7 +135,9 @@ describe("combineResults", () => {
 describe("kpis and stock usage", () => {
   it("standard source buys every sheet; stock source only the purchased ones", () => {
     const r = res(3, 3, [false, true, true]);
-    expect(resultKpis(r, "standard", 3, { cutLengthMm: 10, pierces: 4 }).toPurchase).toBe(3);
+    expect(resultKpis(r, "standard", 3, { cutLengthMm: 10, pierces: 4 }).toPurchase).toBe(0);
+    expect(resultKpis(r, "standard", 3, { cutLengthMm: 10, pierces: 4 }).showPurchase).toBe(false);
+    expect(stockUsage(r, "standard").every((u) => u.purchased === 0)).toBe(true); // regression: standard sheets are never "bought"
     expect(resultKpis(r, "stock", 3, { cutLengthMm: 10, pierces: 4 }).toPurchase).toBe(2);
     const u = stockUsage(r, "stock");
     expect(u).toHaveLength(1);

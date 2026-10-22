@@ -95,7 +95,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         holes: "holes", mirror: "Mirror", inHoles: "In holes", fileUnit: "File units", fileUnits: { "": "As in file", 1: "inch", 4: "mm", 5: "cm", 6: "m", 2: "foot" },
         calculate: "Calculate", stop: "Stop", clear: "Clear", check: "Check nest", saveJob: "Save job", openJob: "Open job",
         fillIn: "Fill in the orange fields", ready: "Ready to calculate", gone: "Drawing no longer found", bedWarn: "The sheet is larger than the machine bed.",
-        results: "Results", kpi: { sheets: "Sheets", toBuy: "To purchase", util: "Utilisation", placed: "Parts placed", cut: "Cut length", pierce: "Pierces" },
+        results: "Results", kpi: { sheets: "Sheets", sheetsUsed: "Sheets used", toBuy: "To purchase", util: "Utilisation", placed: "Parts placed", cut: "Cut length", pierce: "Pierces" },
         stockUsage: "Stock usage", notPlaced: "Not placed", dxf: "DXF", allZip: "All as ZIP", gcode: "G-code",
         manual: "Manual", groupsMode: "Groups from a list", bomHint: "Paste the parts list here (part number, quantity, material)...", loadCsv: "Load CSV", chooseFolder: "Choose folder", makeGroups: "Groups from the list",
         noFolder: "No drawing folder chosen - part numbers are looked up as DXF files in it.", noGroups: "No groups yet - paste a parts list and click Groups from the list.", group: "Group", of: "of",
@@ -267,13 +267,13 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (!R) return "";
         const k = R.kpis;
         let h = "<div class='card'><h4>" + T.results + "</h4><div class='kpis'>" +
-          [[k.sheets, T.kpi.sheets], [k.toPurchase, T.kpi.toBuy], [Math.round(k.utilisation * 1000) / 10 + "%", T.kpi.util], [k.placed + "/" + k.required, T.kpi.placed], [k.cutLength, T.kpi.cut], [k.pierces, T.kpi.pierce]]
+          [[k.sheets, k.showPurchase ? T.kpi.sheets : T.kpi.sheetsUsed]].concat(k.showPurchase ? [[k.toPurchase, T.kpi.toBuy]] : []).concat([[Math.round(k.utilisation * 1000) / 10 + "%", T.kpi.util], [k.placed + "/" + k.required, T.kpi.placed], [k.cutLength, T.kpi.cut], [k.pierces, T.kpi.pierce]])
             .map((x) => "<div class='kpi'><b>" + esc(x[0]) + "</b><span>" + x[1] + "</span></div>").join("") + "</div>";
         if (R.unplaced.length) h += "<div class='msg err'>" + T.notPlaced + ": " + R.unplaced.map((u) => esc(u.name) + " &times;" + u.count).join(", ") + "</div>";
         if (R.stopped) h += "<div class='msg warn'>Stopped early - showing the best layout found so far.</div>";
         (R.notes || []).forEach((n) => (h += "<div class='msg warn'>" + esc(n) + "</div>"));
-        h += "<h4 style='margin-top:6px'>" + T.stockUsage + "</h4><table><tr><th>Size</th><th>Used</th><th>Buy</th><th>In stock</th></tr>" +
-          R.stock.map((s) => "<tr><td>" + esc(s.size) + "</td><td>" + s.used + "</td><td>" + s.purchased + "</td><td>" + (s.available == null ? "&infin;" : s.available) + "</td></tr>").join("") + "</table>";
+        h += "<h4 style='margin-top:6px'>" + T.stockUsage + "</h4><table><tr><th>Size</th><th>Used</th>" + (k.showPurchase ? "<th>Buy</th>" : "") + "<th>In stock</th></tr>" +
+          R.stock.map((s) => "<tr><td>" + esc(s.size) + "</td><td>" + s.used + "</td>" + (k.showPurchase ? "<td>" + s.purchased + "</td>" : "") + "<td>" + (s.available == null ? "&infin;" : s.available) + "</td></tr>").join("") + "</table>";
         h += "<h4 style='margin-top:8px'>Sheets</h4>" + R.cards.map((c) =>
           "<div class='scard'><div><b>" + esc(c.title) + "</b>" + (c.group ? " <span class='muted'>" + esc(c.group) + "</span>" : "") + "<div class='pdim'>" + esc(c.size) + " &middot; " + c.parts + " parts &middot; " + Math.round(c.utilisation * 100) + "%</div></div>" +
           "<button class='ghost sm' data-act='dxf' data-i='" + c.index + "'>" + T.dxf + "</button></div>").join("");

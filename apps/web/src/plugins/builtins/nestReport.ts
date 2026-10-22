@@ -44,7 +44,7 @@ export interface LastNest {
   footer?: string;
   /** RN-42: job-level KPIs, stock usage and group names, already formatted by the caller. */
   summary?: {
-    kpis: { sheets: number; toPurchase: number; utilisation: number; placed: number; required: number; cutLengthMm: number; pierces: number; unplaced: number };
+    kpis: { sheets: number; toPurchase: number; showPurchase?: boolean; utilisation: number; placed: number; required: number; cutLengthMm: number; pierces: number; unplaced: number };
     stock: { name: string; size: string; used: number; purchased: number; available: number | null }[];
     groups: string[];
   };
@@ -130,15 +130,16 @@ export function reportSummaryLines(lastNest: LastNest): { kpis: [string, string]
   const s = lastNest.summary;
   if (!s) return { kpis: [], stock: [], groups: "" };
   const k = s.kpis;
+  const buy = k.showPurchase !== false; // only stock-on-hand mode buys sheets
   const kpis: [string, string][] = [
-    ["Sheets", String(k.sheets)],
-    ["To purchase", String(k.toPurchase)],
+    [buy ? "Sheets" : "Sheets used", String(k.sheets)],
+    ...(buy ? ([["To purchase", String(k.toPurchase)]] as [string, string][]) : []),
     ["Utilisation", `${Math.round(k.utilisation * 1000) / 10}%`],
     ["Parts placed", `${k.placed} of ${k.required}`],
     ["Cut length", `${Math.round(toU(k.cutLengthMm, lastNest.unit.perMm))} ${lastNest.unit.label}`],
     ["Pierces", String(k.pierces)],
   ];
-  const stock = s.stock.map((r) => `${r.size}: ${r.used} used, ${r.purchased} to purchase${r.available === null ? "" : `, ${r.available} in stock`}`);
+  const stock = s.stock.map((r) => `${r.size}: ${r.used} used${buy ? `, ${r.purchased} to purchase` : ""}${r.available === null ? "" : `, ${r.available} in stock`}`);
   return { kpis, stock, groups: s.groups.join("; ") };
 }
 

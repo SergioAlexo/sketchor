@@ -223,7 +223,8 @@ export function stockUsage(result: RasterNestResult, source: NestJob["sheetSourc
       rows.set(key, r);
     }
     r.used += 1;
-    if (source === "standard" || result.purchased[i]) r.purchased += 1;
+    // Sheets are only bought from stock-on-hand with buy-extra; a standard sheet is unlimited, not purchased.
+    if (source === "stock" && result.purchased[i]) r.purchased += 1;
   });
   return [...rows.values()];
 }
@@ -231,6 +232,8 @@ export function stockUsage(result: RasterNestResult, source: NestJob["sheetSourc
 export interface ResultKpis {
   sheets: number;
   toPurchase: number;
+  /** True only in stock-on-hand mode: the To-purchase KPI and Buy column exist only there. */
+  showPurchase: boolean;
   utilisation: number;
   placed: number;
   required: number;
@@ -245,10 +248,11 @@ export function resultKpis(
   required: number,
   cut: { cutLengthMm: number; pierces: number },
 ): ResultKpis {
-  const toPurchase = source === "standard" ? result.sheets.length : result.purchased.filter(Boolean).length;
+  const toPurchase = source === "stock" ? result.purchased.filter(Boolean).length : 0;
   return {
     sheets: result.sheets.length,
     toPurchase,
+    showPurchase: source === "stock",
     utilisation: result.utilisation,
     placed: result.placed.length,
     required,

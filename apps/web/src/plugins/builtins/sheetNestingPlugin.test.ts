@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { entitiesToDxf } from "@sketchor/core";
 import { polyline } from "@sketchor/plugin-sdk";
-import { loadDxfFile, PANEL_HTML, recFromExtracted } from "./sheetNestingPlugin";
+import { reportSummaryLines } from "./nestReport";
+import { loadDxfFile,PANEL_HTML, recFromExtracted } from "./sheetNestingPlugin";
 import { extractPartsWithDiagnostics, groupsFromRows, parseSheetText, resolveItem, sumRepeatedRows } from "@sketchor/plugin-nest";
 
 /**
@@ -69,5 +70,18 @@ describe("recFromExtracted", () => {
     const rec = recFromExtracted(parts[0]!, "k", new Map([[e.id, e]]), notes);
     expect(rec.cutLength).toBeCloseTo(60, 6);
     expect(rec.area).toBeCloseTo(200, 6);
+  });
+});
+
+describe("report summary in standard-sheet mode", () => {
+  it("has no To purchase line or purchase text when sheets are not bought", () => {
+    const base = { sheets: 1, toPurchase: 0, utilisation: 0.5, placed: 2, required: 2, cutLengthMm: 10, pierces: 2, unplaced: 0 };
+    const stock = [{ name: "Sheet", size: "10 x 10", used: 1, purchased: 0, available: null }];
+    const mk = (showPurchase: boolean) => reportSummaryLines({ summary: { kpis: { ...base, showPurchase }, stock, groups: [] }, unit: { perMm: 1, label: "mm" } } as never);
+    const labels = (x: ReturnType<typeof mk>) => x.kpis.map(([l]) => l);
+    expect(labels(mk(false))).toContain("Sheets used");
+    expect(labels(mk(false))).not.toContain("To purchase");
+    expect(mk(false).stock.join()).not.toContain("purchase");
+    expect(labels(mk(true))).toContain("To purchase");
   });
 });
