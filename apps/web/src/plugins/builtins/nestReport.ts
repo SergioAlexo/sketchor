@@ -121,11 +121,38 @@ function reportSpine(lastNest: LastNest): ReportSpine {
   };
 }
 
+/**
+ * RN-42: the job-level block of the report - KPIs, stock usage, group names -
+ * as plain strings shared by the HTML and PDF so the two cannot disagree.
+ * Empty when the caller gave no summary (the older nest panel).
+ */
+export function reportSummaryLines(lastNest: LastNest): { kpis: [string, string][]; stock: string[]; groups: string } {
+  const s = lastNest.summary;
+  if (!s) return { kpis: [], stock: [], groups: "" };
+  const k = s.kpis;
+  const kpis: [string, string][] = [
+    ["Sheets", String(k.sheets)],
+    ["To purchase", String(k.toPurchase)],
+    ["Utilisation", `${Math.round(k.utilisation * 1000) / 10}%`],
+    ["Parts placed", `${k.placed} of ${k.required}`],
+    ["Cut length", `${Math.round(toU(k.cutLengthMm, lastNest.unit.perMm))} ${lastNest.unit.label}`],
+    ["Pierces", String(k.pierces)],
+  ];
+  const stock = s.stock.map((r) => `${r.size}: ${r.used} used, ${r.purchased} to purchase${r.available === null ? "" : `, ${r.available} in stock`}`);
+  return { kpis, stock, groups: s.groups.join("; ") };
+}
+
 const esc = (s: string): string => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 export function buildNestReportHtml(lastNest: LastNest): string {
   const { metrics, unit } = lastNest;
   const { totalPlaced, totalUnplaced, sheetRows, orderedRows } = reportSpine(lastNest);
+  const extra = reportSummaryLines(lastNest);
+  const extraHtml = extra.kpis.length
+    ? `<table><tbody><tr>${extra.kpis.map(([l]) => `<th>${esc(l)}</th>`).join("")}</tr><tr>${extra.kpis.map(([, v]) => `<td>${esc(v)}</td>`).join("")}</tr></tbody></table>` +
+      (extra.stock.length ? `<h2>Stock usage</h2><ul>${extra.stock.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "") +
+      (extra.groups ? `<p>Groups: ${esc(extra.groups)}</p>` : "")
+    : "";
 
   const coverRows = sheetRows
     .map(
@@ -168,10 +195,12 @@ export function buildNestReportHtml(lastNest: LastNest): string {
   <div class="nest-report">
     <h1>Sheet Metal Nest Report</h1>
     <p>${totalPlaced} part(s) placed on ${lastNest.sheets.length} sheet(s)${totalUnplaced ? `, ${totalUnplaced} didn't fit` : ""}. Overall utilisation ${Math.round(metrics.totalUtilisation * 100)}%.</p>
+    ${extraHtml}
     <table><thead><tr><th>Sheet</th><th>Utilisation</th><th>Reusable remnant</th><th>Cutting time</th><th>Weight</th><th>Cost</th></tr></thead><tbody>${coverRows}</tbody></table>
     ${sheetsHtml}
     <h2>Parts ordered vs. placed</h2>
     <table><thead><tr><th>Part</th><th>Ordered</th><th>Placed</th><th>Unplaced</th></tr></thead><tbody>${summaryRows}</tbody></table>
+    ${lastNest.footer ? `<p style="margin-top:16px;font-size:11px;color:#666666">${esc(lastNest.footer)}</p>` : ""}
   </div>`;
 }
 
@@ -202,7 +231,22 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
     `${totalPlaced} part(s) placed on ${lastNest.sheets.length} sheet(s)${totalUnplaced ? `, ${totalUnplaced} didn't fit` : ""}. Overall utilisation ${Math.round(metrics.totalUtilisation * 100)}%.`,
     { size: 10 },
   );
-  y += 22;
+  y += 18;
+  const extra = reportSummaryLines(lastNest);
+  if (extra.kpis.length > 0) {
+    pdf.text(margin, y, extra.kpis.map(([l, v]) => `${l}: ${v}`).join("   "), { size: 9, bold: true });
+    y += 14;
+    for (const line of extra.stock) {
+      need(14);
+      pdf.text(margin, y, `Stock - ${line}`, { size: 9 });
+      y += 12;
+    }
+    if (extra.groups) {
+      pdf.text(margin, y, `Groups: ${extra.groups}`, { size: 9 });
+      y += 12;
+    }
+  }
+  y += 8;
 
   const coverCols = [margin, margin + 150, margin + 250, margin + 340, margin + 420, margin + 480];
   const coverHeader = () => {
@@ -276,6 +320,12 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
     pdf.text(sumCols[2], y, String(r.placed), { size: 9, color: r.placed < r.ordered ? "#c0392b" : undefined });
     pdf.text(sumCols[3], y, String(r.unplaced), { size: 9, color: r.unplaced > 0 ? "#c0392b" : undefined });
     y += 14;
+  }
+
+  if (lastNest.footer) {
+    need(24);
+    y += 10;
+    pdf.text(margin, y, lastNest.footer, { size: 8, color: "#666666" });
   }
 
   return pdf.bytes();

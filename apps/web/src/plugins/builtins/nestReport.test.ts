@@ -180,3 +180,30 @@ describe("buildNestReportPdf", () => {
     expect(text).toContain("(Bolt hole cover)");
   });
 });
+
+describe("RN-42 report additions", () => {
+  const asText = (bytes: Uint8Array) => String.fromCharCode(...bytes);
+  const withSummary = (): LastNest => ({
+    ...lastNest(),
+    footer: "Nesting engine based on the Sheet Nesting Calculator by Oleksandr Borenko",
+    summary: {
+      kpis: { sheets: 2, toPurchase: 1, utilisation: 0.512, placed: 3, required: 4, cutLengthMm: 1234, pierces: 9, unplaced: 1 },
+      stock: [{ name: "s", size: "200 x 100", used: 2, purchased: 1, available: 1 }],
+      groups: ['AL 5052 0.125"', "Stainless"],
+    },
+  });
+
+  it("prints KPIs, stock usage, groups and the credit in both HTML and PDF", () => {
+    const html = buildNestReportHtml(withSummary());
+    for (const s of ["To purchase", "51.2%", "3 of 4", "1234 mm", "Stock usage", "200 x 100: 2 used, 1 to purchase, 1 in stock", "Groups: AL 5052", "Oleksandr Borenko"]) expect(html).toContain(s);
+    const pdf = asText(buildNestReportPdf(withSummary()));
+    expect(pdf).toContain("Oleksandr Borenko");
+    expect(pdf).toContain("Cut length: 1234 mm");
+  });
+
+  it("is unchanged for callers without a summary (the older nest panel)", () => {
+    const html = buildNestReportHtml(lastNest());
+    expect(html).not.toContain("Stock usage");
+    expect(html).not.toContain("Oleksandr");
+  });
+});
