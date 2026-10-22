@@ -220,3 +220,4 @@ One row per landed item, newest last. Agents append in the same commit as the it
 | Item | Commit | Notes |
 |---|---|---|
 | RN-01 | this commit | `raster/engine.ts`: faithful port as one generator (`nestSteps`) + `nestRasterSync`/`nestRaster` drivers; added `maxIterations` test hook; credit to O. Borenko in header |
+| RN-10 | this commit | partExtraction: duplicate removal, helper filter (`ExtractNote`), `closeTolerance` vs `joinTolerance` with gap-closed note, `singlePart` multi-outer note, per-part `cutLength`/`holeCount`/`pierceCount`. Helper filter on by default (`keepHelpers` opts out). Ported from the Sheet Nesting Calculator by Oleksandr Borenko. |

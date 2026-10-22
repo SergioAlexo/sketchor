@@ -186,3 +186,71 @@ describe("C-08: ellipses and splines are parts", () => {
     expect(parts[0].holeSourceIds[0]).toEqual(["e"]);
   });
 });
+
+/**
+ * RN-10: the contour rules ported from the Sheet Nesting Calculator
+ * (Oleksandr Borenko). Each guards a way a nest quietly goes wrong: a doubled
+ * line cut twice, a bend line cut as an outline, a quote off by the pierces.
+ */
+describe("extractPartsWithDiagnostics contour rules (RN-10)", () => {
+  const line = (id: string, ax: number, ay: number, bx: number, by: number, extra: Partial<LineEntity> = {}): LineEntity => ({
+    id,
+    type: "line",
+    a: { x: ax, y: ay },
+    b: { x: bx, y: by },
+    ...extra,
+  });
+
+  it("per-part cut length, holes and pierces add up from outer + holes", () => {
+    const entities = [rectPolyline("o", 0, 0, 100, 50), rectPolyline("h", 10, 10, 10, 10)];
+    const [part] = extractParts(entities, allIds(entities));
+    expect(part.cutLength).toBeCloseTo(300 + 40);
+    expect(part.holeCount).toBe(1);
+    expect(part.pierceCount).toBe(2);
+  });
+
+  it("drops a duplicated primitive and says so", () => {
+    const entities: Entity[] = [rectPolyline("o", 0, 0, 10, 10), rectPolyline("dup", 0, 0, 10, 10)];
+    const r = extractPartsWithDiagnostics(entities, allIds(entities));
+    expect(r.parts).toHaveLength(1);
+    expect(r.notes).toContainEqual({ kind: "duplicates", count: 1 });
+    expect(r.parts[0].cutLength).toBeCloseTo(40);
+  });
+
+  it("ignores helper lines by layer, linetype and construction flag, unless kept", () => {
+    const entities: Entity[] = [
+      rectPolyline("o", 0, 0, 10, 10),
+      line("bend", 5, 0, 5, 10, { layer: "BEND_LINES" }),
+      line("ctr", 0, 5, 10, 5, { linetype: "CENTER" }),
+      line("con", 0, 2, 10, 2, { construction: true }),
+    ];
+    const r = extractPartsWithDiagnostics(entities, allIds(entities));
+    expect(r.openChains).toHaveLength(0);
+    expect(r.notes.find((n) => n.kind === "helper")).toMatchObject({ count: 3 });
+    const kept = extractPartsWithDiagnostics(entities, allIds(entities), { keepHelpers: true });
+    expect(kept.notes.find((n) => n.kind === "helper")).toBeUndefined();
+    expect(kept.openChains.length).toBeGreaterThan(0);
+  });
+
+  it("closes a small gap only with a close tolerance, and reports it", () => {
+    const entities: Entity[] = [line("a", 0, 0, 10, 0), line("b", 10.005, 0, 10, 10), line("c", 10, 10, 0, 10), line("d", 0, 10, 0, 0)];
+    expect(extractParts(entities, allIds(entities))).toHaveLength(0);
+    const r = extractPartsWithDiagnostics(entities, allIds(entities), { closeTolerance: 0.01 });
+    expect(r.parts).toHaveLength(1);
+    const gap = r.notes.find((n) => n.kind === "gap-closed");
+    expect(gap && gap.kind === "gap-closed" && gap.maxGap).toBeCloseTo(0.005, 3);
+  });
+
+  it("flags several separate outer contours only for single-part selections", () => {
+    const entities: Entity[] = [rectPolyline("a", 0, 0, 10, 10), rectPolyline("b", 50, 0, 10, 10)];
+    expect(extractPartsWithDiagnostics(entities, allIds(entities)).notes).toEqual([]);
+    const r = extractPartsWithDiagnostics(entities, allIds(entities), { singlePart: true });
+    expect(r.notes).toContainEqual({ kind: "multi-outer", count: 2 });
+  });
+
+  it("never throws on an empty selection or only helper lines", () => {
+    expect(extractPartsWithDiagnostics([], new Set()).parts).toEqual([]);
+    const h = [line("x", 0, 0, 1, 1, { layer: "centerline" })];
+    expect(extractPartsWithDiagnostics(h, allIds(h)).parts).toEqual([]);
+  });
+});
