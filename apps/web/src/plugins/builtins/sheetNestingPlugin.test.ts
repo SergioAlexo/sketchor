@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { entitiesToDxf } from "@sketchor/core";
-import { polyline } from "@sketchor/plugin-sdk";
+import { circle, polyline } from "@sketchor/plugin-sdk";
 import { reportSummaryLines } from "./nestReport";
-import { loadDxfFile,PANEL_HTML, recFromExtracted } from "./sheetNestingPlugin";
+import { loadDxfFile, PANEL_HTML, recFromExtracted, snapshotCanvasPart } from "./sheetNestingPlugin";
 import { extractPartsWithDiagnostics, groupsFromRows, parseSheetText, resolveItem, sumRepeatedRows } from "@sketchor/plugin-nest";
 
 /**
@@ -83,5 +83,38 @@ describe("report summary in standard-sheet mode", () => {
     expect(labels(mk(false))).not.toContain("To purchase");
     expect(mk(false).stock.join()).not.toContain("purchase");
     expect(labels(mk(true))).toContain("To purchase");
+  });
+});
+
+describe("snapshotCanvasPart", () => {
+  it("keeps a plate-with-hole nestable from the snapshot alone, with the same area and cut length", () => {
+    const plate = rect(100, 60);
+    const hole = circle({ x: 50, y: 30 }, 10);
+    const lookup = new Map([plate, hole].map((e) => [e.id, e]));
+    const { parts, notes } = extractPartsWithDiagnostics([plate, hole], new Set([plate.id, hole.id]));
+    const live = recFromExtracted(parts[0]!, "k", lookup, notes);
+    // The snapshot is built from the lookup only: no document is consulted, so it holds whichever tab is active.
+    const f = snapshotCanvasPart(parts[0]!, lookup, "cv1");
+    expect(f.error).toBeUndefined();
+    expect(f.parts).toHaveLength(1);
+    const snap = f.parts[0]!;
+    expect(snap.key).toBe("cv1#0");
+    expect(snap.holeCount).toBe(1);
+    expect(snap.area).toBeCloseTo(live.area, 2);
+    expect(snap.cutLength).toBeCloseTo(live.cutLength, 2);
+    expect(snap.w).toBeCloseTo(100, 3);
+    // survives save/reopen: re-deriving from the persisted text gives the same part
+    const again = loadDxfFile(f.key, f.name, f.text, f.unit);
+    expect(again.parts[0]!.area).toBeCloseTo(snap.area, 6);
+  });
+
+  it("keeps polyline bulges exact", () => {
+    const arcy = polyline([{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }, { x: 0, y: 30 }], true, { bulges: [0.5, 0, 0, 0] });
+    const lookup = new Map([[arcy.id, arcy]]);
+    const { parts, notes } = extractPartsWithDiagnostics([arcy], new Set([arcy.id]));
+    const live = recFromExtracted(parts[0]!, "k", lookup, notes);
+    const snap = snapshotCanvasPart(parts[0]!, lookup, "cv2").parts[0]!;
+    expect(snap.cutLength).toBeCloseTo(live.cutLength, 3);
+    expect(snap.area).toBeCloseTo(live.area, 2);
   });
 });

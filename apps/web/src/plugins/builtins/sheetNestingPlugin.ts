@@ -226,6 +226,24 @@ export function loadDxfFile(key: string, name: string, text: string, unit: numbe
   }
 }
 
+/**
+ * Snapshots a canvas part: its outline and hole entities (exact lines, arcs,
+ * bulges) are written to a DXF text and re-read as a drawing file, so the job
+ * carries the geometry itself. That keeps the part valid whichever tab is
+ * active, survives save/reopen (files are persisted and saved with the job),
+ * and feeds DXF export and cut length from the same prims as the canvas.
+ */
+export function snapshotCanvasPart(
+  part: { name: string; outerSourceIds: string[]; holeSourceIds: string[][] },
+  lookup: ReadonlyMap<string, Entity>,
+  fileKey: string,
+  joinTolerance?: number,
+): FileRec {
+  const ids = [...part.outerSourceIds, ...part.holeSourceIds.flat()];
+  const entities = ids.map((id) => lookup.get(id)).filter((e): e is Entity => e !== undefined);
+  return loadDxfFile(fileKey, part.name, entitiesToDxf(entities, 4, 1), null, joinTolerance);
+}
+
 const plugin: PluginModule = {
   async activate(sketchor) {
     let unit: DisplayUnitInfo = { unit: "mm", perMm: 1, label: "mm" };
@@ -378,14 +396,6 @@ const plugin: PluginModule = {
 
     // ---------- part resolution ----------
 
-    /** Canvas parts are re-read from the live document every time - geometry is never persisted. */
-    const resolveCanvas = (entities: Entity[], p: JobPart): PartRec | null => {
-      const r = extractPartsWithDiagnostics(entities, new Set(p.sourceIds), { joinTolerance: job.joinTolerance });
-      const part = r.parts[0];
-      if (!part) return null;
-      return recFromExtracted(part, p.key, new Map(entities.map((e) => [e.id, e])), r.notes);
-    };
-
     const fileRecFor = (key: string): { rec: PartRec; file: FileRec } | null => {
       const hash = key.lastIndexOf("#");
       const f = files.get(hash > 0 ? key.slice(0, hash) : key);
@@ -393,14 +403,16 @@ const plugin: PluginModule = {
       return f && rec ? { rec, file: f } : null;
     };
 
-    /** Resolves every manual-mode part to geometry; `missing` lists parts whose drawing is gone. */
+    /**
+     * Resolves every manual-mode part from its snapshot (never from the active
+     * document); `missing` lists parts with no geometry (jobs saved before
+     * snapshots existed). `sourceIds` is only the "refresh from drawing" link.
+     */
     const resolveParts = async (): Promise<{ recs: Map<string, PartRec>; missing: JobPart[] }> => {
-      const model = job.parts.some((p) => p.sourceIds.length > 0) ? await sketchor.document.read() : null;
-      const entities = model ? [...model.entities] : [];
       const recs = new Map<string, PartRec>();
       const missing: JobPart[] = [];
       for (const p of job.parts) {
-        const rec = p.sourceIds.length > 0 ? resolveCanvas(entities, p) : (fileRecFor(p.key)?.rec ?? null);
+        const rec = fileRecFor(p.key)?.rec ?? null;
         if (rec) recs.set(p.key, rec);
         else missing.push(p);
       }
@@ -596,8 +608,6 @@ const plugin: PluginModule = {
     };
 
     const presentResult = async (runs: Run[], result: RasterNestResult, sheetRun: number[], unsupported: { option: string; reason: string }[], stopped: boolean) => {
-      const model = job.parts.some((p) => p.sourceIds.length > 0) ? await sketchor.document.read() : null;
-      void model;
       const recByKey = new Map<string, PartRec>();
       const orderedMap = new Map<string, { key: string; name: string; quantity: number }>();
       runs.forEach((run) => {
@@ -812,17 +822,23 @@ const plugin: PluginModule = {
         }
         let added = 0;
         const next = [...job.parts];
+        const lookup = new Map(entities.map((e) => [e.id, e]));
         for (const part of parts) {
-          const key = stableKey(part.sourceIds);
-          const existing = next.find((x) => x.key === key);
-          if (existing) existing.sourceIds = part.sourceIds;
-          else {
-            next.push({ key, sourceIds: part.sourceIds, name: part.name, qty: 1, rotation: defaultRotationFor(job.material), mirror: false, allowInHoles: false });
+          const link = stableKey(part.sourceIds);
+          const existing = next.find((x) => x.sourceIds.length > 0 && stableKey(x.sourceIds) === link);
+          // Re-adding a part refreshes its snapshot in place (keeps qty / rotation).
+          const fileKey = existing ? existing.key.slice(0, Math.max(0, existing.key.lastIndexOf("#"))) || existing.key : `cv${Date.now().toString(36)}${++fileCounter}`;
+          const rec = snapshotCanvasPart(part, lookup, fileKey, job.joinTolerance);
+          if (rec.error || rec.parts.length === 0) continue;
+          files.set(fileKey, rec);
+          if (!existing) {
+            next.push({ key: rec.parts[0]!.key, sourceIds: part.sourceIds, name: part.name, qty: 1, rotation: defaultRotationFor(job.material), mirror: false, allowInHoles: false });
             added += 1;
           }
         }
         job = { ...job, parts: next };
         persistJob();
+        persistFiles();
         await pushView();
         notify(`${added} added, ${parts.length - added} already in the list - ${job.parts.length} part(s) in the job.${openChains.length > 0 ? ` ${openChains.length} open shape(s) skipped.` : ""}`);
         return;
