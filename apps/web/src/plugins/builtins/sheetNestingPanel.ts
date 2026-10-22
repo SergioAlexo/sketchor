@@ -71,7 +71,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
   <body>
     <div id="app"></div>
     <input type="file" id="file-parts" multiple accept=".dxf,.dwg,.svg" style="display:none">
-    <input type="file" id="file-job" accept=".sketchor-nest,.json" style="display:none">
+    <input type="file" id="file-csv" accept=".csv,.txt,.tsv" style="display:none">
+    <input type="file" id="file-job"accept=".sketchor-nest,.json" style="display:none">
     <script>
       const post = (m) => parent.postMessage({ pluginMessage: m }, "*");
       const $ = (id) => document.getElementById(id);
@@ -96,6 +97,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         fillIn: "Fill in the orange fields", ready: "Ready to calculate", gone: "Drawing no longer found", bedWarn: "The sheet is larger than the machine bed.",
         results: "Results", kpi: { sheets: "Sheets", toBuy: "To purchase", util: "Utilisation", placed: "Parts placed", cut: "Cut length", pierce: "Pierces" },
         stockUsage: "Stock usage", notPlaced: "Not placed", dxf: "DXF", allZip: "All as ZIP", gcode: "G-code",
+        manual: "Manual", groupsMode: "Groups from a list", bomHint: "Paste the parts list here (part number, quantity, material)...", loadCsv: "Load CSV", chooseFolder: "Choose folder", makeGroups: "Groups from the list",
+        noFolder: "No drawing folder chosen - part numbers are looked up as DXF files in it.", noGroups: "No groups yet - paste a parts list and click Groups from the list.", group: "Group", of: "of",
         credit: "Nesting engine based on the Sheet Nesting Calculator by Oleksandr Borenko",
       };
       const ROT_KEYS = ["none", "flip", "r90", "r45", "r30", "r15", "r10", "free"];
@@ -142,6 +145,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       function jobCard() {
         const j = V.job, st = V.status;
         let h = "<div class='card'><h4>Job</h4>";
+        if (j.mode === "manual") {
         h += "<label class='fld'><span class='t'>" + T.material + "</span><select data-id='material' data-set='material'>" + optionsHtml(T.materials, j.material, V.materials) + "</select></label>";
         h += "<div class='seg'><button data-act='source' data-v='standard' class='" + (j.sheetSource === "standard" ? "on" : "") + "'>" + T.standard + "</button><button data-act='source' data-v='stock' class='" + (j.sheetSource === "stock" ? "on" : "") + "'>" + T.stock + "</button></div>";
         const sheetSel = V.sheetOptions.map((s, i) => "<option value='" + i + "'" + (Math.abs(s.w - j.sheet.w) < 1e-6 && Math.abs(s.h - j.sheet.h) < 1e-6 ? " selected" : "") + ">" + esc(s.label) + (s.custom ? " *" : "") + "</option>").join("");
@@ -157,6 +161,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
           h += "<div class='row'><button class='ghost sm' data-act='stock-add'>" + T.addRow + "</button><label style='margin:0'><input type='checkbox' data-set='buyExtra'" + (j.buyExtra ? " checked" : "") + ">" + T.buyExtra + "</label></div>";
         }
         if (V.bedWarn) h += "<div class='msg warn'>" + T.bedWarn + "</div>";
+        }
         if (j.mode === "manual") {
           const gauges = "<option value=''>" + T.gauge + "</option>" + V.thicknessOptions.map((o) => "<option value='" + esc(o.value) + "'>" + esc(o.label) + "</option>").join("");
           h += lenField("thickness", T.thickness, j.thickness, st.thickness) ;
@@ -215,6 +220,32 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         return h + "</div>";
       }
 
+      const ITEM_TEXT = { nofolder: "choose the folder", missing: "no file found", failed: "file unusable", loading: "reading...", ok: "ok" };
+      function bomCard() {
+        let h = "<div class='card'><h4>Parts list</h4><textarea data-id='bom' data-bom='1' rows='5' placeholder='" + esc(T.bomHint) + "' style='width:100%;resize:vertical;background:var(--sk-bg,#1e1f22);color:inherit;border:1px solid var(--sk-border,#3a3d42);border-radius:4px;font:11px monospace;padding:4px'>" + esc(V.bomText) + "</textarea>";
+        h += "<div class='row' style='margin:6px 0'><button class='ghost sm' data-act='load-csv'>" + T.loadCsv + "</button><button class='ghost sm' data-act='pick-folder'>" + T.chooseFolder + "</button><button data-act='make-groups'>" + T.makeGroups + "</button></div>";
+        h += "<div class='pdim'>" + (V.folder ? esc(V.folder.name) + " - " + V.folder.count + " files" + (V.folder.truncated ? " (list truncated)" : "") : T.noFolder) + "</div></div>";
+        return h;
+      }
+      function groupsCard() {
+        if (!V.groups.length) return "<div class='card'><div class='muted'>" + T.noGroups + "</div></div>";
+        return V.groups.map((g, gi) => {
+          const sheetSel = g.sheetOptions.map((s, i) => "<option value='" + i + "'" + (Math.abs(s.w - g.sheet.w) < 1e-6 && Math.abs(s.h - g.sheet.h) < 1e-6 ? " selected" : "") + ">" + esc(s.label) + "</option>").join("");
+          const gid = esc(g.id);
+          let h = "<div class='card'><h4>" + T.group + " " + (gi + 1) + " " + T.of + " " + V.groups.length + "</h4><div class='grid2'>";
+          h += "<label class='fld'><span class='t'>" + T.material + "</span><select data-gid='" + gid + "' data-gset='material'>" + optionsHtml(T.materials, g.material, V.materials) + "</select></label>";
+          h += "<label class='fld'><span class='t'>" + T.thickness + " (in)</span><input data-id='gt" + gi + "' data-gid='" + gid + "' data-gthk='1' value='" + esc(g.thickness) + "'></label>";
+          h += "<label class='fld'><span class='t'>" + T.sheet + "</span><select data-gid='" + gid + "' data-gsheet='1'>" + sheetSel + "</select></label>";
+          h += "<label class='fld'><span class='t'>Rotation</span><select data-gid='" + gid + "' data-gset='rotation'>" + optionsHtml(T.rot, g.rotation, ROT_KEYS) + "</select></label></div>";
+          h += g.items.map((it) => {
+            const bad = it.state === "missing" || it.state === "failed" || it.state === "nofolder";
+            return "<div class='scard' style='" + (bad ? "color:var(--sk-danger,#f0616d)" : "") + "'><div style='min-width:0'><div class='pname' title='" + esc(it.file || it.num) + "'>" + esc(it.num) + "</div><div class='pdim' style='" + (bad ? "color:inherit" : "") + "'>" +
+              esc(ITEM_TEXT[it.state] || it.state) + (it.state === "ok" && it.file ? " - " + esc(it.file) + (it.per > 1 ? " (" + it.per + " per file, " + it.need + " files)" : "") : "") + (it.error ? ": " + esc(it.error) : "") + "</div></div>" +
+              "<div class='row tight'><input type='number' min='1' step='1' value='" + it.qty + "' data-id='iq" + gi + esc(it.num) + "' data-gid='" + gid + "' data-inum='" + esc(it.num) + "' style='width:54px;margin:0' title='" + T.qty + "'><button class='icon' data-act='item-remove' data-g='" + gid + "' data-n='" + esc(it.num) + "'>&#10005;</button></div></div>";
+          }).join("");
+          return h + "</div>";
+        }).join("");
+      }
       function actionsCard() {
         const run = V.running;
         let h = "<div class='row' style='margin-bottom:6px'>";
@@ -256,7 +287,9 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         const a = document.activeElement;
         focusState = a && a.dataset && a.dataset.id ? { id: a.dataset.id, s: a.selectionStart, e: a.selectionEnd } : null;
         V.statusList = Object.keys(V.status).filter((k) => V.status[k] !== "ok").map((k) => ({ thickness: "thickness", kerf: "kerf", web: "web", margin: "margin", clamp: "clamp", bedW: "bed width", bedH: "bed height", parts: "parts", sheet: "sheet" }[k] || k));
-        $("app").innerHTML = jobCard() + cuttingCard() + partsCard() + actionsCard() + resultCard() + "<div class='credit'>" + T.credit + "</div>";
+        const modeBar = "<div class='seg'><button data-act='mode' data-v='manual' class='" + (V.job.mode === "manual" ? "on" : "") + "'>" + T.manual + "</button><button data-act='mode' data-v='groups' class='" + (V.job.mode === "groups" ? "on" : "") + "'>" + T.groupsMode + "</button></div>";
+        const body = V.job.mode === "groups" ? bomCard() + groupsCard() : partsCard();
+        $("app").innerHTML = modeBar + jobCard() + cuttingCard() + body + actionsCard() + resultCard() + "<div class='credit'>" + T.credit + "</div>";
         if (focusState) {
           const el = document.querySelector("[data-id='" + focusState.id + "']");
           if (el) { el.focus(); try { el.setSelectionRange(focusState.s, focusState.e); } catch (e) {} }
@@ -280,12 +313,17 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (t.dataset.len) later("len" + t.dataset.len, () => setJob(lenPatch(t.dataset.len)));
         else if (t.dataset.stock) later("stock", () => post({ type: "stock-set", rows: stockRows() }), 400);
         else if (t.dataset.pset === "qty") later("q" + t.dataset.part, () => post({ type: "part-set", key: t.dataset.part, patch: { qty: t.value }, refresh: false }));
+        else if (t.dataset.bom) later("bom", () => post({ type: "bom-text", text: t.value, refresh: false }), 400);
+        else if (t.dataset.gthk) later("gt" + t.dataset.gid, () => post({ type: "group-set", id: t.dataset.gid, patch: { thickness: t.value }, refresh: false }));
+        else if (t.dataset.inum) later("iq" + t.dataset.gid + t.dataset.inum, () => post({ type: "item-set", gid: t.dataset.gid, num: t.dataset.inum, qty: t.value, refresh: false }));
         else if (t.dataset.minhole) later("minhole", () => setJob({ minHoleSide: t.value === "" ? 0 : Number(t.value) || 0 }));
       });
       document.addEventListener("change", (e) => {
         const t = e.target, d = t.dataset;
         if (d.lenu) setJob(lenPatch(d.lenu));
         else if (d.gauge) { if (t.value) { const f = document.querySelector("[data-len=thickness]"); setJob({ thickness: { v: t.value, u: "in" } }); } }
+        else if (d.gset) post({ type: "group-set", id: d.gid, patch: { [d.gset]: t.value } });
+        else if (d.gsheet) { const g = V.groups.find((x) => x.id === d.gid); const o = g && g.sheetOptions[Number(t.value)]; if (o) post({ type: "group-set", id: d.gid, patch: { sheet: { w: o.w, h: o.h } } }); }
         else if (d.sheet) { const o = V.sheetOptions[Number(t.value)]; if (o) setJob({ sheet: { w: o.w, h: o.h } }); }
         else if (d.set) setJob({ [d.set]: d.set === "buyExtra" ? t.checked : (d.set === "timeMs" ? Number(t.value) : t.value) });
         else if (d.pset) post({ type: "part-set", key: d.part, patch: { [d.pset]: d.pset === "mirror" || d.pset === "allowInHoles" ? t.checked : t.value } });
@@ -296,6 +334,11 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (!b) return;
         const a = b.dataset.act;
         if (a === "source") setJob({ sheetSource: b.dataset.v });
+        else if (a === "mode") setJob({ mode: b.dataset.v });
+        else if (a === "load-csv") $("file-csv").click();
+        else if (a === "pick-folder") post({ type: "pick-folder" });
+        else if (a === "make-groups") { const ta = document.querySelector("[data-bom]"); post({ type: "make-groups", text: ta ? ta.value : undefined }); }
+        else if (a === "item-remove") post({ type: "item-remove", gid: b.dataset.g, num: b.dataset.n });
         else if (a === "custom-toggle") { customOpen = !customOpen; render(); }
         else if (a === "custom-add") { post({ type: "custom-sheet", w: document.querySelector("[data-id=cw]").value, h: document.querySelector("[data-id=ch]").value }); customOpen = false; }
         else if (a === "custom-remove") post({ type: "remove-custom-sheet" });
@@ -326,6 +369,11 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         }
         e.target.value = "";
         if (out.length) post({ type: "add-files", files: out });
+      });
+      $("file-csv").addEventListener("change", async (e) => {
+        const f = (e.target.files || [])[0];
+        e.target.value = "";
+        if (f) post({ type: "bom-text", text: await f.text() });
       });
       $("file-job").addEventListener("change", async (e) => {
         const f = (e.target.files || [])[0];

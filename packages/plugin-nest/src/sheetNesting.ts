@@ -71,7 +71,8 @@ export function jobReadiness(job: NestJob, ctx: ReadinessContext): Readiness {
   } else {
     fields.parts = ctx.groupCount > 0 && ctx.groupProblems === 0 ? "ok" : "missing";
   }
-  fields.sheet = job.sheetSource === "stock" ? (job.stock.length > 0 && job.stock.every((s) => s.size.width > 0 && s.size.height > 0) ? "ok" : "missing") : job.sheet.w > 0 && job.sheet.h > 0 ? "ok" : "missing";
+  // groups mode: every group carries its own sheet
+  fields.sheet = job.mode === "groups" ? "ok" : job.sheetSource === "stock" ? (job.stock.length > 0 && job.stock.every((s) => s.size.width > 0 && s.size.height > 0) ? "ok" : "missing") : job.sheet.w > 0 && job.sheet.h > 0 ? "ok" : "missing";
   const problems = Object.keys(fields).filter((k) => fields[k] !== "ok");
   return { fields, problems, canCalculate: problems.length === 0 };
 }

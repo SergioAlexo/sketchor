@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { entitiesToDxf } from "@sketchor/core";
 import { polyline } from "@sketchor/plugin-sdk";
 import { loadDxfFile, PANEL_HTML, recFromExtracted } from "./sheetNestingPlugin";
-import { extractPartsWithDiagnostics } from "@sketchor/plugin-nest";
+import { extractPartsWithDiagnostics, groupsFromRows, parseSheetText, resolveItem, sumRepeatedRows } from "@sketchor/plugin-nest";
 
 /**
  * The panel runs in a sandboxed iframe a test cannot drive, so these pin the
@@ -47,6 +47,18 @@ describe("loadDxfFile", () => {
       const f = loadDxfFile("k", "x.dxf", bad, null);
       expect(f.parts.length === 0 ? typeof f.error : "ok").toBeTruthy();
     }
+  });
+});
+
+describe("groups pipeline (list -> groups -> files)", () => {
+  it("groups by material + thickness, finds files by part number, flags a missing one", () => {
+    const parsed = parseSheetText("1 PN-0001 4 SHEET .125 AL 5052\n2 PN-0002 2 SHEET .125 AL 5052\n3 PN-0003 1 SHEET .25 STEEL");
+    const groups = groupsFromRows(sumRepeatedRows(parsed.rows), "al5052");
+    expect(groups).toHaveLength(2);
+    const files = [{ relPath: "dxf/PN-0001.dxf" }, { relPath: "dxf/PN-0002 x2.dxf" }];
+    const items = groups.flatMap((g) => g.items).map((it) => resolveItem(it.num, it.qty, files));
+    expect(items.map((r) => !!r.file)).toEqual([true, true, false]); // PN-0003 has no drawing: the panel shows it red and blocks Calculate
+    expect(items[1]!.need).toBe(1); // 2 pieces wanted, file holds 2
   });
 });
 

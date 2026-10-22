@@ -21,6 +21,11 @@ import {
   extractPartsWithDiagnostics,
   fmtMm,
   groupIdenticalSheets,
+  groupsFromRows,
+  parseSheetText,
+  resolveItem,
+  sumRepeatedRows,
+  type JobGroup,
   jobParamsMm,
   jobParts,
   jobReadiness,
@@ -66,7 +71,7 @@ import {
 } from "@sketchor/plugin-nest";
 import { buildCutPlan, writeGcode, type GcodePlacement } from "@sketchor/plugin-gcode";
 import { entitiesToDxf, entityPoints, MM_PER_INSUNIT, parseDxf, scaleEntityKeepingInserts, textWidth, type Entity } from "@sketchor/core";
-import { type DisplayUnitInfo, type PluginModule } from "@sketchor/plugin-sdk";
+import { type DisplayUnitInfo, type PickedFolder, type PluginModule } from "@sketchor/plugin-sdk";
 import { displayUnitToDxfCode, factorFromMm } from "../../units";
 import { buildNestReportHtml, buildNestReportPdf, type LastNest, type LastNestPlacement } from "./nestReport";
 import { SHEET_NESTING_PANEL_HTML } from "./sheetNestingPanel";
@@ -89,6 +94,10 @@ export const PANEL_HTML = SHEET_NESTING_PANEL_HTML;
 const KEY_JOB = "job";
 const KEY_CUSTOM = "custom";
 const KEY_FILES = "files";
+const KEY_BOM = "bom";
+/** Groups mode looks up DXF drawings only (DWG needs a conversion step; add the file in Manual mode). */
+const DRAWING_EXTS = /\.dxf$/i;
+const MATERIAL_NAMES: Record<string, string> = { al5052: "AL 5052", al6061: "AL 6061", ss: "Stainless", cs: "Carbon steel", plastic: "Plastic", plywood: "Plywood", stone: "Stone", quartz: "Quartz" };
 const MM_PER_IN = 25.4;
 const MAX_FILE_BYTES = 20_000_000;
 
@@ -265,6 +274,90 @@ const plugin: PluginModule = {
     let fileCounter = files.size;
     const lastLayoutHint = { bedWarn: false };
 
+    // ---------- groups mode (RN-31) ----------
+
+    let bomText = str(await sketchor.storage.get(KEY_BOM).catch(() => undefined));
+    let folder: PickedFolder | null = null; // a folder grant lasts the session only
+    const groupFiles = new Map<string, FileRec>(); // by relPath, loaded from the folder
+
+    interface ItemStatus {
+      num: string;
+      qty: number;
+      state: "nofolder" | "missing" | "failed" | "loading" | "ok";
+      relPath?: string;
+      per: number;
+      need: number | null;
+      error?: string;
+    }
+
+    const itemStatus = (it: { num: string; qty: number }): ItemStatus => {
+      if (!folder) return { ...it, state: "nofolder", per: 1, need: null };
+      const r = resolveItem(it.num, it.qty, folder.files, DRAWING_EXTS);
+      if (!r.file) return { ...it, state: "missing", per: 1, need: r.need };
+      const f = groupFiles.get(r.file.relPath);
+      if (!f) return { ...it, state: "loading", relPath: r.file.relPath, per: r.per, need: r.need };
+      if (f.error) return { ...it, state: "failed", relPath: r.file.relPath, per: r.per, need: r.need, error: f.error };
+      return { ...it, state: "ok", relPath: r.file.relPath, per: r.per, need: r.need };
+    };
+
+    /** Reads and parses every file the BOM items resolve to (once each). */
+    const loadGroupFiles = async () => {
+      if (!folder) return;
+      const wanted = new Set<string>();
+      for (const g of job.groups) for (const it of g.items) {
+        const r = resolveItem(it.num, it.qty, folder.files, DRAWING_EXTS);
+        if (r.file && !groupFiles.has(r.file.relPath)) wanted.add(r.file.relPath);
+      }
+      for (const relPath of wanted) {
+        const name = relPath.split("/").pop() ?? relPath;
+        try {
+          const text = (await sketchor.ui.readPickedFile(relPath, "text")) as string;
+          groupFiles.set(relPath, text.length > MAX_FILE_BYTES ? { ...loadDxfFile(relPath, name, "", null), error: "file too large" } : loadDxfFile(relPath, name, text, null, job.joinTolerance));
+        } catch (err) {
+          groupFiles.set(relPath, { key: relPath, name, text: "", unit: null, usedUnit: 0, unitGuessed: false, parts: [], warnings: [], error: err instanceof Error ? err.message : "could not read the file" });
+        }
+      }
+    };
+
+    const groupProblemCount = () => job.groups.reduce((n, g) => n + (g.items.length === 0 ? 1 : g.items.filter((it) => itemStatus(it).state !== "ok").length), 0);
+
+    const buildGroupRuns = (): Run[] => {
+      const runs: Run[] = [];
+      for (const g of job.groups) {
+        const needByFile = new Map<string, number>();
+        for (const it of g.items) {
+          const s = itemStatus(it);
+          if (s.state === "ok" && s.relPath) needByFile.set(s.relPath, (needByFile.get(s.relPath) ?? 0) + (s.need ?? it.qty));
+        }
+        const recs = new Map<string, PartRec>();
+        const parts: JobPart[] = [];
+        for (const [relPath, need] of needByFile) {
+          for (const p of groupFiles.get(relPath)?.parts ?? []) {
+            recs.set(p.key, p);
+            parts.push({ key: p.key, sourceIds: [], name: p.name, qty: need, rotation: g.rotation, mirror: false, allowInHoles: false });
+          }
+        }
+        const label = `${MATERIAL_NAMES[g.material] ?? g.material}${g.thickness ? ` ${g.thickness}"` : ""}`;
+        runs.push({ label, job: { ...job, mode: "manual", material: g.material, thickness: { v: g.thickness, u: "in" }, sheet: g.sheet, sheetSource: "standard", stock: [], buyExtra: false, parts }, recs });
+      }
+      return runs;
+    };
+
+    const groupsView = () =>
+      job.groups.map((g) => ({
+        id: g.id,
+        material: g.material,
+        thickness: g.thickness,
+        sheet: g.sheet,
+        rotation: g.rotation,
+        sheetOptions: sheetsFor(g.material).map((s) => ({ w: s.size.w, h: s.size.h, label: `${fmtMm(s.size.w * MM_PER_IN, job.outputUnit)} × ${fmtMm(s.size.h * MM_PER_IN, job.outputUnit)}` })),
+        thicknessOptions: thicknessesFor(g.material).map((t) => ({ value: t.value, label: t.label ? `${t.value}" · ${t.label}` : `${t.value}"` })),
+        items: g.items.map((it) => {
+          const s = itemStatus(it);
+          return { num: it.num, qty: it.qty, state: s.state, file: s.relPath, per: s.per, need: s.need, error: s.error };
+        }),
+      }));
+
     const persistJob = () => void sketchor.storage.set(KEY_JOB, job).catch(() => undefined);
     const persistCustom = () => void sketchor.storage.set(KEY_CUSTOM, custom).catch(() => undefined);
     const persistFiles = () =>
@@ -329,7 +422,7 @@ const plugin: PluginModule = {
       const { recs, missing } = await resolveParts();
       const p = jobParamsMm(job);
       const manualParts = job.parts.filter((x) => x.qty > 0 && recs.has(x.key)).length;
-      const ready = jobReadiness(job, { manualParts, groupCount: job.groups.length, groupProblems: 0 });
+      const ready = jobReadiness(job, { manualParts, groupCount: job.groups.length, groupProblems: groupProblemCount() });
       const sheetMm = job.sheetSource === "stock" ? (job.stock[0]?.size ?? { width: 0, height: 0 }) : { width: job.sheet.w * MM_PER_IN, height: job.sheet.h * MM_PER_IN };
       const bedWarn = job.sheetSource === "standard" && bedWarning(sheetMm, p.bed);
       lastLayoutHint.bedWarn = bedWarn;
@@ -369,6 +462,9 @@ const plugin: PluginModule = {
         running,
         missing: missing.length,
         parts: partsView,
+        groups: groupsView(),
+        bomText,
+        folder: folder ? { name: folder.name, count: folder.files.length, truncated: !!folder.truncated } : null,
         unsupported,
         bedWarn,
         sheetOptions: sheetsFor(job.material).map((s) => ({ w: s.size.w, h: s.size.h, custom: s.custom, label: `${fmtMm(s.size.w * MM_PER_IN, job.outputUnit)} × ${fmtMm(s.size.h * MM_PER_IN, job.outputUnit)}` })),
@@ -561,11 +657,12 @@ const plugin: PluginModule = {
       const cutMap = new Map([...recByKey].map(([k, r]) => [k, { cutLength: r.cutLength, pierceCount: r.pierceCount }]));
       const metrics: JobMetrics = computeJobMetrics(result, geoMap, result.stock, CUT_TABLE, { gravity: job.gravity, cut: cutMap });
       const required = [...orderedMap.values()].reduce((n, o) => n + o.quantity, 0);
-      const kpis = resultKpis(result, job.sheetSource, required, {
+      const source = runs[0]?.job.sheetSource ?? job.sheetSource;
+      const kpis = resultKpis(result, source, required, {
         cutLengthMm: metrics.sheets.reduce((n, s) => n + s.cutLengthMm, 0),
         pierces: metrics.sheets.reduce((n, s) => n + s.pierceCount, 0),
       });
-      const usage = stockUsage(result, job.sheetSource);
+      const usage = stockUsage(result, source);
       lastStock = result.stock;
 
       lastNest = {
@@ -874,11 +971,91 @@ const plugin: PluginModule = {
 
       if (type === "nest") {
         if (running) return;
+        if (job.mode === "groups") {
+          await loadGroupFiles();
+          const ready = jobReadiness(job, { manualParts: 0, groupCount: job.groups.length, groupProblems: groupProblemCount() });
+          if (!ready.canCalculate) {
+            await pushView();
+            return fail(job.groups.length === 0 ? "Make groups from the parts list first." : "Some parts have no usable drawing file (shown in red) - fix or remove them first.");
+          }
+          return void (await runNest(buildGroupRuns()));
+        }
         const runs = await buildManualRuns();
         if (!runs) return;
         const ready = jobReadiness(job, { manualParts: runs[0]!.recs.size, groupCount: 0, groupProblems: 0 });
         if (!ready.canCalculate) return fail("Fill in the highlighted fields first.");
         return void (await runNest(runs));
+      }
+
+      if (type === "bom-text") {
+        bomText = str(msg.text).slice(0, 2_000_000);
+        void sketchor.storage.set(KEY_BOM, bomText).catch(() => undefined);
+        if (msg.refresh !== false) await pushView();
+        return;
+      }
+
+      if (type === "pick-folder") {
+        const picked = await sketchor.ui.pickFolder().catch(() => null);
+        if (!picked) return;
+        folder = picked;
+        groupFiles.clear();
+        await loadGroupFiles();
+        await pushView();
+        notify(`Folder "${picked.name}": ${picked.files.length} file(s)${picked.truncated ? " (listing truncated)" : ""}.`, !!picked.truncated);
+        return;
+      }
+
+      if (type === "make-groups") {
+        if (typeof msg.text === "string") {
+          bomText = msg.text.slice(0, 2_000_000);
+          void sketchor.storage.set(KEY_BOM, bomText).catch(() => undefined);
+        }
+        const parsed = parseSheetText(bomText);
+        const groups = groupsFromRows(sumRepeatedRows(parsed.rows), job.material);
+        if (groups.length === 0) return fail("No SHEET rows found in the list. Paste a parts list with part numbers, quantities and a material column.");
+        job = { ...job, mode: "groups", groups };
+        persistJob();
+        await loadGroupFiles();
+        await pushView();
+        notify(`${groups.length} group(s), ${groups.reduce((n, g) => n + g.items.length, 0)} part number(s)${parsed.skipped ? `; ${parsed.skipped} non-sheet row(s) skipped` : ""}.`);
+        return;
+      }
+
+      if (type === "group-set") {
+        const id = str(msg.id);
+        const patch = isObj(msg.patch) ? msg.patch : {};
+        job = {
+          ...job,
+          groups: job.groups.map((g): JobGroup => {
+            if (g.id !== id) return g;
+            const next = { ...g };
+            if (typeof patch.material === "string" && MATERIALS.some((m) => m.id === patch.material)) {
+              next.material = patch.material as MaterialId;
+              next.sheet = { ...sheetsFor(next.material)[0]!.size };
+              next.rotation = defaultRotationFor(next.material);
+            }
+            if (typeof patch.thickness === "string") next.thickness = patch.thickness;
+            if (isObj(patch.sheet) && num(patch.sheet.w) > 0 && num(patch.sheet.h) > 0) next.sheet = { w: num(patch.sheet.w), h: num(patch.sheet.h) };
+            if (typeof patch.rotation === "string" && ["none", "flip", "r90", "r45", "r30", "r15", "r10", "free"].includes(patch.rotation)) next.rotation = patch.rotation as RotationCode;
+            return next;
+          }),
+        };
+        persistJob();
+        return void (msg.refresh === false ? undefined : await pushView());
+      }
+
+      if (type === "item-set") {
+        const gid = str(msg.gid), numStr = str(msg.num);
+        job = { ...job, groups: job.groups.map((g) => (g.id !== gid ? g : { ...g, items: g.items.map((it) => (it.num === numStr ? { ...it, qty: Math.max(1, Math.min(100000, Math.floor(num(msg.qty, it.qty)))) } : it)) })) };
+        persistJob();
+        return void (msg.refresh === false ? pushStatusOnly() : await pushView());
+      }
+
+      if (type === "item-remove") {
+        const gid = str(msg.gid), numStr = str(msg.num);
+        job = { ...job, groups: job.groups.map((g) => (g.id !== gid ? g : { ...g, items: g.items.filter((it) => it.num !== numStr) })).filter((g) => g.items.length > 0) };
+        persistJob();
+        return void (await pushView());
       }
 
       if (type === "check-nest") {
