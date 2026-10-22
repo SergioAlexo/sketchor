@@ -168,6 +168,29 @@ function seededShuffle<T>(items: T[], seed: number): T[] {
   return out;
 }
 
+/**
+ * Where an NFP loop's edges cross the four lines bounding the feasible
+ * reference-point rectangle. NFP *vertices* alone miss the spots a part
+ * should slide to along an NFP edge until it meets the sheet edge: for a
+ * rectangle at the origin the right-neighbour position (x just past it, y at
+ * the bottom margin) lies mid-edge, not on a vertex, so every row after the
+ * first got pushed up to the next NFP corner (17 of 30 rectangles per sheet).
+ */
+function boundaryCrossings(loop: Point[], minX: number, maxX: number, minY: number, maxY: number): Point[] {
+  const out: Point[] = [];
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i];
+    const b = loop[(i + 1) % loop.length];
+    for (const x of [minX, maxX]) {
+      if ((a.x - x) * (b.x - x) < 0) out.push({ x, y: a.y + ((b.y - a.y) * (x - a.x)) / (b.x - a.x) });
+    }
+    for (const y of [minY, maxY]) {
+      if ((a.y - y) * (b.y - y) < 0) out.push({ x: a.x + ((b.x - a.x) * (y - a.y)) / (b.y - a.y), y });
+    }
+  }
+  return out;
+}
+
 export function nestTrueShape(parts: TrueNestPart[], stock: StockRow[], opts: TrueNestOptions = {}): TrueNestResult {
   const spacing = opts.spacing ?? 0;
   const margin = opts.edgeMargin ?? 0;
@@ -244,6 +267,7 @@ export function nestTrueShape(parts: TrueNestPart[], stock: StockRow[], opts: Tr
           const translated = loop.map((p) => ({ x: p.x + other.translation.x, y: p.y + other.translation.y }));
           forbidden.push(translated);
           candidates.push(...translated);
+          candidates.push(...boundaryCrossings(translated, minX, maxX, minY, maxY));
         }
       }
 

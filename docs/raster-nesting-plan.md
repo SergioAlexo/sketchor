@@ -186,21 +186,27 @@ Utilisation = net part area / area of sheets used (same stock size for both engi
 
 | Job | NFP quick | NFP normal (3 s) | Raster 1-pass | Raster 3 s |
 |---|---|---|---|---|
-| 60 rects 100x60, 600x400 | 4 sh, 37.5 %, 21 ms | 4 sh, 3.0 s | 2 sh, 75.0 %, 5 ms | 2 sh, 75.0 % |
-| 14 large L 400/150, 1500x1000 | 3 sh, 30.3 %, 1 ms | 3 sh | 2 sh, 45.5 %, 9 ms | 2 sh |
-| mixed rect+L+disc (24/30/42), 2000x1000 | 2 sh, 33.9 %, 1.8 s | 2 sh, 4.2 s | 1 sh, 67.7 %, 36 ms | 1 sh |
-| 6 rings with hole + 36 plugs, 1500x1000 | 1 sh, 33.9 %, 319 ms | 1 sh | 1 sh, 33.9 %, 9 ms | 1 sh |
-| 150 tags 60x25, 400x300 | 5 sh, 37.5 %, 98 ms | 5 sh | 3 sh, 62.5 %, 2 ms | 3 sh |
-| 600 identical 80x40, 1500x1000 (NFP cap) | 3 sh, 42.7 %, 10.9 s | 3 sh, 10.0 s | 2 sh, 64.0 %, 8 ms | 2 sh |
+| 60 rects 100x60, 600x400 | 2 sh, 75.0 %, 19 ms | 2 sh, 3.0 s | 2 sh, 75.0 %, 5 ms | 2 sh, 75.0 % |
+| 14 large L 400/150, 1500x1000 | 2 sh, 45.5 %, 2 ms | 2 sh | 2 sh, 45.5 %, 9 ms | 2 sh |
+| mixed rect+L+disc (24/30/42), 2000x1000 | 1 sh, 67.7 %, 0.9 s | 1 sh, 3.1 s | 1 sh, 67.7 %, 36 ms | 1 sh |
+| 6 rings with hole + 36 plugs, 1500x1000 | 1 sh, 33.9 %, 247 ms | 1 sh | 1 sh, 33.9 %, 9 ms | 1 sh |
+| 150 tags 60x25, 400x300 | 3 sh, 62.5 %, 154 ms | 3 sh | 3 sh, 62.5 %, 2 ms | 3 sh |
+| 600 identical 80x40, 1500x1000 (NFP cap) | 2 sh, 64.0 %, 12.5 s | 2 sh, 12.5 s | 2 sh, 64.0 %, 8 ms | 2 sh |
 
-Reading: on these axis-aligned / quarter-turn jobs the raster engine is as good or
-better in every case and 100-1000x faster; the 600-instance case that takes NFP ~10 s
-is 8 ms. NFP's strengths are not visible here (the table is about density): exact
-clearance (no up-to-one-cell extra gap), explicit `allowInHoles` control, mirroring.
-Suggested panel hint: "Raster: default - fast, handles any quantity. True shape: pick for
-few large parts with tight kerf, or when you need exact clearance or mirroring."
-Caveat: the NFP engine is run with its default candidate set; the gap on rectangles
-(4 vs 2 sheets) looks larger than inherent to NFP and is worth a look in RN-06.
+Reading (after the candidate fix below): NFP and raster now reach the same sheet count and
+utilisation on every job here, so density no longer separates them; raster is still
+100-1000x faster (the 600-instance case is ~12 s for NFP, 5-8 ms for raster). NFP's remaining
+strengths: exact clearance (no up-to-one-cell extra gap), explicit `allowInHoles` control,
+mirroring. Suggested panel hint: "Raster: default - fast, handles any quantity. True shape:
+pick for few large parts with tight kerf, or when you need exact clearance or mirroring."
+
+**NFP rectangle gap was a bug, not inherent (found after RN-05).** Before the fix NFP quick
+used 4/3/2/1/5/3 sheets (rows in order above) vs 2/2/1/1/3/2 for raster. Cause: `trueNest.ts`
+only tried NFP *vertices* (plus the 4 sheet corners) as candidate positions. The "next to the
+neighbour, flush with the bottom margin" spot lies mid-edge on the NFP, not on a vertex, so
+each row after the first was pushed up to the next vertex (17 of 30 rects per sheet). Fix: also
+add the points where each NFP edge crosses the four lines bounding the feasible reference
+rectangle (`boundaryCrossings`). Regression test: `trueNestRects.test.ts`.
 
 ## 5. Order of work
 
@@ -259,3 +265,4 @@ One row per landed item, newest last. Agents append in the same commit as the it
 | RN-20 | this commit | `nestJob.ts`: `NestJob` (engine, material, thickness, machine, params, sheet source standard/stock+buyExtra, parts, groups, accuracy, time, output unit, true-shape options), tolerant `parseNestJob`, `jobFromLegacyState` (migrates stock rows + part settings; keeps true-shape engine, kerf/spacing -> kerf/web in mm), `jobParamsMm`/`jobSheets`/`jobParts` to feed engines. nestPlugin.ts NOT touched yet (PersistedState -> job wiring belongs to the panel wave). |
 | RN-40 | this commit | `sheetGroups.ts`: `groupIdenticalSheets` (size + sorted placements rounded to 1e-3, mirrors `sigOf`/`groupSheets`), `describeGroup`, `buildSideBySideLayout` (groups left to right on the four existing layers, "Sheets 3-7 x5" in the title). Host API 0.10.0: additive `app.openDocumentTab(name, commands?)` (needs `write-document`; new tab, one undo step, fit view). The nest plugin now draws its result there instead of stacking sheets in the source drawing; `clearPreviousLayout` is still used by "Clear". Ported from the Sheet Nesting Calculator by Oleksandr Borenko. |
 | RN-06 | this commit | `nestEngine.ts`: `NestEngine {id, label, supports(req)->Unsupported[], run(req,hooks)}` for `raster` and `true-shape` over `NestRequest {job: NestJob, parts}`; both return `RasterNestResult` (superset of `TrueNestResult`: effective `stock`, `purchased[]`, notes). True shape gains stock qty + purchase size (appended qty-null row) and clamp (short side reduced, placements shifted back). 600-instance cap reported by `supports` (`quantity`), not as a failure. NFP engine untouched. Tests run every case against both ids. |
+| True shape fix | this commit | NFP candidates now include NFP-edge x sheet-boundary crossings; 60 rects 4 -> 2 sheets, bench table updated. |
