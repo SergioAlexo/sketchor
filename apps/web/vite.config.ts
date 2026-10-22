@@ -33,6 +33,11 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // Cargo writes and locks executables under src-tauri/target while
+    // `tauri dev` compiles; watching them crashes Vite with EBUSY on Windows.
+    watch: {
+      ignored: ["**/src-tauri/target/**"],
+    },
   },
   // Tauri expects a fixed dist dir relative to src-tauri
   build: {
