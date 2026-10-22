@@ -14,3 +14,4 @@ export * from "./trueLayout";
 export * from "./metrics";
 export * from "./search";
 export * from "./raster/engine";
+export * from "./bom";
