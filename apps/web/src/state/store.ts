@@ -1001,6 +1001,8 @@ interface AppState {
    */
   saveNotice: { kind: "saved" | "error"; message: string; at: number } | null;
   setSaveNotice: (notice: { kind: "saved" | "error"; message: string; at: number } | null) => void;
+  /** The active tab's view-only guard (mirrors `bus.locked`; see {@link toggleEditLock}). */
+  editLocked: boolean;
   /** The group currently "entered" for editing individual members (double-click a group, Esc to exit). */
   enteredGroupId: GroupId | null;
   setEnteredGroup: (id: GroupId | null) => void;
@@ -1139,6 +1141,7 @@ export const useApp = create<AppState>((set, get) => ({
   setCrossingIssues: (crossingIssues) => set({ crossingIssues }),
   saveNotice: null,
   setSaveNotice: (saveNotice) => set({ saveNotice }),
+  editLocked: false,
   enteredGroupId: null,
   setEnteredGroup: (id) => set({ enteredGroupId: id }),
   fileBrowserVisible: true,
@@ -1312,6 +1315,9 @@ let unbindBus: (() => void) | null = null;
 /** Re-subscribes the revision/selection/dirty sync to whichever session's bus is now active. */
 function rebindBus(): void {
   unbindBus?.();
+  bus.onBlocked = () =>
+    useApp.getState().setSaveNotice({ kind: "error", message: "View-only mode is on — unlock editing (🔒 in the toolbar) to change the drawing", at: Date.now() });
+  useApp.setState({ editLocked: bus.locked });
   syncDocPatterns(doc);
   unbindBus = bus.onChange(() => {
     syncDocPatterns(doc);
@@ -1320,6 +1326,12 @@ function rebindBus(): void {
   });
 }
 rebindBus();
+
+/** Flips the active tab between editing and view-only (a guard against changing a drawing by accident). */
+export function toggleEditLock(): void {
+  bus.locked = !bus.locked;
+  useApp.setState({ editLocked: bus.locked });
+}
 
 /* ------------------------------ document tabs ---------------------------- */
 

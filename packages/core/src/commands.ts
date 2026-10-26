@@ -97,6 +97,14 @@ export class CommandBus {
    * constraints, which is every drawing until someone adds one.
    */
   lastSolve: SolveResult | null = null;
+  /**
+   * View-only guard: while set, execute/undo/redo do nothing and `onBlocked`
+   * is called instead, so a stray key or drag can't edit the drawing. Every
+   * producer (tools, code panel, plugins) goes through the bus, so this is
+   * the one place that has to know.
+   */
+  locked = false;
+  onBlocked: (() => void) | null = null;
 
   constructor(readonly doc: SketchDocument) {
     setActiveBlocks(doc);
@@ -120,6 +128,7 @@ export class CommandBus {
   }
 
   execute(command: Command): void {
+    if (this.locked) return this.onBlocked?.();
     setActiveBlocks(this.doc);
     setActiveDimHost(this.doc);
     const assoc = associationState(this.doc);
@@ -198,6 +207,7 @@ export class CommandBus {
   }
 
   undo(): void {
+    if (this.locked) return this.onBlocked?.();
     setActiveBlocks(this.doc);
     setActiveDimHost(this.doc);
     const entry = this.undoStack.pop();
@@ -218,6 +228,7 @@ export class CommandBus {
   }
 
   redo(): void {
+    if (this.locked) return this.onBlocked?.();
     setActiveBlocks(this.doc);
     setActiveDimHost(this.doc);
     const entry = this.redoStack.pop();

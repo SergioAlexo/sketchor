@@ -540,3 +540,28 @@ describe("change notification", () => {
     expect(two).toHaveBeenCalledTimes(1);
   });
 });
+
+/** View-only guard: a locked bus must refuse every edit path, or "lock" is a false promise that corrupts nothing but trust. */
+describe("CommandBus.locked", () => {
+  it("ignores execute/undo/redo while locked and resumes when unlocked", () => {
+    const doc = new SketchDocument();
+    const bus = new CommandBus(doc);
+    const blocked = vi.fn();
+    bus.onBlocked = blocked;
+    bus.execute({ type: "add-entity", entity: line("a") });
+    bus.locked = true;
+    bus.execute({ type: "add-entity", entity: line("b") });
+    bus.undo();
+    expect(doc.all().map((e) => e.id)).toEqual(["a"]);
+    expect(blocked).toHaveBeenCalledTimes(2);
+    bus.locked = false;
+    bus.undo();
+    expect(doc.all()).toHaveLength(0);
+    bus.locked = true;
+    bus.redo();
+    expect(doc.all()).toHaveLength(0);
+    bus.locked = false;
+    bus.redo();
+    expect(doc.all().map((e) => e.id)).toEqual(["a"]);
+  });
+});

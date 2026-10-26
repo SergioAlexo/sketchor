@@ -1,6 +1,6 @@
 [package]
 name = "sketchor"
-version = "0.33.1"
+version = "0.34.0"
 license = "AGPL-3.0-or-later"
 description = "Sketchor - modern parametric 2D sketching"
 edition = "2021"

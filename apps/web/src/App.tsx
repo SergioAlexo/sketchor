@@ -1,6 +1,6 @@
 import { useMemo, Fragment, lazy, Suspense, useEffect, useState } from "react";
 import { CONSTRAINT_LABELS, freeEndpointEntityIds, setFieldContext } from "@sketchor/core";
-import { bus, doc, entityMeasurement, getSessions, isModelSession, measurementText, TOOL_HINTS, useApp, type ToolId } from "./state/store";
+import { bus, doc, entityMeasurement, getSessions, isModelSession, measurementText, toggleEditLock, TOOL_HINTS, useApp, type ToolId } from "./state/store";
 import { useTouchMode } from "./touchMode";
 import { SnapPopover } from "./SnapPopover";
 import { SelectByPopover } from "./SelectByPopover";
@@ -621,6 +621,7 @@ export function App() {
   const [showThemeMenu, setShowThemeMenu] = useState(false);
   const themeSetting = useTheme((s) => s.setting);
   const touchMode = useTouchMode((s) => s.enabled);
+  const editLocked = useApp((s) => s.editLocked);
   const toggleTouchMode = useTouchMode((s) => s.toggle);
   const prompt = useApp((s) => s.prompt);
   const ortho = useTracking((s) => s.ortho);
@@ -1395,6 +1396,29 @@ export function App() {
               <rect x="10" y="15.5" width="7" height="3" fill="currentColor" opacity="0.85" />
             </svg>
           </button>
+          {!modelTab && (
+            <button
+              className={`action ${editLocked ? "toggled" : ""}`}
+              title={
+                editLocked
+                  ? "View-only: the drawing can't be changed. Click to allow editing"
+                  : "Editing is on. Click to lock this drawing as view-only so nothing gets changed by accident"
+              }
+              data-testid="toggle-edit-lock"
+              onClick={toggleEditLock}
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18">
+                <rect x="5" y="11" width="14" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.8" fill="none" />
+                <path
+                  d={editLocked ? "M8 11V8a4 4 0 018 0v3" : "M8 11V8a4 4 0 017.6-1.7"}
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  fill="none"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+          )}
           <button
             className={`action ${touchMode ? "toggled" : ""}`}
             title={
