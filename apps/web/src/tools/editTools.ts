@@ -8,6 +8,7 @@ import {
   lengthen,
   filletAllCorners,
   filletConstraints,
+  filletCurveConstraints,
   offsetConstraints,
   filletCurves,
   filletLines,
@@ -272,7 +273,10 @@ export class FilletTool implements Tool {
       const cmds: Command[] = [];
       if (c.first !== this.first.entity) cmds.push({ type: "update-entity", entity: c.first });
       if (c.second !== target) cmds.push({ type: "update-entity", entity: c.second });
-      if (c.arc) cmds.push({ type: "add-entity", entity: { ...c.arc, id: newEntityId() } });
+      const curveArc = c.arc ? { ...c.arc, id: newEntityId() } : null;
+      if (curveArc) cmds.push({ type: "add-entity", entity: curveArc });
+      // T-46 for line–arc / arc–arc / circle cases: same coincident + tangent (+ radius) set as two lines.
+      if (associativeOn()) for (const constraint of filletCurveConstraints(c, curveArc, true)) cmds.push({ type: "add-constraint", constraint });
       ctx.commit(cmds);
       this.first = null;
       return;

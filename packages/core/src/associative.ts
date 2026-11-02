@@ -1,7 +1,8 @@
 import { attachPoints } from "./constraintBuilder";
 import { newConstraintId, type Constraint } from "./constraints";
 import type { ArcEntity, Entity, LineEntity } from "./entities";
-import type { Point } from "./geometry";
+import { arcPointAt, dist, type Point } from "./geometry";
+import type { CurveFillet } from "./filletCurves";
 
 /**
  * T-46 associative tools: pure builders for the constraints that Mirror,
@@ -65,6 +66,64 @@ export function filletConstraints(line1: LineEntity, line2: LineEntity, arc: Arc
     { id: newConstraintId(), type: "tangent", a: line1.id, b: arc.id },
     { id: newConstraintId(), type: "tangent", a: line2.id, b: arc.id },
   ];
+  if (drivingRadius) out.push({ id: newConstraintId(), type: "radius", entityId: arc.id, value: arc.radius });
+  return out;
+}
+
+type EndRef = { ref: { entityId: string; point: "a" | "b" }; at: Point };
+
+/** Endpoint refs of a line or arc with their positions (circles and the rest have none). */
+function endRefs(e: Entity): EndRef[] {
+  if (e.type === "line")
+    return [
+      { ref: { entityId: e.id, point: "a" }, at: e.a },
+      { ref: { entityId: e.id, point: "b" }, at: e.b },
+    ];
+  if (e.type === "arc")
+    return [
+      { ref: { entityId: e.id, point: "a" }, at: arcPointAt(e.center, e.radius, e.startAngle) },
+      { ref: { entityId: e.id, point: "b" }, at: arcPointAt(e.center, e.radius, e.endAngle) },
+    ];
+  return [];
+}
+
+function nearestEnds(xs: EndRef[], ys: EndRef[]): { x: EndRef; y: EndRef; d: number } | null {
+  let best: { x: EndRef; y: EndRef; d: number } | null = null;
+  for (const x of xs)
+    for (const y of ys) {
+      const d = dist(x.at, y.at);
+      if (!best || d < best.d) best = { x, y, d };
+    }
+  return best;
+}
+
+/**
+ * Fillet / corner join of any line/arc/circle pair (a `filletCurves` result,
+ * with the arc's id assigned): the arc's ends are coincident with the trimmed
+ * entities' ends (point-on-curve on a circle, which has no end) and the arc
+ * is tangent to both. Radius 0 / no arc: the two nearest ends coincide.
+ * Ellipses and splines get nothing.
+ */
+export function filletCurveConstraints(r: CurveFillet, arc: ArcEntity | null, drivingRadius = false): Constraint[] {
+  const ok = (e: Entity) => e.type === "line" || e.type === "arc" || e.type === "circle";
+  if (!ok(r.first) || !ok(r.second)) return [];
+  const out: Constraint[] = [];
+  if (!arc) {
+    const n = nearestEnds(endRefs(r.first), endRefs(r.second));
+    if (n && n.d <= 1e-4) out.push({ id: newConstraintId(), type: "coincident", a: n.x.ref, b: n.y.ref });
+    return out;
+  }
+  const arcEnds = endRefs(arc);
+  for (const e of [r.first, r.second]) {
+    if (e.type === "circle") {
+      const on = arcEnds.find((x) => Math.abs(dist(x.at, e.center) - e.radius) <= 1e-4 * Math.max(1, e.radius));
+      if (on) out.push({ id: newConstraintId(), type: "point-on-curve", point: on.ref, entityId: e.id });
+    } else {
+      const n = nearestEnds(endRefs(e), arcEnds);
+      if (n && n.d <= 1e-4) out.push({ id: newConstraintId(), type: "coincident", a: n.x.ref, b: n.y.ref });
+    }
+    out.push({ id: newConstraintId(), type: "tangent", a: e.id, b: arc.id });
+  }
   if (drivingRadius) out.push({ id: newConstraintId(), type: "radius", entityId: arc.id, value: arc.radius });
   return out;
 }

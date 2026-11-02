@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { axisLineFor, filletConstraints, mirrorConstraints, offsetConstraints } from "./associative";
-import type { ArcEntity, LineEntity } from "./entities";
+import { axisLineFor, filletConstraints, filletCurveConstraints, mirrorConstraints, offsetConstraints } from "./associative";
+import type { ArcEntity, Entity, LineEntity } from "./entities";
+import { filletCurves } from "./filletCurves";
+import { solveSketch } from "./solver";
 import { filletLines } from "./fillet";
 import { mirrored } from "./mirror";
 
@@ -39,5 +41,26 @@ describe("associative tools (T-46)", () => {
     expect(filletConstraints(r.line1, r.line2, arc).map((c) => c.type)).toEqual(["coincident", "coincident", "tangent", "tangent"]);
     expect(filletConstraints(r.line1, r.line2, arc, true).at(-1)).toMatchObject({ type: "radius", value: 2 });
     expect(filletConstraints(r.line1, r.line2, null).map((c) => c.type)).toEqual(["coincident"]);
+  });
+
+  it("line–arc and line–circle fillets leave constraints the solver finds already satisfied", () => {
+    const cases: [Entity, Entity, { x: number; y: number }, { x: number; y: number }][] = [
+      [ln("l", -20, 0, 20, 0), { id: "k", type: "circle", center: { x: 0, y: 6 }, radius: 5 }, { x: 15, y: 0 }, { x: 5, y: 6 }],
+      [ln("l", -20, 0, 20, 0), { id: "k", type: "arc", center: { x: 0, y: 6 }, radius: 5, startAngle: Math.PI, endAngle: 2 * Math.PI, ccw: true } as ArcEntity, { x: 15, y: 0 }, { x: 3.5, y: 2.9 }],
+    ];
+    for (const [e1, e2, n1, n2] of cases) {
+      const f = filletCurves(e1, e2, 2, n1, n2)!;
+      expect(f.arc).toBeTruthy();
+      const arc: ArcEntity = { ...f.arc!, id: "fa" };
+      const cs = filletCurveConstraints(f, arc, true);
+      expect(cs.filter((c) => c.type === "tangent")).toHaveLength(2);
+      expect(cs.filter((c) => c.type === "coincident" || c.type === "point-on-curve").length).toBeGreaterThanOrEqual(2);
+      const r = solveSketch([f.first, f.second, arc], cs);
+      expect(r.conflicts).toEqual([]);
+      expect(r.residual).toBeLessThan(1e-4);
+    }
+    // sharp corner of two crossing lines
+    const j = filletCurves(ln("a", 0, 0, 5, 0), ln("b", 3, -4, 3, 4), 0, { x: 1, y: 0 }, { x: 3, y: 2 })!;
+    expect(filletCurveConstraints(j, null).map((c) => c.type)).toEqual(["coincident"]);
   });
 });
