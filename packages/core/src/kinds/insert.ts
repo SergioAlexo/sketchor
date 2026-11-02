@@ -2,7 +2,8 @@ import type { Bounds } from "../dxf";
 import type { Entity, InsertEntity } from "../entities";
 import type { Point } from "../geometry";
 import { activeBlocks } from "../blocks/context";
-import { evaluateInsert } from "../blocks/evaluate";
+import { applyParamGrip, dynamicSpecOf, paramGrips } from "../blocks/dynamic";
+import { evaluateInsert, getBlock } from "../blocks/evaluate";
 import { fieldRevision } from "../blocks/fields";
 import type { BlocksHost } from "../blocks/types";
 import { boundsOfPoints, kindBounds, kindHitDistance, kindSnaps, kindTessellate, type Affine, type EntityKind, type KindSnap } from "./registry";
@@ -104,11 +105,23 @@ export const insertKind: EntityKind<InsertEntity> = {
     const inner = insertContents(e).flatMap((c) => kindSnaps(c));
     return [{ point: e.insert, kind: "node" }, ...inner];
   },
-  grips: (e) => [
-    { point: e.insert, kind: "insert", index: 0 },
-    { point: rotateGripPoint(e), kind: "rotate", index: 1 },
-  ],
+  grips: (e) => {
+    const base = [
+      { point: e.insert, kind: "insert" as const, index: 0 },
+      { point: rotateGripPoint(e), kind: "rotate" as const, index: 1 },
+    ];
+    // B-22: a dynamic block's parameters each show a handle.
+    const host = activeBlocks();
+    const def = host ? getBlock(host, e.block) : undefined;
+    if (!def || !dynamicSpecOf(def)) return base;
+    return [...base, ...paramGrips(def, e).map((p, i) => ({ point: p.point, kind: "param" as const, index: i }))];
+  },
   applyGrip: (e, g, to) => {
+    if (g.kind === "param") {
+      const host = activeBlocks();
+      const def = host ? getBlock(host, e.block) : undefined;
+      return def ? applyParamGrip(def, e, g.index, to) : e;
+    }
     if (g.kind === "rotate") {
       if (Math.hypot(to.x - e.insert.x, to.y - e.insert.y) < 1e-12) return e;
       return { ...e, rotation: Math.atan2(to.y - e.insert.y, to.x - e.insert.x) };

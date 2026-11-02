@@ -210,7 +210,7 @@ Tick `[x]` and add a progress-log row as items land. Order = recommended executi
 **9 · Dynamic + parametric blocks**
 - [x] B-20 Dynamic spec + evaluator (blocks/dynamic.ts; constraint route = `dimension` params)
 - [x] B-21 Authoring in the block editor (+ test block) (Authoring panel `blocks/DynamicPanel.tsx`; geometry taken from selection or typed, no click-pick tools; fixtures `dynamicFixtures.ts`)
-- [ ] B-22 Instance UX (custom properties, grips)
+- [~] B-22 Instance UX (custom properties, grips) (done: Custom section incl. multi-select + Reset block, param grips for linear/polar/xy/rotation/flip. open: visibility/lookup dropdown grips (panel dropdown only), select-similar by param values)
 - [ ] B-23 Shipped dynamic block library
 - [ ] B-24 `contributes.blocks`
 - [ ] B-25 DXF export of dynamic blocks (*U + SKETCHOR XDATA)

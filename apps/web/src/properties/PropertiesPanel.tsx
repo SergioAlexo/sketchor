@@ -1,5 +1,6 @@
 import { TEXT_STYLE_PRESETS } from "@sketchor/core";
 import { useEffect, useMemo, useState } from "react";
+import { dynamicSpecOf, paramFields, resetParams, withParamValue } from "@sketchor/core";
 import type { BlockDefinition, BlockTreeNode, Command, Entity, HatchEntity, InsertEntity, PolylineEntity, SplineEntity } from "@sketchor/core";
 import { GRADIENT_NAMES, blockTree, editableAttributes, isMirroredInsert, withAttributeValues, withInsertArray, withInsertScale, explodeHatchCommands, recreateBoundaryCommands, setHatchDrawOrder, entityArea, entityLength, arcPointAt, arcSweep, bulgeToArc, BUILTIN_LINETYPES, dist, ellipseSweep, nurbsDomain, nurbsPointAt, findClosedRegions, isFullEllipse, layerOf, polylineLength, addSplinePoint, polylineToSpline, rebuildSpline, refitSpline, removeSplinePoint, splineToControlPoints, splineToPolyline } from "@sketchor/core";
 import { bus, doc, useApp } from "../state/store";
@@ -132,6 +133,7 @@ export function PropertiesPanel({ onClose }: { onClose: () => void }) {
               />
             </Row>
           </Section>
+          <CustomBlockParams entities={entities} applyAll={applyAll} />
           {entities.length === 1 && <Geometry entity={entities[0]} unit={unit} />}
         </div>
       )}
@@ -476,6 +478,62 @@ function InsertGeometry({ entity, unit }: { entity: InsertEntity; unit: DisplayU
           {renderTree(tree)}
         </div>
       )}
+    </Section>
+  );
+}
+
+/**
+ * B-22: the "Custom" section of a dynamic block — one control per parameter
+ * (number with its value set as a list, dropdown for visibility/lookup, flip
+ * toggle) plus "Reset block". Shown when every selected entity is an insert of
+ * the same dynamic block; an edit applies to all of them.
+ */
+function CustomBlockParams({ entities, applyAll }: { entities: Entity[]; applyAll: (patch: (e: Entity) => Entity) => void }) {
+  const first = entities[0];
+  if (!first || first.type !== "insert" || !entities.every((e) => e.type === "insert" && e.block === first.block)) return null;
+  const def = doc.getRecord("blocks", first.block) as BlockDefinition | undefined;
+  if (!def || !dynamicSpecOf(def)) return null;
+  const fields = paramFields(def, first);
+  const set = (key: string, value: number | string) => applyAll((e) => (e.type === "insert" ? withParamValue(def, e, key, value) : e));
+  const deg = (r: number) => Math.round(((r * 180) / Math.PI) * 1000) / 1000;
+  return (
+    <Section title="Custom">
+      <div data-testid="prop-custom">
+        {fields.map((f) => (
+          <Row key={f.key} label={f.label}>
+            {f.control === "choice" || (f.control === "number" && f.options) ? (
+              <select
+                className="propspanel-input"
+                value={String(f.value)}
+                data-testid={`prop-param-${f.key}`}
+                onChange={(e) => set(f.key, f.control === "choice" ? e.target.value : Number(e.target.value))}
+              >
+                {(f.options ?? []).map((o) => (
+                  <option key={String(o)} value={String(o)}>
+                    {String(o)}
+                  </option>
+                ))}
+              </select>
+            ) : f.control === "toggle" ? (
+              <input type="checkbox" checked={f.value === 1} data-testid={`prop-param-${f.key}`} onChange={(e) => set(f.key, e.target.checked ? 1 : 0)} />
+            ) : (
+              <TextField
+                value={String(f.control === "angle" ? deg(Number(f.value)) : round(Number(f.value)))}
+                testId={`prop-param-${f.key}`}
+                onCommit={(v) => {
+                  const n = Number(v.trim());
+                  if (Number.isFinite(n)) set(f.key, f.control === "angle" ? (n * Math.PI) / 180 : n);
+                }}
+              />
+            )}
+          </Row>
+        ))}
+        <Row label="">
+          <button className="btn ghost sm" data-testid="prop-param-reset" onClick={() => applyAll((e) => (e.type === "insert" ? resetParams(e) : e))}>
+            Reset block
+          </button>
+        </Row>
+      </div>
     </Section>
   );
 }
