@@ -96,6 +96,7 @@ export * from "./blocks/edit";
 export * from "./blocks/fields";
 export * from "./blocks/attributes";
 export * from "./blocks/library";
+export * from "./blocks/shippedLibrary";
 export * from "./blocks/manage";
 export * from "./layouts/types";
 export * from "./layouts/ops";

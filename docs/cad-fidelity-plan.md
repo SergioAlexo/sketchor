@@ -211,7 +211,7 @@ Tick `[x]` and add a progress-log row as items land. Order = recommended executi
 - [x] B-20 Dynamic spec + evaluator (blocks/dynamic.ts; constraint route = `dimension` params)
 - [x] B-21 Authoring in the block editor (+ test block) (Authoring panel `blocks/DynamicPanel.tsx`; geometry taken from selection or typed, no click-pick tools; fixtures `dynamicFixtures.ts`)
 - [~] B-22 Instance UX (custom properties, grips) (done: Custom section incl. multi-select + Reset block, param grips for linear/polar/xy/rotation/flip. open: visibility/lookup dropdown grips (panel dropdown only), select-similar by param values)
-- [ ] B-23 Shipped dynamic block library
+- [x] B-23 Shipped dynamic block library (blocks/shippedLibrary.ts: 17 blocks - door, window, bolt/nut/washer M3-M24 + inch, hole, slot, north arrow, section/elevation/revision markers, surface finish, fillet weld, I/HSS/angle sections, title blocks A4-A0 + ANSI A-E; panel source "Sketchor library"; open: channel section, plugin packaging via B-24)
 - [ ] B-24 `contributes.blocks`
 - [x] B-25 DXF export of dynamic blocks (*U + SKETCHOR XDATA) (AC1032 + R12 + SVG; blocks/dynamicExport.ts)
 - [x] B-26 DXF import of AutoCAD dynamic blocks (blocks/dynamicImport.ts: linear/polar/xy/rotation/flip/visibility params + move/stretch/polar-stretch/scale/rotate/flip/array actions; lookup tables not mapped, warned; unmappable `*U` stays a static insert)

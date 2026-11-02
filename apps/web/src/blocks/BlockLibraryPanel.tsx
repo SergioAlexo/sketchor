@@ -9,7 +9,10 @@ import {
   planReplaceBlock,
   purgeCandidates,
   entitiesToSvg,
+  evaluateDynamic,
   instanceCounts,
+  SHIPPED_CATEGORY,
+  shippedLibrary,
   libraryEntry,
   parseDxf,
   planLibraryImport,
@@ -34,7 +37,7 @@ export function BlockLibraryPanel({ onClose }: { onClose: () => void }) {
   const revision = useApp((s) => s.revision);
   const setTool = useApp((s) => s.setTool);
   const setInsert = useApp((s) => s.setInsertSettings);
-  const [source, setSource] = useState<"drawing" | "library">("drawing");
+  const [source, setSource] = useState<"drawing" | "library" | "sketchor">("drawing");
   const [query, setQuery] = useState("");
   const [library, setLibrary] = useState<LibraryEntry[]>(() => loadLibrary());
   const [note, setNote] = useState("");
@@ -50,6 +53,9 @@ export function BlockLibraryPanel({ onClose }: { onClose: () => void }) {
   const counts = useMemo(() => instanceCounts(doc), [revision]); // eslint-disable-line react-hooks/exhaustive-deps
   const q = query.toLowerCase();
   const libs = library.filter((e) => e.def.name.toLowerCase().includes(q));
+  // B-23: the shipped library, grouped by category (a dynamic block's thumbnail is its default state).
+  const shipped = useMemo(() => shippedLibrary().map((e) => ({ entry: e, category: SHIPPED_CATEGORY[e.def.name] ?? "Other" })), []);
+  const shippedShown = shipped.filter((s) => `${s.entry.def.name} ${s.category} ${s.entry.def.description ?? ""}`.toLowerCase().includes(q));
 
   const thumb = (entities: ReturnType<typeof blockPreviewEntities>) => ({ __html: entitiesToSvg(entities, { size: 56 }) });
   const place = (name: string) => {
@@ -127,6 +133,9 @@ export function BlockLibraryPanel({ onClose }: { onClose: () => void }) {
         </button>
         <button className={`btn ghost sm ${source === "library" ? "active" : ""}`} data-testid="blocklib-library" onClick={() => setSource("library")}>
           Library
+        </button>
+        <button className={`btn ghost sm ${source === "sketchor" ? "active" : ""}`} data-testid="blocklib-sketchor" onClick={() => setSource("sketchor")}>
+          Sketchor library
         </button>
       </div>
       <div style={{ padding: 8 }}>
@@ -224,6 +233,26 @@ export function BlockLibraryPanel({ onClose }: { onClose: () => void }) {
               </div>
             );
           })}
+        {source === "sketchor" &&
+          shippedShown.map(({ entry: e, category }, i) => (
+            <div key={e.def.name}>
+              {(i === 0 || shippedShown[i - 1].category !== category) && <div className="straighten-hint" style={{ padding: "6px 8px 0" }}>{category}</div>}
+              <div className="fill-row" data-testid={`blocklib-sk-${e.def.name}`} style={{ padding: "4px 8px", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 56, height: 56, flex: "none" }} dangerouslySetInnerHTML={{ __html: entitiesToSvg(evaluateDynamic(e.def, {}), { size: 56 }) }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis" }} title={e.def.description}>{e.def.name}</div>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    <button className="btn ghost sm" onClick={() => insertFromLibrary(e)}>Insert</button>
+                    {doc.hasRecord("blocks", e.def.name) && (
+                      <button className="btn ghost sm" title="Replace this drawing's block with the shipped version" onClick={() => insertFromLibrary(e, true)}>
+                        Redefine
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
         {source === "library" && (
           <div style={{ padding: 8 }}>
             <input
