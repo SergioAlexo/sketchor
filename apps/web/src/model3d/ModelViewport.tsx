@@ -225,6 +225,8 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
   const overlayRef = useRef<SVGSVGElement>(null);
   const labelRef = useRef<HTMLDivElement>(null);
   const displayUnit = useApp((s) => s.displayUnit);
+  /** Surface point under a client position — refreshed every render so the scene's listeners see current hidden parts. */
+  const surfaceRef = useRef<(x: number, y: number) => THREE.Vector3 | null>(() => null);
 
   // ---- scene lifetime: one per model --------------------------------------
   useEffect(() => {
@@ -257,6 +259,75 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
     controls.target.copy(framePerspective(camera, model.bounds, "iso"));
     controls.update();
 
+    // ---- navigation feel (Onshape / SolidWorks) -----------------------------
+    // Orbit pivots on the surface point under the cursor at drag start, and
+    // that point stays put on screen while the model turns. The wheel dollies
+    // toward the surface point under the cursor by a fixed *fraction* of the
+    // distance to it (OrbitControls' zoomToCursor re-targets on a plane at the
+    // old target depth, which makes close-up zooming lurch).
+    const box = toBox3(model.bounds);
+    const modelCenter = box.getCenter(new THREE.Vector3());
+    const modelRadius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 1e-3);
+    const minPivotDist = modelRadius * 1e-4;
+    const maxTargetDist = modelRadius * 40;
+
+    let pivot: THREE.Vector3 | null = null;
+    const pivotNdc = new THREE.Vector2();
+    const onPivotDown = (e: PointerEvent) => {
+      pivot = null;
+      if (!e.isPrimary || e.button !== 0 || e.ctrlKey || e.shiftKey || e.metaKey) return;
+      const hit = surfaceRef.current(e.clientX, e.clientY);
+      if (!hit) return;
+      camera.updateMatrixWorld();
+      const ndc = hit.clone().project(camera);
+      pivotNdc.set(ndc.x, ndc.y);
+      pivot = hit.clone();
+      controls.target.copy(hit);
+    };
+    const onPivotUp = () => {
+      pivot = null;
+    };
+    /** After OrbitControls turned the view about `pivot`, slide camera and target so it is back where it was on screen. */
+    const holdPivot = () => {
+      if (!pivot) return;
+      camera.updateMatrixWorld();
+      const z = pivot.clone().project(camera).z;
+      const back = new THREE.Vector3(pivotNdc.x, pivotNdc.y, z).unproject(camera);
+      const shift = pivot.clone().sub(back);
+      camera.position.add(shift);
+      controls.target.add(shift);
+      camera.updateMatrixWorld();
+    };
+    controls.addEventListener("change", holdPivot);    canvas.addEventListener("pointerdown", onPivotDown);
+    canvas.addEventListener("pointerup", onPivotUp);
+    canvas.addEventListener("pointercancel", onPivotUp);
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 120 : 1;
+      const dy = Math.max(-240, Math.min(240, e.deltaY * unit));
+      let factor = Math.exp(dy * 0.0012);
+      const rect = canvas.getBoundingClientRect();
+      camera.updateMatrixWorld();
+      const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      let at = surfaceRef.current(e.clientX, e.clientY);
+      if (!at) {
+        const ray = new THREE.Raycaster();
+        ray.setFromCamera(ndc, camera);
+        at = ray.ray.at(camera.position.distanceTo(controls.target), new THREE.Vector3());
+      }
+      const toPivot = camera.position.distanceTo(at);
+      if (factor < 1) factor = Math.max(factor, Math.min(1, minPivotDist / Math.max(toPivot, 1e-9)));
+      else if (camera.position.distanceTo(controls.target) * factor > maxTargetDist) return;
+      // A homothety about `at`: the point under the cursor does not move on screen.
+      camera.position.sub(at).multiplyScalar(factor).add(at);
+      controls.target.sub(at).multiplyScalar(factor).add(at);
+      controls.update();
+      requestRender();
+    };
+    canvas.addEventListener("wheel", onWheel, { passive: false, capture: true });
+
     let pending = false;
     const afterRender: Scene["afterRender"] = { current: null };
     const requestRender = () => {
@@ -264,6 +335,11 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
       pending = true;
       requestAnimationFrame(() => {
         pending = false;
+        // Clip planes follow the camera: a fixed near plane eats the model once you are close.
+        const far = camera.position.distanceTo(modelCenter) + modelRadius * 2;
+        camera.far = far;
+        camera.near = Math.max(far * 1e-5, 1e-4);
+        camera.updateProjectionMatrix();
         renderer.render(scene, camera);
         afterRender.current?.();
       });
@@ -325,6 +401,10 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
       afterRender,
       dispose() {
         observer.disconnect();
+        canvas.removeEventListener("wheel", onWheel, { capture: true });
+        canvas.removeEventListener("pointerdown", onPivotDown);
+        canvas.removeEventListener("pointerup", onPivotUp);
+        canvas.removeEventListener("pointercancel", onPivotUp);
         controls.dispose();
         objects.dispose();
         for (const o of [selLines, hoverLines, selPoints, hoverPoints]) {
@@ -501,6 +581,8 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
     const worldPerPixel = (d: number) => (2 * d * Math.tan((s.camera.fov * Math.PI) / 360)) / Math.max(1, canvas.clientHeight);
     return { cursor, hit, candidates, project, worldPerPixel };
   };
+
+  surfaceRef.current = (x, y) => probe(x, y)?.hit?.point ?? null;
 
   /** The topology under the cursor: vertex, then edge, then the face the ray landed on. */
   const pickRef = (clientX: number, clientY: number, touch: boolean): SelRef | null => {
