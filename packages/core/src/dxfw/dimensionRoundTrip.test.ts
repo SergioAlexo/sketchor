@@ -141,6 +141,29 @@ describe("DIMENSION records", () => {
     expect(near(st.arrowSize, 3, 1e-3)).toBe(true);
     expect(layoutOf(back, null).text?.text).toBe(layoutOf(d, null).text?.text);
   });
+
+  it("a foreign file in inches: the dimension's own scale is not multiplied by 25.4 on top of the converted style", () => {
+    // Without the SKETCHOR record nothing restores exact fields, so this is what any other CAD's inch file goes through.
+    const d = D("linear", [[0, 0], [25.4, 0], [12.7, 10]], { angle: 0, style: "S" });
+    const style = { name: "S", textHeight: 5, arrowSize: 3 };
+    const text = entitiesToDxf2018([d], { insUnits: 1, scale: 1 / 25.4, dimStyles: [style] }).replace(/SKETCHOR_DATA/g, "OTHERAPP_DATA");
+    const parsed = parseDxf(text);
+    const back = parsed.entities.find((e) => e.type === "dimension") as DimensionEntity;
+    expect(back.scale ?? 1).toBeCloseTo(1, 6);
+    const st = dimStyleOf(parsed.dimStyles.find((r) => r.name === "S")!);
+    expect(st.textHeight).toBeCloseTo(5, 3);
+  });
+
+  it("a foreign leader in inches: the text height read off the record comes back in mm", () => {
+    // No dim host here, so the writer resolves the default style; the LEADER record carries that height (group 40) in inches.
+    const l = D("leader", [[0, 0], [25.4, 25.4], [50.8, 25.4]], { textOverride: "NOTE" });
+    const text = entitiesToDxf2018([l], { insUnits: 1, scale: 1 / 25.4 }).replace(/SKETCHOR_DATA/g, "OTHERAPP_DATA");
+    const parsed = parseDxf(text);
+    const back = parsed.entities.find((e) => e.type === "dimension" && e.kind === "leader") as DimensionEntity;
+    expect(back.defPoints[1].x).toBeCloseTo(25.4, 3);
+    expect(back.overrides?.textHeight).toBeDefined();
+    expect(back.overrides!.textHeight! * (back.scale ?? 1)).toBeCloseTo(DEFAULT_DIM_STYLE.textHeight, 3);
+  });
 });
 
 describe("DIMSTYLE table", () => {

@@ -265,7 +265,30 @@ const ORIGIN: Point = { x: 0, y: 0 };
 function scaleToMm(entities: Entity[], insUnits: number): Entity[] {
   const mmPerUnit = MM_PER_INSUNIT[insUnits];
   if (!mmPerUnit || mmPerUnit === 1) return entities;
-  return entities.map((e) => scaleKept(e, mmPerUnit));
+  return entities.map((e) => scaleImported(e, mmPerUnit));
+}
+
+/** Per-dimension style overrides that are lengths (the DIMSTYLE variables `dimStyleFromDxf` converts with `len`). */
+const DIM_OVERRIDE_LENGTHS = ["arrowSize", "extOffset", "baselineSpacing", "extExtend", "lineExtend", "extFixedLength", "textHeight", "centerSize", "gap"];
+
+/**
+ * File units → mm on import. A dimension's `scale` multiplies its style's sizes, and the
+ * imported styles are already in mm (`collectDimStyles`), so a unit change must not touch
+ * it — `transformed` would make every text and arrow 25.4x too big in an inch file. The
+ * overrides read off the record are still in file units, so those are converted instead.
+ */
+function scaleImported(e: Entity, k: number): Entity {
+  const s = scaleKept(e, k);
+  if (s.type !== "dimension" || e.type !== "dimension") return s;
+  const out: DimensionEntity = { ...s };
+  if (e.scale === undefined) delete out.scale;
+  else out.scale = e.scale;
+  if (e.overrides) {
+    const o: Record<string, unknown> = { ...e.overrides };
+    for (const key of DIM_OVERRIDE_LENGTHS) if (typeof o[key] === "number") o[key] = (o[key] as number) * k;
+    out.overrides = o as DimensionEntity["overrides"];
+  }
+  return out;
 }
 
 /** `e` scaled about the origin by `k`; an insert only moves (see {@link scaleKept}) — pair it with {@link scaleBlockDefinition}. */
@@ -1395,7 +1418,7 @@ function buildBlockDefinitions(blocks: Map<string, BlockDef>, ctx: ConvertContex
       })
       .filter((a) => a.tag !== "");
     const body = raw.body.filter((r) => r.type !== "ATTDEF");
-    const entities = convertRecords(body, { ...ctx, stack: new Set([name]) }).map((e) => (k === 1 ? e : scaleKept(e, k)));
+    const entities = convertRecords(body, { ...ctx, stack: new Set([name]) }).map((e) => (k === 1 ? e : scaleImported(e, k)));
     defs.set(name, {
       name,
       basePoint: { x: raw.base.x * k, y: raw.base.y * k },
