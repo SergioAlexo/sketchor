@@ -26,6 +26,7 @@ export type AppCommandId =
   | "ungroup"
   | "fit"
   | "zoomPrevious"
+  | "zoomSelected"
   | "relativeZero"
   | "save"
   | "open"
@@ -205,6 +206,9 @@ export const APP_ALIASES: Record<string, AppCommandId> = {
   fit: "fit",
   ze: "fit",
   zp: "zoomPrevious",
+  zs: "zoomSelected",
+  zoomselected: "zoomSelected",
+  zoomsel: "zoomSelected",
   rz: "relativeZero",
   save: "save",
   open: "open",

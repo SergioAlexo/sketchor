@@ -1925,6 +1925,10 @@ export function Viewport() {
       case "zoomPrevious":
         zoomPrevious();
         return "zoom previous";
+      case "zoomSelected":
+        if (app.selection.length === 0) return "zoom selected: nothing is selected";
+        fitView(app.selection);
+        return "zoom selected";
       case "relativeZero": {
         const cursor = lastScreenRef.current ? screenToWorld(viewRef.current, lastScreenRef.current) : null;
         relativeZeroRef.current = cursor ? findSnap(doc, viewRef.current, cursor, { settings: useSnapSettings.getState().settings }).point : null;

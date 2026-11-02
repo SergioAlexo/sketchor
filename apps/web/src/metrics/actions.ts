@@ -256,6 +256,7 @@ export const COMMAND_LINE_ACTIONS: Record<AppCommandId, string> = {
   ungroup: "edit.ungroup",
   fit: "view.fit",
   zoomPrevious: "view.zoomPrevious",
+  zoomSelected: "view.fit",
   relativeZero: "edit.relativeZero",
   save: "file.save",
   open: "file.open",

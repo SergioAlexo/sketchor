@@ -17,6 +17,13 @@ describe("parseCommand", () => {
     expect(parseCommand("  rec  ")).toEqual({ kind: "tool", tool: "rectangle", argument: null });
   });
 
+  it("zoom selected (T-29) is its own command, distinct from zoom extents and zoom window", () => {
+    expect(parseCommand("zs")).toEqual({ kind: "app", id: "zoomSelected" });
+    expect(parseCommand("zoomselected")).toEqual({ kind: "app", id: "zoomSelected" });
+    expect(parseCommand("ze")).toEqual({ kind: "app", id: "fit" });
+    expect(parseCommand("z")).toEqual({ kind: "tool", tool: "zoom", argument: null });
+  });
+
   it("keeps the rest of the line as the tool's argument", () => {
     expect(parseCommand("o 5")).toEqual({ kind: "tool", tool: "offset", argument: "5" });
     expect(parseCommand("f 2.5mm")).toEqual({ kind: "tool", tool: "fillet", argument: "2.5mm" });

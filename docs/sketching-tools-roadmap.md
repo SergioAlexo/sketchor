@@ -9,6 +9,7 @@ Status as of 2026-09-11 (`main` @ v0.14.4).
 ### Progress log
 
 | Date | Items | Notes |
+| 2026-11-02 | **T-29** zoom selected | Command-line `zs` / `zoomselected` (app command `zoomSelected`, reports "nothing is selected"); `F` and `ZE` with a selection already framed it. T-29 is now complete. |
 | 2026-11-02 | **T-16** fence trim | `packages/core/src/trimFence.ts` (tested): `trimByFence` applies `trimAt` at every crossing of the stroke with an entity (in stroke order, each against the original drawing as cutters). Framework gets an optional `Tool.fence(ctx, path)`: a press-drag with such a tool draws the fence and hands it over on release (a click is still a pick; Shift still extends). Trim tool implements it. |
 | 2026-11-02 | **T-15** through-point + round gap | `offsetThroughPoint` and an `OffsetGap` ("extend"/"round", AutoCAD OFFSETGAPTYPE) argument on `offsetEntity`/`offsetPath`: round keeps raw legs at outer corners and joins them with an arc about the original vertex (tested on a rectangle). Offset tool: Tab toggles distance/through, Shift+Tab toggles round/extend corners. |
 | 2026-11-02 | **T-17** (arcs/circles) | Core was already `filletCurves` (C-08, nearest-to-picks solution). New: `filletCurveConstraints` (associative.ts) — T-46 coincident + tangent (+ radius) for every line/arc/circle pair (point-on-curve on a circle), wired into the Fillet tool; solver test confirms they are satisfied. Chamfer stays lines-only. |
@@ -286,7 +287,7 @@ Pick two entities (lines, arcs, circles, or two adjacent polyline segments), rad
 
 Right-side panel (sibling of Layers/Code) showing the selection: common section (layer, colour, linetype, lineweight, construction), then per-type fields: line `a.x a.y b.x b.y length angle`, circle `cx cy r d circumference area`, arc `+ start end sweep length`, polyline `vertex count closed length area`, text `content height rotation`. Every field editable → `update-entity` command; multi-select edits the common fields on all. Read-only computed fields (length/area) are the AutoCAD "Quick Properties" people miss most. *Match properties* (T-26): a tool that samples one entity and applies its common properties to clicked ones — trivial once this panel exists.
 
-### T-29 · Selection and view upgrades — **P1, S each** — 🟡 2026-09-22 (all but zoom-selected and trim-by-fence)
+### T-29 · Selection and view upgrades — **P1, S each** — ✅ 2026-11-02
 
 - `Ctrl+A` select all (visible, unlocked layers); `Ctrl+I` invert; **Select similar** (same type + layer + colour); **select by** dialog (type / layer / colour / construction); **lasso** (freehand polygon, Alt-drag); **fence** (polyline crossing, used by trim too); **selection cycling** (Ctrl+click on overlapping entities cycles, with a small list popover — AutoCAD `SELECTIONCYCLING`).
 - Zoom window (`Z` then drag), zoom selected, zoom previous (view history stack), middle-button double-click = fit.
