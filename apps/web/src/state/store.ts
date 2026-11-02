@@ -472,6 +472,9 @@ export type ToolId =
   | "dimcenter"
   | "dimcenterline"
   | "qdim"
+  | "leader"
+  | "balloon"
+  | "leaderadd"
   | "pan"
   | "move"
   | "copy"
@@ -526,6 +529,9 @@ export const TOOL_HINTS: Record<ToolId, string> = {
   dimcenter: "Centre mark: click a circle or arc (Alt-click for an extended centre-line cross)",
   dimcenterline: "Centreline: click two lines - the centreline runs midway between them",
   dimcontinue: "Continue dimension: click an existing linear dimension, then each next point - Esc finishes",
+  leader: "Leader: click the arrow tip, then the landing point (Alt-click adds a bend) - type text after the command, e.g. leader NOTE 4",
+  leaderadd: "Add leader line: click a leader, then each new arrow tip - Esc finishes",
+  balloon: "Balloon: click the part, then where the numbered callout goes (Alt-click adds a bend) - numbers count up by themselves",
   qdim: "Quick dimension: select objects (or click them), Enter, then place the chain - B baseline, C continued, O ordinate",
   pan: "Drag to pan the view - pinch with two fingers to zoom - double-tap to fit the drawing",
   move: "Select, then click a base point and a destination - or type @dx,dy or a distance - Ctrl-click the destination to copy instead",

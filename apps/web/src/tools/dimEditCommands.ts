@@ -1,7 +1,10 @@
 import type { Command, DimensionEntity, EntityId, SketchDocument } from "@sketchor/core";
 import {
   dimensionsOf,
+  alignLeaders,
+  collectLeaders,
   flipDimArrows,
+  removeLeaderLine,
   layoutOf,
   moveDimText,
   obliqueDim,
@@ -20,7 +23,7 @@ import type { AppCommandId } from "./commandLine";
  * (`dimensions/edit.ts`); this only reads the selection and the typed argument.
  */
 
-export type DimEditId = Extract<AppCommandId, "dimTextReset" | "dimTextLeader" | "dimFlip" | "dimSpace" | "dimOblique" | "dimRestyle" | "dimReassoc">;
+export type DimEditId = Extract<AppCommandId, "dimTextReset" | "dimTextLeader" | "dimFlip" | "dimSpace" | "dimOblique" | "dimRestyle" | "dimReassoc" | "leaderRemove" | "leaderAlign" | "leaderCollect">;
 
 export interface DimEditResult {
   command: Command | null;
@@ -29,7 +32,7 @@ export interface DimEditResult {
 }
 
 export function isDimEdit(id: AppCommandId): id is DimEditId {
-  return id === "dimTextReset" || id === "dimTextLeader" || id === "dimFlip" || id === "dimSpace" || id === "dimOblique" || id === "dimRestyle" || id === "dimReassoc";
+  return id === "dimTextReset" || id === "dimTextLeader" || id === "dimFlip" || id === "dimSpace" || id === "dimOblique" || id === "dimRestyle" || id === "dimReassoc" || id === "leaderRemove" || id === "leaderAlign" || id === "leaderCollect";
 }
 
 const none = (message: string): DimEditResult => ({ command: null, message });
@@ -71,6 +74,28 @@ export function runDimEdit(doc: SketchDocument, selection: readonly EntityId[], 
     }
     case "dimRestyle":
       return finish(dims.map((d) => restyleDim(d, doc.settings.currentDimStyle || undefined)), "updated to the current style", "already in the current style");
+    case "leaderRemove": {
+      // Drops one line of a multileader: argument = its number (1 = the main line, default the last).
+      const raw = argument?.trim();
+      return finish(
+        dims.map((d) => {
+          const n = raw ? Number(raw) - 1 : (d.branches?.length ?? 0);
+          return removeLeaderLine(d, n) ?? d;
+        }),
+        "leader line removed",
+        "a leader needs at least one line - nothing to remove",
+      );
+    }
+    case "leaderAlign": {
+      const mode = argument?.trim().toLowerCase().startsWith("v") ? "vertical" : "horizontal";
+      return finish(alignLeaders(dims, mode), `leaders aligned ${mode}ly`, "select two or more leaders (the first is the reference)");
+    }
+    case "leaderCollect": {
+      const raw = argument?.trim();
+      const pitch = raw ? Number(raw) : 10;
+      if (!Number.isFinite(pitch) || pitch <= 0) return none("leadercollect: give the spacing in mm");
+      return finish(collectLeaders(dims, pitch), "leaders stacked", "select two or more leaders (the first is the reference)");
+    }
     case "dimReassoc": {
       const all = doc.all();
       return finish(dims.map((d) => reassociateDim(d, all) ?? d), "re-attached to the geometry", "found no geometry under these dimensions");

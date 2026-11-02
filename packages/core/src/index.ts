@@ -38,6 +38,8 @@ export * from "./dimensions/styleFields";
 export * from "./dimensions/styleOps";
 export * from "./dimensions/build";
 export * from "./dimensions/edit";
+export * from "./dimensions/leader";
+export * from "./dimensions/leaderOps";
 export * from "./layerTable";
 export * from "./commands";
 export * from "./sketchtext";

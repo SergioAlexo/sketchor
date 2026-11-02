@@ -1912,6 +1912,9 @@ export function Viewport() {
       case "dimSpace":
       case "dimOblique":
       case "dimRestyle":
+      case "leaderRemove":
+      case "leaderAlign":
+      case "leaderCollect":
       case "dimReassoc": {
         const r = runDimEdit(doc, app.selection, id, argument);
         if (r.command) bus.execute(r.command);

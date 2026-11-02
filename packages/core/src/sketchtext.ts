@@ -294,14 +294,18 @@ export interface ParsedDimension {
   scale?: number;
   driving: boolean;
   value?: number;
+  /** D-05 leader words. */
+  balloon?: NonNullable<DimensionEntity["balloon"]>;
+  landing?: number;
+  spline?: boolean;
 }
 
-const DIM_KINDS: readonly DimKind[] = ["linear", "aligned", "angular2l", "angular3p", "radial", "diametric", "arclength", "ordinate", "jogged", "centermark", "centerline"];
+const DIM_KINDS: readonly DimKind[] = ["linear", "aligned", "angular2l", "angular3p", "radial", "diametric", "arclength", "ordinate", "jogged", "centermark", "centerline", "leader"];
 const DIM_HEAD_RE = /^dimension\s+([A-Za-z_]\w*)\s+([a-z0-9]+)\s*(.*)$/;
 const ANGULAR_KINDS = new Set<DimKind>(["angular2l", "angular3p"]);
 
 /** Points each dimension kind needs. */
-const DIM_POINTS: Record<DimKind, number> = { linear: 3, aligned: 3, angular2l: 5, angular3p: 4, radial: 2, diametric: 2, arclength: 4, ordinate: 3, jogged: 3, centermark: 2, centerline: 4 };
+const DIM_POINTS: Record<DimKind, number> = { linear: 3, aligned: 3, angular2l: 5, angular3p: 4, radial: 2, diametric: 2, arclength: 4, ordinate: 3, jogged: 3, centermark: 2, centerline: 4, leader: 2 };
 
 function parseDimension(row: string): ParsedDimension | string {
   const head = DIM_HEAD_RE.exec(row);
@@ -329,6 +333,9 @@ function parseDimension(row: string): ParsedDimension | string {
   const style = take(/(?:^|\s)style\s+(\S+)/);
   const scale = take(new RegExp(String.raw`(?:^|\s)scale\s+(${NUM})`));
   const driving = take(new RegExp(String.raw`(?:^|\s)driving\s+(${NUM})`));
+  const balloon = take(/(?:^|\s)balloon\s+(circle|hexagon|triangle|square)(?=\s|$)/);
+  const landing = take(new RegExp(String.raw`(?:^|\s)landing\s+(${NUM})`));
+  const spline = take(/(?:^|\s)spline(?=\s|$)/);
   const pts: { x: number; y: number }[] = [];
   POINT_PAIR_CAPTURE.lastIndex = 0;
   let pm: RegExpExecArray | null;
@@ -341,7 +348,10 @@ function parseDimension(row: string): ParsedDimension | string {
     type: "dimension",
     name: head[1],
     kind,
-    pts: pts.slice(0, DIM_POINTS[kind]),
+    pts: kind === "leader" ? pts : pts.slice(0, DIM_POINTS[kind]),
+    ...(balloon ? { balloon: balloon[1] as NonNullable<DimensionEntity["balloon"]> } : {}),
+    ...(landing ? { landing: Number(landing[1]) } : {}),
+    ...(spline ? { spline: true } : {}),
     ...(angle ? { angle: toRad(Number(angle[1])) } : {}),
     ...(axis ? { axis: axis[1] as "x" | "y" } : {}),
     ...(textAt ? { textPos: { x: Number(textAt[1]), y: Number(textAt[2]) } } : {}),
@@ -364,6 +374,9 @@ function dimensionLine(name: string, e: DimensionEntity): string {
     (e.textOverride ? ` text ${JSON.stringify(e.textOverride)}` : "") +
     (e.style ? ` style ${e.style}` : "") +
     (e.scale && e.scale !== 1 ? ` scale ${fmt(e.scale)}` : "") +
+    (e.balloon ? ` balloon ${e.balloon}` : "") +
+    (e.landing !== undefined ? ` landing ${fmt(e.landing)}` : "") +
+    (e.leaderSpline ? ` spline` : "") +
     (e.driving && e.value !== undefined ? ` driving ${ANGULAR_KINDS.has(e.kind) ? deg(e.value) : fmt(e.value)}` : "")
   );
 }
@@ -677,6 +690,9 @@ function sameGeometry(existing: Entity, parsed: ParsedEntity): boolean {
       (existing.textOverride ?? "") === (parsed.textOverride ?? "") &&
       existing.style === parsed.style &&
       near(existing.scale ?? 1, parsed.scale ?? 1) &&
+      existing.balloon === parsed.balloon &&
+      near(existing.landing, parsed.landing) &&
+      !!existing.leaderSpline === !!parsed.spline &&
       existing.driving === parsed.driving &&
       near(existing.driving ? existing.value : undefined, parsed.driving ? parsed.value : undefined)
     );
@@ -800,6 +816,9 @@ export function toEntity(parsed: ParsedEntity, id: EntityId, layer?: string, bul
         ...(parsed.textOverride !== undefined ? { textOverride: parsed.textOverride } : {}),
         ...(parsed.style ? { style: parsed.style } : {}),
         ...(parsed.scale !== undefined ? { scale: parsed.scale } : {}),
+        ...(parsed.balloon ? { balloon: parsed.balloon } : {}),
+        ...(parsed.landing !== undefined ? { landing: parsed.landing } : {}),
+        ...(parsed.spline ? { leaderSpline: true } : {}),
         driving: parsed.driving,
         ...(parsed.value !== undefined ? { value: parsed.value } : {}),
       };
@@ -922,6 +941,8 @@ export function diffToCommands(doc: SketchDocument, parsed: ParsedEntity[]): Com
           if (existing.textLeader) updated.textLeader = true;
           if (existing.flipArrows) updated.flipArrows = true;
           if (existing.oblique !== undefined) updated.oblique = existing.oblique;
+          // D-05: extra leader lines of a multileader are not expressible in one code row.
+          if (existing.branches) updated.branches = existing.branches;
         }
         if (existing.type === "mtext" && updated.type === "mtext") {
           for (const k of ["style", "lineSpacing", "background"] as const) {

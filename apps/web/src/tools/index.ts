@@ -9,6 +9,7 @@ import { HatchTool } from "./hatchTool";
 import { SplineEditTool } from "./splineEditTool";
 import { CopyTool, MirrorTool, MoveTool, RotateTool, ScaleTool } from "./modifyTools";
 import { DimTool } from "./dimTools";
+import { LeaderAddTool, LeaderTool } from "./leaderTool";
 import type { Tool } from "./tool";
 
 /**
@@ -63,6 +64,9 @@ const TOOLS: Partial<Record<ToolId, Tool>> = {
   dimcenter: new DimTool("dimcenter", "centermark"),
   dimcenterline: new DimTool("dimcenterline", "centerline"),
   qdim: new DimTool("qdim", "qdim"),
+  leader: new LeaderTool("leader"),
+  balloon: new LeaderTool("balloon"),
+  leaderadd: new LeaderAddTool(),
 };
 
 export function getTool(id: ToolId): Tool | null {

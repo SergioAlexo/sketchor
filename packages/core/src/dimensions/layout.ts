@@ -2,6 +2,7 @@ import type { DimensionEntity } from "../entities";
 import type { Point } from "../geometry";
 import { arrowShape, isStrokeArrow } from "./arrows";
 import { formatDimText } from "./format";
+import { layoutLeader } from "./leader";
 import type { ArrowKind, DimStyle } from "./style";
 
 /**
@@ -478,6 +479,8 @@ function layoutKind(e: DimensionEntity, st: DimStyle, geo: DimGeometry): DimLayo
       const t = arcDimension(b, C, start, sweep, R, [rArc, rArc], text(rArc * sweep), e.textPos);
       return { lines: b.lines, fills: b.fills, text: t, measure: rArc * sweep, anchor: b.anchor };
     }
+    case "leader":
+      return layoutLeader(e, st, k, pts);
     case "centermark": {
       // D-07: a cross at the centre; "mark" style = a short cross, otherwise it runs past the circle by the mark size.
       if (!need(1)) return empty;

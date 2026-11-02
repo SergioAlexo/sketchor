@@ -35,6 +35,8 @@ export function locatorIndex(e: DimensionEntity): number {
     case "centermark":
     case "centerline":
       return -1; // nothing to place: they follow their geometry
+    case "leader":
+      return e.defPoints.length - 1; // the attach point carries the content
     default:
       return 1;
   }
@@ -52,6 +54,8 @@ export function gripIndices(e: DimensionEntity): number[] {
       return e.target ? [locatorIndex(e)] : e.defPoints.map((_, i) => i);
     case "jogged":
       return e.target ? [1, 2] : e.defPoints.map((_, i) => i);
+    case "leader":
+      return e.defPoints.map((_, i) => i);
     case "ordinate":
       return [1, 2]; // the feature point and the leader end; the origin is a coordinate system, not a handle
     default:
@@ -103,6 +107,8 @@ export const dimensionKind: EntityKind<DimensionEntity> = {
       ...e,
       defPoints: e.defPoints.map((p) => mapPoint(m, p)),
       ...(e.textPos ? { textPos: mapPoint(m, e.textPos) } : {}),
+      ...(e.branches ? { branches: e.branches.map((b) => b.map((p) => mapPoint(m, p))) } : {}),
+      ...(e.landing !== undefined ? { landing: e.landing * s.scale } : {}),
       ...(angle !== undefined ? { angle } : {}),
       ...(axis !== undefined ? { axis } : {}),
       scale: (e.scale ?? 1) * s.scale,
@@ -123,7 +129,7 @@ export const dimensionKind: EntityKind<DimensionEntity> = {
   grips: (e) => {
     const l = layoutOf(e);
     const out = [];
-    if (l.text) out.push({ point: l.text.at, kind: "mid" as const, index: 0 });
+    if (l.text && e.kind !== "leader") out.push({ point: l.text.at, kind: "mid" as const, index: 0 });
     const pts = resolveGeometry(e, (() => { const h = activeDimHost(); return h ? (id: string) => h.get(id) : undefined; })()).pts;
     for (const i of gripIndices(e)) {
       const p = pts[i] ?? e.defPoints[i];

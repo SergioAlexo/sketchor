@@ -42,7 +42,10 @@ export type AppCommandId =
   | "dimSpace"
   | "dimOblique"
   | "dimRestyle"
-  | "dimReassoc";
+  | "dimReassoc"
+  | "leaderRemove"
+  | "leaderAlign"
+  | "leaderCollect";
 
 export type ParsedCommand =
   /** Activate a tool; `argument` is the rest of the line (a radius, a distance), passed on as typed input. */
@@ -113,6 +116,13 @@ export const TOOL_ALIASES: Record<string, ToolId> = {
   dimcenter: "dimcenter",
   centermark: "dimcenter",
   dcl: "dimcenterline",
+  leader: "leader",
+  mleader: "leader",
+  qleader: "leader",
+  balloon: "balloon",
+  bal: "balloon",
+  leaderadd: "leaderadd",
+  mleaderadd: "leaderadd",
   centerline: "dimcenterline",
   qdim: "qdim",
   h: "fill",
@@ -219,6 +229,11 @@ export const APP_ALIASES: Record<string, AppCommandId> = {
   dimoblique: "dimOblique",
   dimupdate: "dimRestyle",
   dimreassoc: "dimReassoc",
+  leaderremove: "leaderRemove",
+  leaderalign: "leaderAlign",
+  mleaderalign: "leaderAlign",
+  leadercollect: "leaderCollect",
+  mleadercollect: "leaderCollect",
 };
 
 /** Anything that looks like a coordinate or a measurement rather than a word. */

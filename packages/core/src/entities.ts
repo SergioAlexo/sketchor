@@ -488,7 +488,7 @@ export interface InsertEntity {
 }
 
 /** The dimension forms (D-02). */
-export type DimKind = "linear" | "aligned" | "angular2l" | "angular3p" | "radial" | "diametric" | "arclength" | "ordinate" | "jogged" | "centermark" | "centerline";
+export type DimKind = "linear" | "aligned" | "angular2l" | "angular3p" | "radial" | "diametric" | "arclength" | "ordinate" | "jogged" | "centermark" | "centerline" | "leader";
 
 /**
  * A dimension (D-02a): measured value, extension lines, dimension line,
@@ -553,6 +553,18 @@ export interface DimensionEntity {
   value?: number;
   /** Formula for `value` once parameters exist (T-45). */
   expression?: string;
+  /**
+   * D-05, kind "leader": `defPoints` is the leader line (arrow tip first, the last point is where the
+   * landing / content attaches), `textOverride` the content (text, or the balloon's number).
+   */
+  /** D-05: extra leader lines of a multileader, each tip..vertex, joining the attach point (last `defPoints` entry). */
+  branches?: Point[][];
+  /** D-05: leader lines drawn as a smooth curve through their points. */
+  leaderSpline?: boolean;
+  /** D-05: the content sits in a balloon of this shape (item-number callout). */
+  balloon?: "circle" | "hexagon" | "triangle" | "square";
+  /** D-05: horizontal landing length (mm); absent = twice the arrow size, 0 = none. */
+  landing?: number;
 }
 
 /**

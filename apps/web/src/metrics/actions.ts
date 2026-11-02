@@ -273,6 +273,9 @@ export const COMMAND_LINE_ACTIONS: Record<AppCommandId, string> = {
   dimOblique: "dim.oblique",
   dimRestyle: "dim.restyle",
   dimReassoc: "dim.reassociate",
+  leaderRemove: "dim.leaderRemove",
+  leaderAlign: "dim.leaderAlign",
+  leaderCollect: "dim.leaderCollect",
 };
 
 /** "palette"/"command-line" are sent by their own components; the listeners here only see the other two. */
