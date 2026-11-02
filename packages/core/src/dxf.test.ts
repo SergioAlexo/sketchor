@@ -532,14 +532,14 @@ describe("import report and warnings", () => {
     const text = entitiesOnly(
       rec("LINE", [[10, 0], [20, 0], [11, 1], [21, 1]]) +
         rec("LINE", [[10, 0], [20, 0], [11, 2], [21, 2]]) +
-        rec("LEADER", [[10, 0]]) +
-        rec("LEADER", [[10, 1]]) +
+        rec("TOLERANCE", [[10, 0]]) +
+        rec("TOLERANCE", [[10, 1]]) +
         rec("DIMENSION", [[10, 0]]),
     );
     const { report } = parse(text);
     expect(report.parsed).toEqual([{ type: "LINE", count: 2 }]);
     expect(report.skipped).toEqual([
-      { type: "LEADER", count: 2 },
+      { type: "TOLERANCE", count: 2 },
       { type: "DIMENSION", count: 1 },
     ]);
   });
@@ -549,12 +549,12 @@ describe("import report and warnings", () => {
       rec("POINT", [[10, 0], [20, 0]]) +
         rec("CIRCLE", [[10, 0], [20, 0], [40, 1]]) +
         rec("HELIX", []) +
-        rec("LEADER", []) +
-        rec("LEADER", []),
+        rec("TOLERANCE", []) +
+        rec("TOLERANCE", []),
     );
     const { report } = parse(text);
     expect(report.parsed.map((p) => p.type)).toEqual(["CIRCLE", "POINT"]);
-    expect(report.skipped.map((p) => p.type)).toEqual(["LEADER", "HELIX"]);
+    expect(report.skipped.map((p) => p.type)).toEqual(["TOLERANCE", "HELIX"]);
   });
 
   it("leaves records that carry no geometry out of both buckets", () => {

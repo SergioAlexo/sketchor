@@ -18,6 +18,7 @@ import { newGroupId, type Group } from "./groups";
 import type { Constraint } from "./constraints";
 import type { TableRecord } from "./tables";
 import { dimensionFromRecord } from "./dimensions/dxfDim";
+import { leaderFromRecord, mleaderFromRecord } from "./dimensions/dxfLeader";
 import { dimStyleFromDxf } from "./dimensions/dxfVars";
 import { layoutDimension } from "./dimensions/layout";
 import { DEFAULT_DIM_STYLE } from "./dimensions/style";
@@ -847,6 +848,21 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
 
   // Records an INSERT has claimed (its ATTRIBs and SEQEND) — not converted on their own.
   const claimed = new Set<number>();
+  // D-10: a LEADER owns its annotation (group 340 names an MTEXT/TEXT by handle): that record is the leader's content, not a second entity.
+  const leaderText = new Map<number, RawEntity>();
+  if (raws.some((r) => r.type === "LEADER")) {
+    const byHandle = new Map<string, number>();
+    raws.forEach((r, i) => {
+      if (r.type === "MTEXT" || r.type === "TEXT") byHandle.set(str(r, 5, "").toUpperCase(), i);
+    });
+    raws.forEach((r, i) => {
+      if (r.type !== "LEADER") return;
+      const ti = byHandle.get(str(r, 340, "").toUpperCase());
+      if (ti === undefined || claimed.has(ti)) return;
+      claimed.add(ti);
+      leaderText.set(i, raws[ti]);
+    });
+  }
   for (let ri = 0; ri < raws.length; ri++) {
     if (claimed.has(ri)) continue;
     const raw = raws[ri];
@@ -1113,6 +1129,20 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
         }
         break;
       }
+      case "LEADER":
+      case "MULTILEADER": {
+        // D-10: real leaders come in as `leader` dimensions (recomputed from the vertices), their annotation text folded in.
+        let content = "";
+        const t = leaderText.get(ri);
+        if (t) content = unescapeDxfText(t.type === "MTEXT" ? t.pairs.filter((p) => p.code === 3).map((p) => p.value).join("") + str(t, 1, "") : str(t, 1, ""));
+        const d = raw.type === "LEADER" ? leaderFromRecord(raw, content) : mleaderFromRecord(raw);
+        if (d) entities.push({ id: newEntityId(), ...d, ...(layer && layer !== "0" ? { layer } : {}) } as Entity);
+        else {
+          warnings.push(`unsupported entity: ${raw.type}`);
+          if (ctx.depth === 0) ctx.foreign?.push(raw);
+        }
+        break;
+      }
       case "DIMENSION": {
         // D-10: a DIMENSION of a kind we model comes in as a real dimension, recomputed from its definition points and style. When the file's own measurement (group 42) disagrees with what those points give, the point layout was misread — fall through to the `*D` block, which holds exactly what the file's author drew.
         if (ctx.keep) {
@@ -1235,7 +1265,17 @@ export function parseDxf(text: string, options: DxfParseOptions = {}): DxfParseR
   if (sketchor.data?.dims) {
     for (const e of entities) {
       const x = e.type === "dimension" ? sketchor.data.dims[e.id] : undefined;
-      if (x) Object.assign(e, x);
+      if (!x) continue;
+      // A leader's record also fills fields from the file's own numbers (text height, hookline, ...); the exact record is the whole truth, so those start empty.
+      if (e.type === "dimension" && e.kind === "leader") {
+        delete e.overrides;
+        delete e.landing;
+        delete e.leaderSpline;
+        delete e.branches;
+        delete e.textOverride;
+        delete e.style;
+      }
+      Object.assign(e, x);
     }
   }
   const dimStyles = collectDimStyles(allPairs, MM_PER_INSUNIT[insUnits] || 1);
@@ -1391,6 +1431,8 @@ const SUPPORTED_TYPES = new Set([
   "SOLID",
   "TRACE",
   "3DFACE",
+  "LEADER",
+  "MULTILEADER",
   "HATCH",
 ]);
 

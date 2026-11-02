@@ -3,6 +3,7 @@ import { explodeDimension, explodeDimensions } from "../dimensions/explode";
 import { layoutOf } from "../dimensions/resolve";
 import { dimensionRecordText, hasDimensionRecord } from "../dimensions/dxfDim";
 import { dimStyleToDxf } from "../dimensions/dxfVars";
+import { hasLeaderRecord, isPlainLeader, leaderDxfInfo, leaderRecordText, leaderTextPlacement, mleaderRecordText, mleaderStyleObjects, type LeaderDxfInfo } from "../dimensions/dxfLeader";
 import { DIM_STYLE_PRESETS, DEFAULT_DIM_STYLE, dimStyleOf, dimStyleRecord } from "../dimensions/style";
 import { activeDimHost, styleOnlyHost } from "../dimensions/context";
 import { STANDARD_TEXT_STYLE, type TextStyle } from "../textStyle";
@@ -14,7 +15,7 @@ import { blockDefinitions2018, insertEntity2018, planBlockHandles, type BlockHan
 import { boundsOf } from "../dxf";
 import { CONTINUOUS, builtinLinetype } from "../linetypes";
 import { HandleAllocator } from "./handles";
-import { entityDxf2018, entityHead } from "./entities";
+import { entityDxf2018, entityHead, mtextEntity2018 } from "./entities";
 import { entityXdataText } from "../sketchorData";
 import { n, pair, unitsAndExtentsHeader } from "./write";
 import type { Group } from "../groups";
@@ -250,11 +251,12 @@ function groupObjects(plan: Plan, groups: readonly Group[], flat: (g: Group) => 
   return { dict, objects };
 }
 
-function objectsSection(plan: Plan, groupsPart: { dict: string; objects: string }, data: SketchorDocData | null): string {
+function objectsSection(plan: Plan, groupsPart: { dict: string; objects: string }, data: SketchorDocData | null, mleader: { dict: string; style: string; textHeight: number; arrow: number } | null = null): string {
   const { h } = plan;
   const root =
     `0\nDICTIONARY\n5\n${h.rootDict}\n330\n0\n100\nAcDbDictionary\n281\n1\n` +
     `3\nACAD_GROUP\n350\n${h.groupDict}\n3\nACAD_LAYOUT\n350\n${h.layoutDict}\n` +
+    (mleader ? `3\nACAD_MLEADERSTYLE\n350\n${mleader.dict}\n` : "") +
     (data ? `3\n${SKETCHOR_DICT_KEY}\n350\n${h.sketchorXrecord}\n` : "");
   const xrecord = data
     ? `0\nXRECORD\n5\n${h.sketchorXrecord}\n330\n${h.rootDict}\n100\nAcDbXrecord\n280\n1\n` + encodeDocData(data).map((c) => `1\n${c}\n`).join("")
@@ -271,6 +273,7 @@ function objectsSection(plan: Plan, groupsPart: { dict: string; objects: string 
     layoutObject(h.modelLayout, h.layoutDict, "Model", h.modelSpaceBlockRecord, 0) +
     layoutObject(h.layout1Layout, h.layoutDict, "Layout1", h.paperSpaceBlockRecord, 1) +
     groupsPart.objects +
+    (mleader ? mleaderStyleObjects({ dict: mleader.dict, style: mleader.style, rootDict: h.rootDict }, mleader.textHeight, mleader.arrow) : "") +
     xrecord +
     `0\nENDSEC\n`
   );
@@ -308,9 +311,16 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   const dimHost = activeDimHost();
   const dimBlocks: BlockDefinition[] = [];
   const dimInfo = new Map<string, { block: string; style: string; textAt: { x: number; y: number }; measure: number }>();
+  const leaderInfo = new Map<string, LeaderDxfInfo>();
   const entities: Entity[] = [];
   for (const e of entitiesIn) {
     if (e.type !== "dimension") {
+      entities.push(e);
+      continue;
+    }
+    // D-10: a leader is a real LEADER (plain) or MULTILEADER (branches / balloon) record; its numbers are measured here, in file units.
+    if (hasLeaderRecord(e)) {
+      leaderInfo.set(e.id, leaderDxfInfo(e, dimHost, scale));
       entities.push(e);
       continue;
     }
@@ -347,6 +357,10 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   const plan = buildPlan(layers, linetypes, blockDefs);
   const next = () => plan.alloc.alloc();
   const handleOf = new Map<string, string>();
+  // D-10: the MLEADERSTYLE object a MULTILEADER points at (allocated only when one is written).
+  const firstMLeader = entitiesIn.find((e) => e.type === "dimension" && leaderInfo.has(e.id) && !isPlainLeader(e));
+  const mlInfo = firstMLeader ? leaderInfo.get(firstMLeader.id) : undefined;
+  const mleader = mlInfo ? { dict: next(), style: next(), textHeight: mlInfo.textHeight, arrow: mlInfo.arrow } : null;
   const groups = options.groups ?? [];
   const byId = new Map(groups.map((g) => [g.id, g]));
   const flat = (id: string): string[] => {
@@ -374,6 +388,24 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
     if (e.type === "insert") {
       const def = defByName.get(e.block);
       text = def ? insertEntity2018(e, def, h, owner, next) : ""; // an insert of an unknown block draws nothing
+    } else if (e.type === "dimension" && leaderInfo.has(e.id)) {
+      const info = leaderInfo.get(e.id)!;
+      if (isPlainLeader(e)) {
+        let annotation: string | null = null;
+        let textRecord = "";
+        if (info.text) {
+          annotation = next();
+          const place = leaderTextPlacement(e, info);
+          textRecord = mtextEntity2018(
+            { id: `${e.id}:t`, type: "mtext", ...(e.layer !== undefined ? { layer: e.layer } : {}), ...(e.color !== undefined ? { color: e.color } : {}), at: place.at, width: 0, attachment: place.attachment, text: info.text, height: info.textHeight, rotation: 0 },
+            annotation,
+            owner,
+          );
+        }
+        text = `0\nLEADER\n` + entityHead(h, owner, e) + leaderRecordText(e, info, annotation) + entityXdataText(e) + textRecord;
+      } else {
+        text = `0\nMULTILEADER\n` + entityHead(h, owner, e) + mleaderRecordText(e, info, mleader!.style) + entityXdataText(e);
+      }
     } else if (e.type === "dimension") {
       const info = dimInfo.get(e.id);
       text = info ? `0\nDIMENSION\n` + entityHead(h, owner, e) + dimensionRecordText(e, { blockName: info.block, style: info.style, textAt: info.textAt, measure: info.measure }) + entityXdataText(e) : "";
@@ -385,7 +417,7 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   };
   // D-10: DIMSTYLE records — every record of the table, plus any style a dimension names that the table lacks (a built-in preset's values, else the defaults).
   const styleRecords: TableRecord[] = [...(options.dimStyles ?? [])];
-  for (const info of dimInfo.values()) {
+  for (const info of [...dimInfo.values(), ...[...leaderInfo.values()].filter((i) => i.style !== "Standard")]) {
     if (styleRecords.some((r) => r.name === info.style)) continue;
     const preset = DIM_STYLE_PRESETS.find((p) => p.name === info.style);
     styleRecords.push(preset ? dimStyleRecord(preset) : { ...dimStyleRecord(DEFAULT_DIM_STYLE), name: info.style });
@@ -412,10 +444,11 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   // D-10: exact dimension fields and full style records (what DXF groups cannot hold) ride in the SKETCHOR record, keyed by the ids XDATA restores.
   const dimsData: Record<string, Partial<DimensionEntity>> = {};
   for (const e of entitiesIn) {
-    if (e.type !== "dimension" || !dimInfo.has(e.id)) continue;
+    if (e.type !== "dimension" || !(dimInfo.has(e.id) || leaderInfo.has(e.id))) continue;
     const { id, type, name, layer, color, fill, linetype, lineweight, construction, ...rest } = e;
     void id; void type; void name; void layer; void color; void fill; void linetype; void lineweight; void construction;
-    dimsData[e.id] = rest;
+    // A leader always carries its scale: the reader multiplies it by the file-unit conversion, which the exact record must undo.
+    dimsData[e.id] = leaderInfo.has(e.id) ? { ...rest, scale: rest.scale ?? 1 } : rest;
   }
   const docData: SketchorDocData = { v: 1 };
   if (Object.keys(dimsData).length) docData.dims = dimsData;
@@ -424,7 +457,7 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   if (options.constraints?.length) docData.constraints = [...options.constraints];
   if (options.params?.length) docData.params = [...options.params];
   if (Object.keys(blockExtras).length) docData.blocks = blockExtras;
-  const objects = objectsSection(plan, groupsPart, Object.keys(docData).length > 1 ? docData : null);
+  const objects = objectsSection(plan, groupsPart, Object.keys(docData).length > 1 ? docData : null, mleader);
 
   // Tables allocate handles for their extra records, so build them before $HANDSEED is read.
   const tablesText = tablesSection(plan, layers, blockDefs, options.textStyles, dimStyleVars);
