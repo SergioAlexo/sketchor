@@ -87,6 +87,7 @@ export * from "./curveMeasure";
 export * from "./blocks/types";
 export * from "./blocks/context";
 export * from "./blocks/evaluate";
+export * from "./blocks/dynamic";
 export * from "./blocks/ops";
 export * from "./blocks/edit";
 export * from "./blocks/fields";

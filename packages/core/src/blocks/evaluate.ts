@@ -1,6 +1,7 @@
 import type { Entity, EntityId, InsertEntity, PolylineEntity } from "../entities";
 import type { Point } from "../geometry";
 import { kindTessellate, kindTransform, type Affine } from "../kinds/registry";
+import { dynamicSpecOf, insertBody, paramValuesKey, resolveParamValues } from "./dynamic";
 import { expandFields, fieldRevision } from "./fields";
 import { MAX_BLOCK_DEPTH, type AttributeDef, type BlockDefinition, type BlocksHost } from "./types";
 
@@ -172,28 +173,31 @@ function placements(insert: InsertEntity, base: Point): { key: string; m: Affine
   return out;
 }
 
-function expandBody(host: BlocksHost, name: string, stack: readonly string[]): Entity[] {
+function expandBody(host: BlocksHost, name: string, stack: readonly string[], insert?: Pick<InsertEntity, "params">): Entity[] {
   const def = getBlock(host, name);
   if (!def || stack.includes(name) || stack.length >= MAX_BLOCK_DEPTH) return [];
   const cache = bodyCache(host);
+  // A dynamic block's body depends on the instance's values (B-20): memoise per value set.
+  const spec = dynamicSpecOf(def);
+  const cacheKey = spec ? `${name}|${paramValuesKey(resolveParamValues(def, spec, insert?.params))}` : name;
   // Only a top-level expansion is memoised: a body expanded mid-cycle was cut short and must not be reused.
   if (stack.length === 0) {
-    const hit = cache.bodies.get(name);
+    const hit = cache.bodies.get(cacheKey);
     if (hit) return hit;
   }
   const out: Entity[] = [];
-  for (const e of def.entities) {
+  for (const e of insertBody(def, insert ?? {})) {
     if (e.type === "insert") out.push(...evaluateWith(host, e, [...stack, name]));
     else out.push(e);
   }
-  if (stack.length === 0) cache.bodies.set(name, out);
+  if (stack.length === 0) cache.bodies.set(cacheKey, out);
   return out;
 }
 
 function evaluateWith(host: BlocksHost, insert: InsertEntity, stack: readonly string[]): Entity[] {
   const def = getBlock(host, insert.block);
   if (!def) return [];
-  const body = expandBody(host, insert.block, stack);
+  const body = expandBody(host, insert.block, stack, insert);
   const out: Entity[] = [];
   for (const { key, m } of placements(insert, def.basePoint)) {
     for (const e of body) {

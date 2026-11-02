@@ -207,7 +207,7 @@ Tick `[x]` and add a progress-log row as items land. Order = recommended executi
 - [x] K-03 Sketch vs drafting mode
 
 **9 · Dynamic + parametric blocks**
-- [ ] B-20 Dynamic spec + evaluator
+- [x] B-20 Dynamic spec + evaluator (blocks/dynamic.ts; constraint route = `dimension` params)
 - [ ] B-21 Authoring in the block editor (+ test block)
 - [ ] B-22 Instance UX (custom properties, grips)
 - [ ] B-23 Shipped dynamic block library
