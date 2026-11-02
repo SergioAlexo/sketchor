@@ -6,7 +6,8 @@
  * lookup row must land on the nominal size it names.
  */
 import { describe, expect, it } from "vitest";
-import { boundsOf } from "../dxf";
+import { boundsOf, parseDxf } from "../dxf";
+import { entitiesToDxf2018 } from "../dxfw";
 import "../kinds/builtin";
 import { dynamicSpecOf, evaluateDynamic, type ParamValues } from "./dynamic";
 import { FASTENER_SIZES, SHEET_SIZES, SHIPPED_CATEGORY, shippedBlocks, shippedLibrary } from "./shippedLibrary";
@@ -102,6 +103,19 @@ describe("shipped dynamic block library", () => {
     expect(w1200.maxX - w1200.minX).toBeGreaterThan(size("SK_DOOR", { Type: "Single", Width: 900 }).w);
     const flipped = evaluateDynamic(byName("SK_DOOR"), { Type: "Single", Hinge: 1 }).find((e) => e.id === "leafS")!;
     expect(flipped.type === "line" && flipped.a.x).toBeCloseTo(900, 6);
+  });
+
+  it("B-27 round trip: the whole library through AC1032 DXF comes back with identical specs and the same evaluated geometry", () => {
+    const defs = shippedBlocks();
+    const back = parseDxf(entitiesToDxf2018([], { blocks: defs }));
+    for (const d of defs) {
+      const b = back.blocks.find((x) => x.name === d.name)!;
+      expect(dynamicSpecOf(b), d.name).toEqual(dynamicSpecOf(d));
+      expect(b.attributeDefs.map((a) => a.tag), d.name).toEqual(d.attributeDefs.map((a) => a.tag));
+    }
+    const a = boundsOf(evaluateDynamic(back.blocks.find((x) => x.name === "SK_BEAM_I")!, { Size: "I-300" }))!;
+    const o = boundsOf(evaluateDynamic(byName("SK_BEAM_I"), { Size: "I-300" }))!;
+    expect(a.maxY - a.minY).toBeCloseTo(o.maxY - o.minY, 4);
   });
 
   it("window width stretches and the mullion stays centred", () => {

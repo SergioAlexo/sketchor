@@ -215,7 +215,7 @@ Tick `[x]` and add a progress-log row as items land. Order = recommended executi
 - [x] B-24 `contributes.blocks` (plugin/blockBundle.ts + manifest `isBlocksOnly`, unsigned data-only like patterns; web `blocks/packStore.ts` + "Install a block pack" in the Sketchor library tab; HOST_API_VERSION 0.11.0)
 - [x] B-25 DXF export of dynamic blocks (*U + SKETCHOR XDATA) (AC1032 + R12 + SVG; blocks/dynamicExport.ts)
 - [x] B-26 DXF import of AutoCAD dynamic blocks (blocks/dynamicImport.ts: linear/polar/xy/rotation/flip/visibility params + move/stretch/polar-stretch/scale/rotate/flip/array actions; lookup tables not mapped, warned; unmappable `*U` stays a static insert)
-- [ ] B-27 Dynamic block tests
+- [x] B-27 Dynamic block tests (evaluator per action in dynamic.test.ts, fixtures, B-25 round trip, B-26 import, shipped library incl. AC1032 round trip; no AutoCAD-made file available)
 
 **10 · Paper space**
 - [x] L-01 Layout model (entity `space` back-pointer instead of a per-layout id list; add/rename/delete/reorder-layouts, move-to-space; bus.activeSpace stamps new entities; model-space exports skip paper entities)
