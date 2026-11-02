@@ -1072,9 +1072,13 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
         break;
       }
       case "INSERT": {
-        const name = str(raw, 2, "");
+        let name = str(raw, 2, "");
         const block = ctx.blocks.get(name);
-        if (ctx.keep && block && !name.startsWith("*")) {
+        // B-25: an INSERT of an anonymous `*U` block that Sketchor wrote names its dynamic block and values in XDATA — re-open it live (the `*U` geometry is what other readers show).
+        const dynX = ctx.keep && name.startsWith("*U") ? parseEntityXdata(raw.pairs) : null;
+        const dynamicName = dynX?.block && ctx.blocks.has(dynX.block) && !dynX.block.startsWith("*") ? dynX.block : null;
+        if (dynamicName) name = dynamicName;
+        if (ctx.keep && (block || dynamicName) && (dynamicName || !name.startsWith("*"))) {
           // B-07: keep the reference. Anonymous (`*U`, `*X`...) blocks are still expanded below.
           const attributes: Record<string, string> = {};
           if (num(raw, 66, 0) === 1) {
@@ -1098,6 +1102,7 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
             scale: { x: num(raw, 41, 1) || 1, y: num(raw, 42, 1) || 1 },
             rotation: (num(raw, 50, 0) * Math.PI) / 180,
             attributes,
+            ...(dynamicName && dynX?.params ? { params: dynX.params } : {}),
             ...(rawLayer !== "0" ? { layer: rawLayer } : {}),
             ...(cols > 1 || rows > 1 ? { array: { cols, rows, colSpacing: num(raw, 44, 0), rowSpacing: num(raw, 45, 0) } } : {}),
           };

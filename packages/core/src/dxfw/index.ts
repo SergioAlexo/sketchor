@@ -12,6 +12,7 @@ import type { DimensionEntity, Entity } from "../entities";
 import { layerOf } from "../entities";
 import type { BlockDefinition } from "../blocks/types";
 import { scaleBlockDefinition, scaleEntityKeepingInserts } from "../dxf";
+import { planDynamicExport } from "../blocks/dynamicExport";
 import { blockDefinitions2018, insertEntity2018, planBlockHandles, type BlockHandles } from "./blocks";
 import { boundsOf } from "../dxf";
 import { CONTINUOUS, builtinLinetype } from "../linetypes";
@@ -348,9 +349,11 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
     });
     entities.push(e);
   }
+  // B-25: non-default instances of dynamic blocks point at anonymous *U<n> blocks holding what they show.
+  const dynExport = planDynamicExport(options.blocks ?? [], entities);
   const blockHost = styleOnlyHost(dimHost);
   const blockDefs = [
-    ...(options.blocks ?? []).map((d) => (d.entities.some((e) => e.type === "dimension") ? { ...d, entities: explodeDimensions(d.entities, blockHost) } : d)),
+    ...[...(options.blocks ?? []), ...dynExport.blocks].map((d) => (d.entities.some((e) => e.type === "dimension") ? { ...d, entities: explodeDimensions(d.entities, blockHost) } : d)),
     ...dimBlocks,
   ].map((d) => (scale !== 1 ? scaleBlockDefinition(d, scale) : d));
   const defByName = new Map(blockDefs.map((d) => [d.name, d]));
@@ -395,7 +398,9 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
     let text: string;
     if (e.type === "insert") {
       const def = defByName.get(e.block);
-      text = def ? insertEntity2018(e, def, h, owner, next) : ""; // an insert of an unknown block draws nothing
+      const dyn = dynExport.stateOf(e);
+      const uDef = dyn ? defByName.get(dyn.name) : undefined;
+      text = uDef && dyn ? insertEntity2018({ ...e, block: dyn.name }, uDef, h, owner, next, { block: e.block, params: dyn.params }) : def ? insertEntity2018(e, def, h, owner, next) : ""; // an insert of an unknown block draws nothing
     } else if (e.type === "dimension" && tolStyle.has(e.id)) {
       text = `0\nTOLERANCE\n` + entityHead(h, owner, e) + toleranceRecordText(e, tolStyle.get(e.id)!) + entityXdataText(e);
     } else if (e.type === "dimension" && leaderInfo.has(e.id)) {

@@ -6,6 +6,7 @@ import type { ArcEntity, CircleEntity, Entity, ImageEntity, InsertEntity, LineEn
 import { imageCorners, layerOf } from "./entities";
 import type { BlockDefinition } from "./blocks/types";
 import { attribFlags, insertAttribRecords } from "./blocks/attributes";
+import { planDynamicExport } from "./blocks/dynamicExport";
 import { scaleBlockDefinition, scaleEntityKeepingInserts } from "./dxf";
 import { dist } from "./geometry";
 import { boundsOf } from "./dxf";
@@ -323,7 +324,9 @@ export function entitiesToDxf(entitiesIn: Entity[], insUnits = 0, scale = 1, blo
   // D-02a: R12 has no DIMENSION worth writing; dimensions become their parts.
   const entities = explodeDimensions(entitiesIn);
   const blockHost = styleOnlyHost(activeDimHost());
-  const blocks = blocksIn.map((d) => (d.entities.some((e) => e.type === "dimension" || e.type === "mtext") ? { ...d, entities: explodeDimensions(d.entities, blockHost) } : d));
+  // B-25: non-default instances of dynamic blocks reference anonymous *U blocks holding what they show.
+  const dynExport = planDynamicExport(blocksIn, entities);
+  const blocks = [...blocksIn, ...dynExport.blocks].map((d) => (d.entities.some((e) => e.type === "dimension" || e.type === "mtext") ? { ...d, entities: explodeDimensions(d.entities, blockHost) } : d));
   const scaled = scale !== 1 ? entities.map((e) => scaleEntityKeepingInserts(e, scale)) : entities;
   const blockDefs = blocks.map((d) => (scale !== 1 ? scaleBlockDefinition(d, scale) : d));
   const defByName = new Map(blockDefs.map((d) => [d.name, d]));
@@ -346,6 +349,9 @@ export function entitiesToDxf(entitiesIn: Entity[], insUnits = 0, scale = 1, blo
   const write = (e: Entity): string => {
     if (e.type !== "insert") return entityDxf(e);
     const def = defByName.get(e.block);
+    const dyn = dynExport.stateOf(e);
+    const uDef = dyn ? defByName.get(dyn.name) : undefined;
+    if (uDef && dyn) return insertR12({ ...e, block: dyn.name }, uDef);
     return def ? insertR12(e, def) : ""; // an insert of an unknown block draws nothing
   };
   const blocksSection = blockDefs.length === 0 ? "" : `0\nSECTION\n2\nBLOCKS\n${blockDefs.map((d) => blockR12(d, write)).join("")}0\nENDSEC\n`;

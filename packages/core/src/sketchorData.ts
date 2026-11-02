@@ -17,6 +17,10 @@ export interface EntityXdata {
   id?: string;
   fill?: string;
   construction?: boolean;
+  /** B-25: on an INSERT of an anonymous `*U<n>` block, the dynamic block it is an instance of… */
+  block?: string;
+  /** …and that instance's parameter values. */
+  params?: Record<string, number | string>;
 }
 
 export interface BlockExtras {
@@ -42,15 +46,24 @@ export interface SketchorDocData {
 
 export const SKETCHOR_DICT_KEY = "SKETCHOR_DATA";
 const CHUNK = 1000;
-const TAG = /^(id|fill|construction|name)=([\s\S]*)$/;
+const TAG = /^(id|fill|construction|name|block|params\+?)=([\s\S]*)$/;
+const PARAM_CHUNK = 200;
 
-/** `1001 SKETCHOR` block for one entity, or "" when it has nothing Sketchor-specific. */
-export function entityXdataText(e: { id?: string; name?: string; fill?: string; construction?: boolean }): string {
+/**
+ * `1001 SKETCHOR` block for one entity, or "" when it has nothing Sketchor-specific.
+ * `dynamic` (B-25): the dynamic block an anonymous `*U` INSERT stands for and its values (JSON, split over `params=` / `params+=` lines because one XDATA string holds 250 characters).
+ */
+export function entityXdataText(e: { id?: string; name?: string; fill?: string; construction?: boolean }, dynamic?: { block: string; params: Record<string, number | string> }): string {
   const lines: string[] = [];
   if (e.name) lines.push(e.name);
   if (e.id) lines.push(`id=${e.id}`);
   if (e.fill) lines.push(`fill=${e.fill}`);
   if (e.construction) lines.push("construction=1");
+  if (dynamic) {
+    lines.push(`block=${dynamic.block}`);
+    const json = JSON.stringify(dynamic.params).replace(/[^\x21-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+    for (let i = 0; i < json.length; i += PARAM_CHUNK) lines.push(`${i === 0 ? "params=" : "params+="}${json.slice(i, i + PARAM_CHUNK)}`);
+  }
   if (lines.length === 0) return "";
   return `1001\nSKETCHOR\n` + lines.map((l) => `1000\n${l.replace(/[\r\n]+/g, " ").slice(0, 250)}\n`).join("");
 }
@@ -60,6 +73,7 @@ export function parseEntityXdata(pairs: readonly { code: number; value: string }
   const out: EntityXdata = {};
   const i = pairs.findIndex((p) => p.code === 1001 && p.value.trim() === "SKETCHOR");
   if (i === -1) return out;
+  let paramsJson = "";
   for (let j = i + 1; j < pairs.length && pairs[j].code !== 1001; j++) {
     if (pairs[j].code !== 1000) continue;
     const v = pairs[j].value;
@@ -72,6 +86,21 @@ export function parseEntityXdata(pairs: readonly { code: number; value: string }
     else if (m[1] === "fill") out.fill = m[2];
     else if (m[1] === "construction") out.construction = m[2] === "1";
     else if (m[1] === "name") out.name = m[2];
+    else if (m[1] === "block") out.block = m[2];
+    else if (m[1] === "params") paramsJson = m[2];
+    else if (m[1] === "params+") paramsJson += m[2];
+  }
+  if (paramsJson) {
+    try {
+      const p = JSON.parse(paramsJson) as unknown;
+      if (p && typeof p === "object" && !Array.isArray(p)) {
+        const clean: Record<string, number | string> = {};
+        for (const [k, v] of Object.entries(p as Record<string, unknown>)) if (typeof v === "number" || typeof v === "string") clean[k] = v;
+        out.params = clean;
+      }
+    } catch {
+      /* a damaged record: the instance simply shows its defaults */
+    }
   }
   return out;
 }

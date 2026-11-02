@@ -213,7 +213,7 @@ Tick `[x]` and add a progress-log row as items land. Order = recommended executi
 - [~] B-22 Instance UX (custom properties, grips) (done: Custom section incl. multi-select + Reset block, param grips for linear/polar/xy/rotation/flip. open: visibility/lookup dropdown grips (panel dropdown only), select-similar by param values)
 - [ ] B-23 Shipped dynamic block library
 - [ ] B-24 `contributes.blocks`
-- [ ] B-25 DXF export of dynamic blocks (*U + SKETCHOR XDATA)
+- [x] B-25 DXF export of dynamic blocks (*U + SKETCHOR XDATA) (AC1032 + R12 + SVG; blocks/dynamicExport.ts)
 - [ ] B-26 DXF import of AutoCAD dynamic blocks
 - [ ] B-27 Dynamic block tests
 

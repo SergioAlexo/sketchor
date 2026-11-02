@@ -13,6 +13,7 @@ import type { Declarations, StyleRule } from "./svgStyle";
 import { INHERITED_PROPS, STYLE_PROPS, isBlack, nearestLinetype, paintColor, parseDashArray, parseDeclarations, parseFontSize, parseStyleSheet, parseUserLength } from "./svgStyle";
 import type { BlockDefinition } from "./blocks/types";
 import { attributeTexts, evaluateInsert, insertMatrix } from "./blocks/evaluate";
+import { planDynamicExport } from "./blocks/dynamicExport";
 import { ellipsePointAt, ellipseSweep, isFullEllipse, transformEllipse } from "./ellipse";
 
 /**
@@ -167,7 +168,9 @@ export function entitiesToSvgDocument(entitiesIn: Entity[], optsIn: SvgExportOpt
   const strokeWidth = laser ? 0.01 : (opts.strokeWidth ?? Math.max(0.2, padding / 20));
   const fillOpacity = opts.fillOpacity ?? 0.3;
 
-  const blockDefs = new Map((opts.blocks ?? []).map((d) => [d.name, d] as const));
+  // B-25: a non-default instance of a dynamic block is drawn from an anonymous state block holding what it shows.
+  const dynExport = planDynamicExport(opts.blocks ?? [], entities);
+  const blockDefs = new Map([...(opts.blocks ?? []), ...dynExport.blocks].map((d) => [d.name, d] as const));
   const host = { getRecord: (_t: string, name: string) => blockDefs.get(name), tablesRevision: 0 };
   const flatForBounds = blockDefs.size === 0 ? entities : entities.flatMap((e) => (e.type === "insert" ? evaluateInsert(host, e) : [e]));
   const b = boundsOf(flatForBounds) ?? { minX: 0, minY: 0, maxX: 100, maxY: 100 };
@@ -262,7 +265,7 @@ export function entitiesToSvgDocument(entitiesIn: Entity[], optsIn: SvgExportOpt
   // Draws one entity (in the coordinate frame `toSvg` maps to) into `body`; shared by the layer groups and the block symbols.
   const emitEntity = (e: Entity, toSvg: (p: Point) => Point, body: string[], useSymbols: boolean): void => {
     if (e.type === "insert") {
-      const def = blockDefs.get(e.block);
+      const def = blockDefs.get(dynExport.stateOf(e)?.name ?? e.block);
       if (!def) return;
       usedBlocks.add(def.name);
       const arr = e.array;
