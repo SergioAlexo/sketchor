@@ -1,7 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { LAYOUTS_TABLE, layoutEntities, layoutList, newEntityId, newLayout, uniqueLayoutName, type LayoutRecord } from "@sketchor/core";
+import {
+  LAYOUTS_TABLE,
+  STANDARD_SCALES,
+  boundsOf,
+  layoutEntities,
+  layoutList,
+  modelEntities,
+  newEntityId,
+  newLayout,
+  parseScale,
+  scaleLabel,
+  standardScaleName,
+  uniqueLayoutName,
+  viewportPreset,
+  type LayoutRecord,
+} from "@sketchor/core";
+import { printableRect } from "../viewport/sheetRender";
+import { useTargetViewport } from "./targetViewport";
 import { bus, doc, useApp } from "../state/store";
-import { setActiveLayout, useSpaceState } from "./layoutState";
+import { setActiveLayout, setMspace, useSpaceState } from "./layoutState";
 import { PageSetupDialog } from "./PageSetupDialog";
 
 /**
@@ -146,5 +163,72 @@ function RenameInput({ initial, onDone }: { initial: string; onDone: (value: str
         if (e.key === "Escape") onDone(null);
       }}
     />
+  );
+}
+
+/** L-03: the status-bar controls of a layout: viewport tool and presets, scale, lock and the MSPACE/PSPACE toggle. */
+function ViewportControls({ layout }: { layout: string }) {
+  const vp = useTargetViewport();
+  const space = useSpaceState();
+  const rec = layoutList(doc).find((l) => l.name === layout);
+  const update = (patch: { scale?: number; locked?: boolean }) => {
+    if (!vp) return;
+    const { locked: _l, ...rest } = vp;
+    const next = { ...rest, ...(patch.scale !== undefined ? { scale: patch.scale } : {}), ...((patch.locked ?? vp.locked) ? { locked: true } : {}) };
+    bus.execute({ type: "update-entity", entity: next });
+  };
+  const preset = (n: number) => {
+    if (!rec || n < 1 || n > 4) return;
+    const a = printableRect(rec);
+    const area = { x: a.x + 5, y: a.y + 5, w: Math.max(10, a.w - 10), h: Math.max(10, a.h - 10) };
+    const vps = viewportPreset(n as 1 | 2 | 3 | 4, area, boundsOf(modelEntities(doc)), { space: layout });
+    bus.execute({ type: "batch", commands: vps.map((entity) => ({ type: "add-entity" as const, entity })) });
+  };
+  const current = vp ? (standardScaleName(vp.scale) ?? scaleLabel(vp.scale)) : "";
+  return (
+    <div className="layout-vpbar" data-testid="layout-vpbar">
+      <button className="layout-tab" data-testid="layout-viewport-tool" title="Draw a viewport (rectangle / polygon / from object)" onClick={() => useApp.getState().setTool("viewport")}>
+        Viewport
+      </button>
+      <select className="layout-select" value="" data-testid="layout-vp-preset" title="Tile the sheet with 1-4 viewports" onChange={(e) => preset(Number(e.target.value))}>
+        <option value="">Viewports...</option>
+        {[1, 2, 3, 4].map((n) => (
+          <option key={n} value={n}>{n} viewport{n > 1 ? "s" : ""}</option>
+        ))}
+      </select>
+      {vp && (
+        <>
+          <select
+            className="layout-select"
+            value={current}
+            data-testid="layout-vp-scale"
+            title="Scale of the viewport (paper : model)"
+            disabled={!!vp.locked}
+            onChange={(e) => {
+              if (e.target.value === "custom") {
+                const text = window.prompt("Scale (paper:model), e.g. 1:75", current);
+                const v = text ? parseScale(text) : null;
+                if (v) update({ scale: v });
+              } else {
+                const v = parseScale(e.target.value);
+                if (v) update({ scale: v });
+              }
+            }}
+          >
+            {!standardScaleName(vp.scale) && <option value={current}>{current}</option>}
+            {STANDARD_SCALES.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+            <option value="custom">Custom...</option>
+          </select>
+          <button className={`layout-tab ${vp.locked ? "active" : ""}`} data-testid="layout-vp-lock" title="Lock the viewport's pan/zoom" onClick={() => update({ locked: !vp.locked })}>
+            {vp.locked ? "Locked" : "Lock"}
+          </button>
+          <button className={`layout-tab ${space.mspace ? "active" : ""}`} data-testid="layout-mspace" title="Work on the model through the viewport (double-click inside it) / back to the sheet (double-click outside)" onClick={() => setMspace(space.mspace ? null : vp.id)}>
+            {space.mspace ? "Model (MS)" : "Paper (PS)"}
+          </button>
+        </>
+      )}
+    </div>
   );
 }

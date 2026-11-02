@@ -118,3 +118,4 @@ export * from "./hatch/render";
 export * from "./hatch/hatchDxf";
 export * from "./eps";
 export * from "./showcase";
+export * from "./layouts/viewport";

@@ -73,6 +73,11 @@ const IMAGE_RE = new RegExp(
   String.raw`^image\s+([A-Za-z_]\w*)\s+at\s*\(\s*(${NUM})\s*,\s*(${NUM})\s*\)\s+(${NUM})x(${NUM})(?:\s+rot\s+(${NUM}))?$`,
 );
 
+// L-03: `viewport NAME at (cx, cy) WxH view (mx, my) scale S [in "Layout"]` - a paper-space window (frozen layers, clip polygon, lock and overrides are carried over on edit).
+const VIEWPORT_RE = new RegExp(
+  String.raw`^viewport\s+([A-Za-z_]\w*)\s+at\s*\(\s*(${NUM})\s*,\s*(${NUM})\s*\)\s+(${NUM})x(${NUM})\s+view\s*\(\s*(${NUM})\s*,\s*(${NUM})\s*\)\s+scale\s+(${NUM})(?:\s+in\s+("(?:[^"\\]|\\.)*"))?$`,
+);
+
 function fmt(n: number): string {
   const rounded = Math.round(n * 10000) / 10000;
   return String(Object.is(rounded, -0) ? 0 : rounded);
@@ -91,7 +96,7 @@ export function assignNames(doc: SketchDocument): Map<EntityId, string> {
       used.add(e.name);
     }
   }
-  const counters: Record<Entity["type"], number> = { line: 1, circle: 1, arc: 1, point: 1, ellipse: 1, spline: 1, hatch: 1, insert: 1, polyline: 1, text: 1, image: 1, dimension: 1, mtext: 1 };
+  const counters: Record<Entity["type"], number> = { viewport: 1, line: 1, circle: 1, arc: 1, point: 1, ellipse: 1, spline: 1, hatch: 1, insert: 1, polyline: 1, text: 1, image: 1, dimension: 1, mtext: 1 };
   for (const e of doc.all()) {
     if (names.has(e.id)) continue;
     const prefix = NAME_PREFIX[e.type];
@@ -104,7 +109,7 @@ export function assignNames(doc: SketchDocument): Map<EntityId, string> {
   return names;
 }
 
-const NAME_PREFIX: Record<Entity["type"], string> = { line: "L", circle: "C", arc: "A", point: "P", ellipse: "E", spline: "S", hatch: "H", insert: "I", polyline: "PL", text: "T", image: "IMG", dimension: "D", mtext: "MT" };
+const NAME_PREFIX: Record<Entity["type"], string> = { viewport: "VP", line: "L", circle: "C", arc: "A", point: "P", ellipse: "E", spline: "S", hatch: "H", insert: "I", polyline: "PL", text: "T", image: "IMG", dimension: "D", mtext: "MT" };
 
 /** Next free name for a newly drawn entity (used by the tools). */
 export function nextEntityName(doc: SketchDocument, type: Entity["type"]): string {
@@ -236,6 +241,11 @@ export function toCode(doc: SketchDocument): string {
       );
     } else if (e.type === "dimension") {
       out.push(dimensionLine(name, e));
+    } else if (e.type === "viewport") {
+      out.push(
+        `viewport ${name} at (${fmt(e.center.x)}, ${fmt(e.center.y)}) ${fmt(e.width)}x${fmt(e.height)} view (${fmt(e.viewCenter.x)}, ${fmt(e.viewCenter.y)}) scale ${fmt6(e.scale)}` +
+          (e.space ? ` in ${JSON.stringify(e.space)}` : ""),
+      );
     } else if (e.type === "image") {
       out.push(
         `image ${name} at (${fmt(e.insert.x)}, ${fmt(e.insert.y)}) ${fmt(e.width)}x${fmt(e.height)}` +
@@ -277,6 +287,7 @@ export type ParsedEntity =
   | ParsedInsert
   | { type: "polyline"; name: string; points: { x: number; y: number }[]; closed: boolean }
   | { type: "text"; name: string; at: { x: number; y: number }; text: string; height: number; rotation: number }
+  | { type: "viewport"; name: string; center: { x: number; y: number }; width: number; height: number; viewCenter: { x: number; y: number }; scale: number; space?: string }
   | { type: "image"; name: string; insert: { x: number; y: number }; width: number; height: number; rotation: number }
   | { type: "mtext"; name: string; at: { x: number; y: number }; text: string; height: number; rotation: number; width: number; attachment: number }
   | ParsedDimension;
@@ -530,6 +541,24 @@ export function parseCode(text: string): { entities: ParsedEntity[]; errors: Par
         rotation: match[7] ? (Number(match[7]) * Math.PI) / 180 : 0,
         attachment: match[8] ? Number(match[8]) : 1,
       };
+    } else if ((match = row.match(VIEWPORT_RE))) {
+      const width = Number(match[4]);
+      const height = Number(match[5]);
+      const scale = Number(match[8]);
+      if (width <= 0 || height <= 0 || scale <= 0) {
+        errors.push({ line: lineNo, message: "viewport width/height/scale must be positive" });
+        continue;
+      }
+      parsed = {
+        type: "viewport",
+        name: match[1],
+        center: { x: Number(match[2]), y: Number(match[3]) },
+        width,
+        height,
+        viewCenter: { x: Number(match[6]), y: Number(match[7]) },
+        scale,
+        ...(match[9] ? { space: JSON.parse(match[9]) as string } : {}),
+      };
     } else if ((match = row.match(IMAGE_RE))) {
       const width = Number(match[4]);
       const height = Number(match[5]);
@@ -567,7 +596,7 @@ export function parseCode(text: string): { entities: ParsedEntity[]; errors: Par
     }
 
     if (!parsed) {
-      const known = ["line", "circle", "arc", "point", "ellipse", "spline", "hatch", "insert", "polyline", "text", "mtext", "image", "dimension"];
+      const known = ["line", "circle", "arc", "point", "ellipse", "spline", "hatch", "insert", "polyline", "text", "mtext", "image", "dimension", "viewport"];
       errors.push({
         line: lineNo,
         message: known.includes(keyword)
@@ -588,6 +617,8 @@ export function parseCode(text: string): { entities: ParsedEntity[]; errors: Par
                       ? 'text NAME at (x, y) "content" h HEIGHT [rot DEG]'
                       : keyword === "mtext"
                         ? 'mtext NAME at (x, y) "content" h HEIGHT [w WIDTH] [rot DEG] [attach 1-9]'
+                      : keyword === "viewport"
+                        ? 'viewport NAME at (cx, cy) WIDTHxHEIGHT view (mx, my) scale S [in "Layout"]'
                       : keyword === "image"
                         ? "image NAME at (x, y) WIDTHxHEIGHT [rot DEG]"
                         : "polyline NAME pts (x, y) (x, y) ... [closed]")
@@ -716,6 +747,17 @@ function sameGeometry(existing: Entity, parsed: ParsedEntity): boolean {
       Math.abs(existing.at.y - parsed.at.y) < EPS &&
       Math.abs(existing.height - parsed.height) < EPS &&
       Math.abs(existing.rotation - parsed.rotation) < EPS
+    );
+  }
+  if (existing.type === "viewport" && parsed.type === "viewport") {
+    return (
+      Math.abs(existing.center.x - parsed.center.x) < EPS &&
+      Math.abs(existing.center.y - parsed.center.y) < EPS &&
+      Math.abs(existing.width - parsed.width) < EPS &&
+      Math.abs(existing.height - parsed.height) < EPS &&
+      Math.abs(existing.viewCenter.x - parsed.viewCenter.x) < EPS &&
+      Math.abs(existing.viewCenter.y - parsed.viewCenter.y) < EPS &&
+      Math.abs(existing.scale - parsed.scale) < 1e-6
     );
   }
   if (existing.type === "image" && parsed.type === "image") {
@@ -857,6 +899,19 @@ export function toEntity(parsed: ParsedEntity, id: EntityId, layer?: string, bul
         closed: parsed.closed,
         ...(bulges ? { bulges } : {}),
       };
+    case "viewport":
+      return {
+        id,
+        type: "viewport",
+        name: parsed.name,
+        ...layerProp,
+        ...(parsed.space ? { space: parsed.space } : {}),
+        center: parsed.center,
+        width: parsed.width,
+        height: parsed.height,
+        viewCenter: parsed.viewCenter,
+        scale: parsed.scale,
+      };
     case "image":
       return {
         id,
@@ -945,6 +1000,12 @@ export function diffToCommands(doc: SketchDocument, parsed: ParsedEntity[]): Com
           if (existing.oblique !== undefined) updated.oblique = existing.oblique;
           // D-05: extra leader lines of a multileader are not expressible in one code row.
           if (existing.branches) updated.branches = existing.branches;
+        }
+        if (existing.type === "viewport" && updated.type === "viewport") {
+          // The code row has no word for the clip polygon, lock, frozen layers, overrides, annotation scale or style: keep them.
+          for (const k of ["clip", "locked", "frozenLayers", "layerOverrides", "annotationScale", "visualStyle"] as const) {
+            if (existing[k] !== undefined) (updated as unknown as Record<string, unknown>)[k] = existing[k];
+          }
         }
         if (existing.type === "mtext" && updated.type === "mtext") {
           for (const k of ["style", "lineSpacing", "background"] as const) {

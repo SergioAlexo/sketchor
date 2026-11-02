@@ -38,6 +38,7 @@ import { flattenPolylineToPoints } from "../simplify";
 import { insertKind } from "./insert";
 import { dimensionKind } from "./dimension";
 import { mtextKind } from "./mtext";
+import { viewportKind } from "./viewport";
 import { mapPoint, similarity } from "./affine";
 import { DEFAULT_TESSELLATION_TOL, registerKind, type Affine, type EntityKind, type KindSnap } from "./registry";
 
@@ -377,6 +378,6 @@ const hatchKind: EntityKind<HatchEntity> = {
   },
 };
 
-for (const kind of [lineKind, circleKind, arcKind, pointKind, ellipseKind, splineKind, hatchKind, insertKind, polylineKind, textKind, imageKind, dimensionKind, mtextKind] as EntityKind<never>[]) {
+for (const kind of [lineKind, circleKind, arcKind, pointKind, ellipseKind, splineKind, hatchKind, insertKind, polylineKind, textKind, imageKind, dimensionKind, mtextKind, viewportKind] as EntityKind<never>[]) {
   registerKind(kind as unknown as EntityKind<Entity>);
 }

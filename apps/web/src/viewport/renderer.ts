@@ -19,9 +19,13 @@ import {
   translated,
   drawOrderOf,
   spaceOf,
+  kindBounds,
   type LayoutRecord,
+  type ViewportEntity,
+  viewportOutline,
+  viewportShowsLayer,
 } from "@sketchor/core";
-import { drawSheet } from "./sheetRender";
+import { drawSheet, viewportScreenView } from "./sheetRender";
 import type { MeasureResult } from "../state/store";
 import { gridStep, worldToScreen, type View } from "./view";
 import type { Snap } from "./snapping";
@@ -38,6 +42,10 @@ export interface TransformPreview {
 export interface RenderUiState {
   /** L-02: the layout being shown (paper space), or null/absent for model space. */
   layout?: LayoutRecord | null;
+  /** L-03 MSPACE: the sheet's own (fixed) view while `view` is the entered viewport's model view. */
+  paperView?: View | null;
+  /** L-03 MSPACE: the entered viewport as it is right now (its pan/zoom follows the live view before it is committed). */
+  mspaceViewport?: ViewportEntity | null;
   selection: ReadonlySet<EntityId>;
   /** B-04 edit in place: the surrounding drawing in the edited block's local coordinates, drawn faded behind everything. */
   backdrop?: readonly Entity[] | null;
@@ -141,7 +149,10 @@ export function render(
   ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, width, height);
 
-  if (ui.layout) drawSheet(ctx, view, ui.layout, COLORS.entity);
+  // In a layout the sheet, its own entities and the viewport frames are drawn with the paper view; `view` stays
+  // the view the user is working in (the entered viewport's model view in MSPACE) for previews, snaps and handles.
+  const paperV = ui.layout ? (ui.paperView ?? view) : view;
+  if (ui.layout) drawSheet(ctx, paperV, ui.layout, COLORS.entity);
   else drawGrid(ctx, width, height, view);
 
   if (ui.closedRegions.length > 0) drawClosedRegions(ctx, view, ui.closedRegions);
@@ -159,6 +170,13 @@ export function render(
   textStyleLookup = (name) => doc.getRecord("textStyles", name);
   const ltscale = doc.settings.ltscale ?? 1;
   const layoutName = ui.layout?.name ?? null;
+  if (ui.layout) {
+    for (const vp of doc.all()) {
+      if (vp.type !== "viewport" || vp.space !== layoutName) continue;
+      const live = ui.mspaceViewport && ui.mspaceViewport.id === vp.id ? ui.mspaceViewport : vp;
+      drawViewportContents(ctx, paperV, doc, live, ui, !!ui.paperView && ui.mspaceViewport?.id === vp.id);
+    }
+  }
   // L-01/L-02: each space draws only its own entities (paper entities never show in model space and vice versa).
   const everything = doc.all().filter((e) => (spaceOf(e) ?? null) === layoutName);
   // H-08: lower drawOrder first (stable), so a hatch can sit behind its boundary.
@@ -185,9 +203,9 @@ export function render(
             : dofColour(ui, entity.id) ?? (shown.color ?? COLORS.entity);
     // A locked layer is background, not geometry you are working on.
     if (locked) ctx.globalAlpha = 0.45;
-    if (shown.fill) drawHatch(ctx, view, shown, shown.fill);
-    drawEntity(ctx, view, shown, color, selected || isReference || isHovered ? 2 : 1.5, resolveLinetype(doc, entity), ltscale);
-    if (selected) drawHandles(ctx, view, shown);
+    if (shown.fill) drawHatch(ctx, paperV, shown, shown.fill);
+    drawEntity(ctx, paperV, shown, color, selected || isReference || isHovered ? 2 : 1.5, resolveLinetype(doc, entity), ltscale);
+    if (selected) drawHandles(ctx, paperV, shown);
     ctx.globalAlpha = 1;
   }
 
@@ -226,7 +244,7 @@ export function render(
   // Drawn over the geometry, like a CAD axis icon: geometry frequently runs
   // straight through the origin, and a reference marker hidden underneath it
   // is no use.
-  drawOrigin(ctx, width, height, view);
+  if (!ui.layout) drawOrigin(ctx, width, height, view);
 
   if (ui.pinnedMeasurements.length > 0) {
     ctx.globalAlpha = 0.5;
@@ -249,6 +267,55 @@ export function render(
 
   if (ui.boxSelect) drawBoxSelect(ctx, view, ui.boxSelect);
   if (ui.freeSelect) drawFreeSelect(ctx, view, ui.freeSelect);
+}
+
+/**
+ * L-03: the model as seen through one viewport: clipped to its window, laid
+ * out by `viewportScreenView`, frozen layers skipped, per-layer colour /
+ * linetype overrides applied. `active` (MSPACE) also shows selection and handles.
+ */
+function drawViewportContents(ctx: CanvasRenderingContext2D, paper: View, doc: SketchDocument, vp: ViewportEntity, ui: RenderUiState, active: boolean): void {
+  const mv = viewportScreenView(paper, vp);
+  const outline = viewportOutline(vp).map((p) => worldToScreen(paper, p));
+  ctx.save();
+  ctx.beginPath();
+  outline.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.clip();
+  const ltscale = doc.settings.ltscale ?? 1;
+  const a = worldToScreen(paper, { x: vp.center.x - vp.width / 2, y: vp.center.y + vp.height / 2 });
+  // Culling: the window's model rectangle, via the same screen mapping.
+  const minX = (a.x - mv.ox) / mv.scale;
+  const maxX = (a.x + vp.width * paper.scale - mv.ox) / mv.scale;
+  const maxY = (mv.oy - a.y) / mv.scale;
+  const minY = (mv.oy - (a.y + vp.height * paper.scale)) / mv.scale;
+  for (const e of doc.all()) {
+    if (spaceOf(e)) continue;
+    const layer = layerOf(e);
+    if (ui.hiddenLayers.has(layer) || !viewportShowsLayer(vp, layer)) continue;
+    const bb = kindBounds(e);
+    if (bb && (bb.maxX < minX || bb.minX > maxX || bb.maxY < minY || bb.minY > maxY)) continue;
+    const over = vp.layerOverrides?.[layer];
+    const selected = active && ui.selection.has(e.id);
+    const color = selected ? COLORS.selected : (over?.color ?? e.color ?? COLORS.entity);
+    if (ui.lockedLayers.has(layer)) ctx.globalAlpha = 0.45;
+    if (e.fill) drawHatch(ctx, mv, e, e.fill);
+    drawEntity(ctx, mv, e, color, selected ? 2 : 1.25, over?.linetype ?? resolveLinetype(doc, e), ltscale);
+    if (selected) drawHandles(ctx, mv, e);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+  if (active) {
+    // The entered window gets a heavy border; the rest of the sheet is dimmed by the caller's frame drawing.
+    ctx.save();
+    ctx.beginPath();
+    outline.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.strokeStyle = COLORS.selected;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 /** The lasso loop (closed, tinted) or the fence stroke (open, dashed) as it is drawn. */

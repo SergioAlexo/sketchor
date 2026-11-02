@@ -487,6 +487,47 @@ export interface InsertEntity {
   params?: Record<string, number | string>;
 }
 
+/**
+ * L-03: a paper-space window onto model space. Lives on a layout (`space`),
+ * is measured in paper units (mm), and shows the model around `viewCenter`
+ * at `scale` paper-mm per model-unit. `clip` (paper coordinates) replaces the
+ * rectangle with a polygon; `frozenLayers` hides layers in this window only.
+ * No rotation (a viewport window is axis-aligned on the sheet).
+ */
+export interface ViewportEntity {
+  id: EntityId;
+  type: "viewport";
+  name?: string;
+  /** Layer the border lives on (the viewport frame is not drawn on a non-plotting layer unless the user picks one). */
+  layer?: string;
+  color?: string;
+  linetype?: string;
+  lineweight?: number;
+  construction?: boolean;
+  fill?: undefined;
+  /** The layout this viewport is on (see layouts/types.ts). */
+  space?: string;
+  /** Window centre and size on the sheet, paper units. */
+  center: Point;
+  width: number;
+  height: number;
+  /** Non-rectangular window: a closed polygon in paper coordinates (replaces the rectangle). */
+  clip?: Point[];
+  /** The model point shown at `center`. */
+  viewCenter: Point;
+  /** Paper units per model unit (0.02 = 1:50). */
+  scale: number;
+  /** Pan/zoom inside the window is refused when set. */
+  locked?: boolean;
+  /** Layers hidden in this window. */
+  frozenLayers?: string[];
+  /** Per-layer display overrides in this window (L-03). */
+  layerOverrides?: Record<string, { color?: string; linetype?: string; lineweight?: number }>;
+  /** Annotation scale name this window renders annotative objects at (L-05). */
+  annotationScale?: string;
+  visualStyle?: "wireframe";
+}
+
 /** The dimension forms (D-02). */
 export type DimKind = "linear" | "aligned" | "angular2l" | "angular3p" | "radial" | "diametric" | "arclength" | "ordinate" | "jogged" | "centermark" | "centerline" | "leader" | "tolerance";
 
@@ -608,6 +649,7 @@ export type Entity =
   | SplineEntity
   | HatchEntity
   | InsertEntity
+  | ViewportEntity
   | PolylineEntity
   | TextEntity
   | ImageEntity

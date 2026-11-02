@@ -12,6 +12,7 @@ import { DimTool } from "./dimTools";
 import { LeaderAddTool, LeaderTool } from "./leaderTool";
 import { ArrayPathTool } from "./arrayPathTool";
 import { ToleranceTool } from "./toleranceTool";
+import { ViewportTool } from "./viewportTool";
 import type { Tool } from "./tool";
 
 /**
@@ -71,6 +72,7 @@ const TOOLS: Partial<Record<ToolId, Tool>> = {
   balloon: new LeaderTool("balloon"),
   leaderadd: new LeaderAddTool(),
   tolerance: new ToleranceTool(),
+  viewport: new ViewportTool(),
 };
 
 export function getTool(id: ToolId): Tool | null {

@@ -822,6 +822,9 @@ function placeEntity(
       const { refs: _r, target: _t, targets: _ts, ...rest } = placed as typeof entity;
       return { ...rest, id } as Entity;
     }
+    case "viewport":
+      // Paper-space windows do not belong in blocks; keep it where it is rather than lose it.
+      return { ...entity, id };
     case "image":
       return {
         ...entity,

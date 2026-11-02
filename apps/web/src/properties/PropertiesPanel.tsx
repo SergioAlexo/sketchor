@@ -393,6 +393,30 @@ function Geometry({ entity, unit }: { entity: Entity; unit: DisplayUnit }) {
           <NumberRow label="Oblique" value={entity.oblique ?? 0} suffix="°" testId="prop-text-oblique" onCommit={(v) => update(v ? { ...entity, oblique: v } : stripKey(entity, "oblique"))} />
         </Section>
       );
+    case "viewport":
+      return (
+        <Section title="Viewport">
+          <PointRow label="Centre" p={entity.center} unit={unit} onCommit={(p) => update({ ...entity, center: p })} testId="prop-center" />
+          <LengthRow label="Width" value={entity.width} unit={unit} testId="prop-width" onCommit={(v) => v > 0 && update({ ...entity, width: v })} />
+          <LengthRow label="Height" value={entity.height} unit={unit} testId="prop-height" onCommit={(v) => v > 0 && update({ ...entity, height: v })} />
+          <NumberRow label="Scale (paper:model)" value={entity.scale} testId="prop-vp-scale" onCommit={(v) => v > 0 && update({ ...entity, scale: v })} />
+          <Row label="Locked">
+            <input type="checkbox" checked={!!entity.locked} data-testid="prop-vp-locked" onChange={(ev) => update(ev.target.checked ? { ...entity, locked: true } : (({ locked: _l, ...rest }) => rest)(entity))} />
+          </Row>
+          <Row label="Frozen layers">
+            <input
+              type="text"
+              defaultValue={(entity.frozenLayers ?? []).join(", ")}
+              key={(entity.frozenLayers ?? []).join(",")}
+              data-testid="prop-vp-frozen"
+              onBlur={(ev) => {
+                const names = ev.target.value.split(",").map((n) => n.trim()).filter(Boolean);
+                update(names.length ? { ...entity, frozenLayers: names } : (({ frozenLayers: _f, ...rest }) => rest)(entity));
+              }}
+            />
+          </Row>
+        </Section>
+      );
     case "image":
       return (
         <Section title="Image">

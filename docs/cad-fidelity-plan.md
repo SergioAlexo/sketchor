@@ -220,7 +220,7 @@ Tick `[x]` and add a progress-log row as items land. Order = recommended executi
 **10 · Paper space**
 - [x] L-01 Layout model (entity `space` back-pointer instead of a per-layout id list; add/rename/delete/reorder-layouts, move-to-space; bus.activeSpace stamps new entities; model-space exports skip paper entities)
 - [~] L-02 Layout tabs + page setup — done: Model/Layout tab strip (add, rename, duplicate, move, delete, page setup dialog), sheet render with shadow + printable area, per-space pan/zoom, space-filtered select/snap/render; open: "from template" (L-09), unverified in a live browser
-- [ ] L-03 ViewportEntity + MSPACE/PSPACE
+- [~] L-03 ViewportEntity + MSPACE/PSPACE - done: ViewportEntity kind (rect/polygon/from-object tool `viewport`/`mview`, 1-4 presets), clipped model rendering, MSPACE/PSPACE by double-click + toggle, scale dropdown + lock, VP freeze column in the Layers panel, properties editor, sketch code row; open: layer colour/linetype overrides have no UI (data + render only), viewport rotation (not supported by design), PDF/SVG/DXF export of viewports (L-06/L-07), unverified in a live browser
 - [ ] L-04 Title blocks + fields
 - [ ] L-05 Annotative scale per viewport
 - [ ] L-06 Plot / multi-page PDF per layout

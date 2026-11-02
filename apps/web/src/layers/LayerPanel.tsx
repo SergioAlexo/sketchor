@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { layerOf, DEFAULT_LAYER } from "@sketchor/core";
-import { doc, useApp } from "../state/store";
+import { bus, doc, useApp } from "../state/store";
+import { useTargetViewport } from "../layouts/targetViewport";
 
 /**
  * Layer panel: lists the drawing's layers with visibility and lock
@@ -22,6 +23,7 @@ export function LayerPanel() {
   const flattenLayers = useApp((s) => s.flattenLayers);
   const deleteEmptyLayers = useApp((s) => s.deleteEmptyLayers);
 
+  const vp = useTargetViewport(); // L-03: "VP freeze" column while a layout has a target viewport
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
 
@@ -106,6 +108,23 @@ export function LayerPanel() {
               >
                 {layer.locked ? <LockIcon /> : <UnlockIcon />}
               </button>
+
+              {vp && (
+                <button
+                  className={`layer-eye ${vp.frozenLayers?.includes(layer.name) ? "on" : "off"}`}
+                  title={vp.frozenLayers?.includes(layer.name) ? "Thaw in this viewport" : "Freeze in this viewport only"}
+                  data-testid={`layer-vpfreeze-${layer.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const frozen = new Set(vp.frozenLayers ?? []);
+                    if (!frozen.delete(layer.name)) frozen.add(layer.name);
+                    const { frozenLayers: _drop, ...rest } = vp;
+                    bus.execute({ type: "update-entity", entity: frozen.size ? { ...rest, frozenLayers: [...frozen] } : rest });
+                  }}
+                >
+                  {vp.frozenLayers?.includes(layer.name) ? "F" : "T"}
+                </button>
+              )}
 
               {editing === layer.name ? (
                 <input

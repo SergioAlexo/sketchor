@@ -479,6 +479,7 @@ export type ToolId =
   | "balloon"
   | "leaderadd"
   | "tolerance"
+  | "viewport"
   | "pan"
   | "move"
   | "copy"
@@ -535,6 +536,7 @@ export const TOOL_HINTS: Record<ToolId, string> = {
   dimcenterline: "Centreline: click two lines - the centreline runs midway between them",
   dimcontinue: "Continue dimension: click an existing linear dimension, then each next point - Esc finishes",
   leader: "Leader: click the arrow tip, then the landing point (Alt-click adds a bend) - type text after the command, e.g. leader NOTE 4",
+  viewport: "Viewport (layout tabs only): click two corners - Tab switches to polygon / from-object - the window shows the model at a standard scale (double-click inside to work on the model, outside to return to the sheet)",
   tolerance: "Feature control frame: type the content after the command (tol position *0.5(M) A B, * = diameter, / = next row), then click where it goes",
   leaderadd: "Add leader line: click a leader, then each new arrow tip - Esc finishes",
   balloon: "Balloon: click the part, then where the numbered callout goes (Alt-click adds a bend) - numbers count up by themselves",

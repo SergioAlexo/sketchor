@@ -3,7 +3,7 @@ import { runDimEdit } from "../tools/dimEditCommands";
 import { hatchesTinted } from "./hatchRender";
 import { useEffect, useRef, useState } from "react";
 import { autoConstrainSuppressed, withAutoConstraints } from "../tools/autoConstrain";
-import type { BoxSelectMode, ClosedRegion, Command, Entity, EntityId, LayoutRecord, Point, TextEntity } from "@sketchor/core";
+import type { BoxSelectMode, ClosedRegion, Command, Entity, EntityId, LayoutRecord, Point, TextEntity, ViewportEntity } from "@sketchor/core";
 import {
   applyGrip,
   gripPointRef,
@@ -47,6 +47,8 @@ import {
   linearDimension,
   newGroupId,
   wholeGroupSelected,
+  modelToPaper,
+  pointInViewport,
 } from "@sketchor/core";
 import {
   applyStraighten,
@@ -93,8 +95,8 @@ import { track } from "../metrics/metrics";
 import { CommandBar, type CommandEcho } from "../tools/CommandBar";
 import { useTheme } from "../theme/themeStore";
 import { useMTextUi } from "../mtext/mtextUi";
-import { getActiveLayoutRecord, getSpaceState, inActiveSpace, saveLayoutView, savedLayoutView, useSpaceState } from "../layouts/layoutState";
-import { sheetRect } from "./sheetRender";
+import { getActiveLayoutRecord, getSpaceState, inActiveSpace, saveLayoutView, savedLayoutView, setMspace, useSpaceState } from "../layouts/layoutState";
+import { sheetRect, viewportFromModelView, viewportScreenView } from "./sheetRender";
 
 /**
  * The half-finished states a pan can interrupt. Panning or zooming mid-draw
@@ -270,6 +272,9 @@ function entityLabel(entity: Entity): string {
   return `${entity.name ?? entity.type}${layer === "0" ? "" : ` · ${layer}`}`;
 }
 
+/** The viewport being edited through (MSPACE), kept in step with the component's ref for the module-level hit test. */
+let activeMspaceVp: ViewportEntity | null = null;
+
 function sheetBounds(layout: LayoutRecord): { minX: number; minY: number; maxX: number; maxY: number } {
   const r = sheetRect(layout);
   return { minX: r.x, minY: r.y, maxX: r.x + r.w, maxY: r.y + r.h };
@@ -284,6 +289,8 @@ function hitTest(view: View, world: Point): EntityId | null {
  * selection cycling walks. A plain hit test is just its first element.
  */
 function hitCandidates(view: View, world: Point): EntityId[] {
+  // MSPACE: only what shows through the entered window can be picked (model entities clipped away are invisible).
+  if (activeMspaceVp && !pointInViewport(activeMspaceVp, modelToPaper(activeMspaceVp, world))) return [];
   const tol = 6 / view.scale;
   const found: { id: EntityId; d: number }[] = [];
   for (const e of selectableEntities()) {
@@ -390,11 +397,42 @@ export function Viewport() {
     height: number;
   } | null>(null);
 
+  /**
+   * L-03 MSPACE: while a viewport is entered, `viewRef` is its model view and the sheet stays fixed at `paperViewRef`,
+   * so zooming/panning means changing the viewport's own scale and view centre. Called at the top of every redraw
+   * (every view change ends in one); the change is committed to the document, debounced, as one undoable update.
+   */
+  const syncMspace = () => {
+    const vp = mspaceVpRef.current;
+    const paper = paperViewRef.current;
+    if (!vp || !paper) return;
+    if (vp.locked) {
+      viewRef.current = viewportScreenView(paper, vp);
+      return;
+    }
+    const next = viewportFromModelView(paper, viewRef.current, vp);
+    if (Math.abs(next.scale - vp.scale) < 1e-12 * vp.scale && Math.abs(next.viewCenter.x - vp.viewCenter.x) < 1e-9 && Math.abs(next.viewCenter.y - vp.viewCenter.y) < 1e-9) return;
+    mspaceVpRef.current = next;
+    activeMspaceVp = next;
+    if (mspaceTimerRef.current) clearTimeout(mspaceTimerRef.current);
+    mspaceTimerRef.current = setTimeout(flushMspace, 350);
+  };
+  const flushMspace = () => {
+    if (mspaceTimerRef.current) clearTimeout(mspaceTimerRef.current);
+    mspaceTimerRef.current = null;
+    const live = mspaceVpRef.current;
+    const stored = live ? doc.get(live.id) : null;
+    if (live && stored && stored.type === "viewport" && (stored.scale !== live.scale || stored.viewCenter.x !== live.viewCenter.x || stored.viewCenter.y !== live.viewCenter.y)) {
+      bus.execute({ type: "update-entity", entity: { ...stored, scale: live.scale, viewCenter: live.viewCenter } });
+    }
+  };
+
   const redraw = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    syncMspace();
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
@@ -434,6 +472,8 @@ export function Viewport() {
 
     render(ctx, w, h, viewRef.current, doc, {
       layout: getActiveLayoutRecord(),
+      paperView: mspaceVpRef.current ? paperViewRef.current : null,
+      mspaceViewport: mspaceVpRef.current,
       selection: new Set(state.selection),
       backdrop: blockEditBackdrop(),
       preview,
@@ -703,6 +743,10 @@ export function Viewport() {
   const prevSessionIdRef = useRef(activeSessionId);
   /** L-02: the space the canvas view currently belongs to, so a Model/Layout switch can save and restore pan/zoom per space. */
   const spaceViewRef = useRef<{ session: string; layout: string | null }>({ session: activeSessionId, layout: null });
+  /** MSPACE (L-03): the sheet's fixed view and the live state of the entered viewport; see syncMspace. */
+  const paperViewRef = useRef<View | null>(null);
+  const mspaceVpRef = useRef<ViewportEntity | null>(null);
+  const mspaceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetView = (layout: string, canvas: HTMLCanvasElement): View => {
     const rec = getActiveLayoutRecord();
     return fitToBounds(rec && rec.name === layout ? sheetBounds(rec) : { minX: 0, minY: 0, maxX: 297, maxY: 210 }, canvas.clientWidth, canvas.clientHeight, 0.12);
@@ -712,7 +756,8 @@ export function Viewport() {
   useEffect(() => {
     const prevId = prevSessionIdRef.current;
     if (prevId === activeSessionId) return;
-    if (spaceViewRef.current.layout) saveLayoutView(prevId, spaceViewRef.current.layout, viewRef.current);
+    const outgoingView = paperViewRef.current ?? viewRef.current; // in MSPACE viewRef is the model view; the sheet's is what to keep
+    if (spaceViewRef.current.layout) saveLayoutView(prevId, spaceViewRef.current.layout, outgoingView);
     else setSessionView(prevId, viewRef.current);
     prevSessionIdRef.current = activeSessionId;
 
@@ -730,6 +775,52 @@ export function Viewport() {
     redraw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId]);
+
+  // Entering / leaving a viewport's model space (declared before the layout switch below so a layout change restores the sheet view first).
+  const mspaceId = useSpaceState().mspace;
+  useEffect(() => {
+    if (mspaceId) {
+      const vp = doc.get(mspaceId);
+      if (!vp || vp.type !== "viewport") {
+        setMspace(null);
+        return;
+      }
+      paperViewRef.current = { ...viewRef.current };
+      mspaceVpRef.current = vp;
+      activeMspaceVp = vp;
+      viewRef.current = viewportScreenView(paperViewRef.current, vp);
+      useApp.getState().setZoom(viewRef.current.scale);
+      redraw();
+    }
+    return () => {
+      if (!mspaceVpRef.current) return;
+      flushMspace();
+      if (paperViewRef.current) viewRef.current = paperViewRef.current;
+      paperViewRef.current = null;
+      mspaceVpRef.current = null;
+      activeMspaceVp = null;
+      useApp.getState().setZoom(viewRef.current.scale);
+      redraw();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mspaceId]);
+
+  // The entered viewport changed in the document by someone else (scale dropdown, undo, properties panel): follow it.
+  useEffect(() => {
+    const live = mspaceVpRef.current;
+    const paper = paperViewRef.current;
+    if (!live || !paper || mspaceTimerRef.current) return;
+    const stored = doc.get(live.id);
+    if (!stored || stored.type !== "viewport") return;
+    if (stored.scale !== live.scale || stored.viewCenter.x !== live.viewCenter.x || stored.viewCenter.y !== live.viewCenter.y || stored.locked !== live.locked) {
+      mspaceVpRef.current = stored;
+      activeMspaceVp = stored;
+      viewRef.current = viewportScreenView(paper, stored);
+      useApp.getState().setZoom(viewRef.current.scale);
+      redraw();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision]);
 
   // Model <-> layout switch inside one tab: park this space's pan/zoom, restore (or frame the sheet for) the other.
   const layoutNow = useSpaceState().layout;
@@ -2079,6 +2170,25 @@ export function Viewport() {
       app.setHighlightedConstraint(null);
       redraw();
       return;
+    }
+
+    // L-03: double-click inside a viewport window enters its model space (MSPACE); outside the entered window returns to the sheet.
+    if (app.tool === "select" && getSpaceState().layout) {
+      const st = getSpaceState();
+      if (st.mspace) {
+        const paper = paperViewRef.current;
+        const vp = mspaceVpRef.current;
+        if (paper && vp && !pointInViewport(vp, screenToWorld(paper, screen))) {
+          setMspace(null);
+          return;
+        }
+      } else {
+        const here = [...doc.all()].reverse().find((v): v is ViewportEntity => v.type === "viewport" && v.space === st.layout && pointInViewport(v, world));
+        if (here) {
+          setMspace(here.id);
+          return;
+        }
+      }
     }
 
     // A tool's own double-click (finishing a polyline) takes priority over the zoom-to-fit / enter-group behavior below.

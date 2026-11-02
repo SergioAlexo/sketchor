@@ -107,7 +107,8 @@ export function pasteCommands(payload: ClipboardPayload, offset: Point, into?: S
   for (const e of payload.entities) idMap.set(e.id, newEntityId());
   for (const e of payload.entities) {
     const id = idMap.get(e.id)!;
-    const { name: _dropped, ...rest } = e;
+    // A paste lands in the space being drawn in (the bus stamps it), not the space it was copied from.
+    const { name: _dropped, space: _space, ...rest } = e as Entity & { space?: string };
     const moved = translated(rewireDimension({ ...rest, id } as Entity, idMap), offset.x, offset.y);
     commands.push({ type: "add-entity", entity: moved });
     ids.push(id);

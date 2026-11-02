@@ -28,6 +28,7 @@ const TYPE_LABELS: Record<Entity["type"], string> = {
   image: "Images",
   dimension: "Dimensions",
   mtext: "Multiline text",
+  viewport: "Viewports",
 };
 
 type Tri = "any" | "yes" | "no";

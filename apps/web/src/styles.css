@@ -3443,6 +3443,8 @@ kbd.shortcut-key-fixed {
 .layout-tab:hover { background: rgba(255, 255, 255, 0.04); }
 .layout-tab.active { background: var(--bg); color: var(--text); border-color: var(--border); }
 .layout-tab.setup { margin-left: auto; font-size: 11px; }
+.layout-vpbar { display: flex; align-items: center; gap: 4px; margin-left: 16px; }
+.layout-select { font-size: 11.5px; padding: 2px 4px; }
 .layout-rename { font-size: 12px; width: 110px; }
 .layout-menu {
   position: fixed;
