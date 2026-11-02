@@ -1,4 +1,5 @@
 import type { Constraint } from "../constraints";
+import { drivingConstraints } from "../dimensions/driving";
 import type { Entity, EntityId, InsertEntity } from "../entities";
 import type { Point } from "../geometry";
 import { kindBounds, kindTransform, type Affine } from "../kinds/registry";
@@ -154,6 +155,13 @@ export function dynamicSpecOf(def: BlockDefinition | undefined): DynamicSpec | u
 const EPS = 1e-9;
 const dist = (a: Point, b: Point): number => Math.hypot(b.x - a.x, b.y - a.y);
 
+/** The definition's constraints: the stored ones plus those its driving dimensions stand for (D-02b). */
+export function blockConstraints(def: BlockDefinition): Constraint[] {
+  const byId = new Map(def.entities.map((e) => [e.id, e] as const));
+  const derived = def.entities.some((e) => e.type === "dimension" && e.driving) ? drivingConstraints(def.entities, (id) => byId.get(id)) : [];
+  return [...(def.constraints ?? []), ...derived];
+}
+
 function constraintValue(c: Constraint | undefined): number | undefined {
   return c && (c.type === "distance" || c.type === "radius" || c.type === "angle") ? c.value : undefined;
 }
@@ -227,7 +235,7 @@ export function defaultParamValues(def: BlockDefinition, spec: DynamicSpec): Par
         break;
       }
       case "dimension": {
-        const v = constraintValue(def.constraints?.find((c) => c.id === p.constraintId));
+        const v = constraintValue(blockConstraints(def).find((c) => c.id === p.constraintId));
         if (v !== undefined) out[p.name] = snapToValueSet(v, p.values);
         break;
       }
@@ -490,7 +498,7 @@ function applyActions(body: Entity[], spec: DynamicSpec, values: ParamValues, de
 function constraintsWith(def: BlockDefinition, spec: DynamicSpec, values: ParamValues): Constraint[] {
   const byId = new Map<string, number>();
   for (const p of spec.params) if (p.kind === "dimension" && typeof values[p.name] === "number") byId.set(p.constraintId, values[p.name] as number);
-  return (def.constraints ?? []).map((c) => {
+  return blockConstraints(def).map((c) => {
     const v = byId.get(c.id);
     if (v === undefined || !(c.type === "distance" || c.type === "radius" || c.type === "angle")) return c;
     const { expression: _e, ...rest } = c as Constraint & { expression?: string };
@@ -519,7 +527,7 @@ export function evaluateDynamic(def: BlockDefinition, values?: ParamValues): Ent
   if (hit) return hit;
   const defaults = defaultParamValues(def, spec);
   let body = def.entities;
-  if (spec.params.some((p) => p.kind === "dimension") && (def.constraints?.length ?? 0) > 0) {
+  if (spec.params.some((p) => p.kind === "dimension") && blockConstraints(def).length > 0) {
     const r = solveSketch(def.entities, constraintsWith(def, spec, resolved));
     if (r.updates.length > 0) {
       const upd = new Map(r.updates.map((e) => [e.id, e] as const));

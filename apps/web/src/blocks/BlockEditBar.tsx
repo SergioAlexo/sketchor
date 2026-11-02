@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DynamicPanel } from "./DynamicPanel";
 import { activeBlockEdit, discardBlockEdit, saveBlockEdit, toggleBlockEditContext, useApp } from "../state/store";
 
 /**
@@ -10,6 +11,7 @@ export function BlockEditBar() {
   const name = useApp((s) => s.editingBlock);
   const setTool = useApp((s) => s.setTool);
   const [error, setError] = useState("");
+  const [authoring, setAuthoring] = useState(false);
   useApp((st) => st.revision);
   if (!name) return null;
   const be = activeBlockEdit();
@@ -19,11 +21,13 @@ export function BlockEditBar() {
       <button className="btn" data-testid="block-edit-save" onClick={() => setError(saveBlockEdit() ?? "")}>Save</button>
       <button className="btn ghost" data-testid="block-edit-discard" onClick={() => discardBlockEdit()}>Discard</button>
       <button className="btn ghost" data-testid="block-edit-base" onClick={() => setTool("blockbase")}>Base point</button>
+      <button className="btn ghost" data-testid="block-edit-authoring" title="Dynamic block authoring: parameters, actions, visibility states, lookup tables, test" onClick={() => setAuthoring((a) => !a)}>Authoring</button>
       {be?.contextInsert && (
         <button className="btn ghost" data-testid="block-edit-context" title="Show the rest of the drawing, faded" onClick={() => toggleBlockEditContext()}>
           {be.showContext === false ? "Show context" : "Hide context"}
         </button>
       )}
+      {authoring && <DynamicPanel onClose={() => setAuthoring(false)} />}
       {error && <span className="straighten-hint" data-testid="block-edit-error">{error}</span>}
     </div>
   );

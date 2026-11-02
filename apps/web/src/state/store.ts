@@ -1,7 +1,7 @@
 import type { TextStyle } from "@sketchor/core";
 import { create } from "zustand";
 import { modeDefaults } from "../tools/drawingMode";
-import { newEntityId, type Group, type Constraint, type TableRecord, scaleBlockDefinition, scaleEntityKeepingInserts, setActiveBlocks, setActiveDimHost, blockEditChanges, blockEditDocument, getBlock, inPlaceBackdrop, instancesOf, type AttributeDef, type BlockDefinition } from "@sketchor/core";
+import { newEntityId, type Group, type Constraint, type TableRecord, scaleBlockDefinition, scaleEntityKeepingInserts, setActiveBlocks, setActiveDimHost, blockEditChanges, blockEditDocument, getBlock, inPlaceBackdrop, instancesOf, type AttributeDef, type BlockDefinition, type DynamicSpec, dynamicSpecOf, specForSave } from "@sketchor/core";
 import type { Model3D } from "../model3d/types";
 import {
   displayUnitToDxfCode,
@@ -117,6 +117,8 @@ export interface BlockEditSession {
   original: BlockDefinition;
   basePoint: { x: number; y: number };
   attributeDefs: AttributeDef[];
+  /** B-21: the dynamic spec being authored (undefined = static block). */
+  dynamic?: DynamicSpec;
   unbind: () => void;
   /** Edit in place (REFEDIT): the instance the editor was opened from; the rest of the drawing is drawn faded behind the definition. */
   contextInsert?: string;
@@ -1613,7 +1615,7 @@ function liveSyncBlock(editor: DocSession): void {
   const parent = be && sessions.find((x) => x.id === be.parentId);
   if (!be || !parent) return;
   const cur = getBlock(parent.doc, be.name) ?? be.original;
-  parent.doc._putRecord("blocks", { ...cur, ...blockEditChanges(editor.doc), basePoint: be.basePoint, attributeDefs: be.attributeDefs });
+  parent.doc._putRecord("blocks", { ...cur, ...blockEditChanges(editor.doc), basePoint: be.basePoint, attributeDefs: be.attributeDefs, dynamic: specForSave(be.dynamic) });
   parent.bus.notify();
 }
 
@@ -1668,7 +1670,7 @@ export function beginBlockEdit(name: string, contextInsert?: string): string | n
     activeLayer: parent.activeLayer,
     view: null,
     displayUnit: parent.displayUnit,
-    blockEdit: { parentId: parent.id, name, original: def, basePoint: { ...def.basePoint }, attributeDefs: def.attributeDefs.map((a) => ({ ...a })), unbind: () => {}, ...(contextInsert ?? instancesOf(parent.doc, name)[0] ? { contextInsert: contextInsert ?? instancesOf(parent.doc, name)[0], showContext: true } : {}) },
+    blockEdit: { parentId: parent.id, name, original: def, basePoint: { ...def.basePoint }, attributeDefs: def.attributeDefs.map((a) => ({ ...a })), ...(dynamicSpecOf(def) ? { dynamic: structuredClone(dynamicSpecOf(def)!) } : {}), unbind: () => {}, ...(contextInsert ?? instancesOf(parent.doc, name)[0] ? { contextInsert: contextInsert ?? instancesOf(parent.doc, name)[0], showContext: true } : {}) },
   };
   s.blockEdit!.unbind = s.bus.onChange(() => liveSyncBlock(s));
   sessions.push(s);
@@ -1721,7 +1723,7 @@ export function saveBlockEdit(): string | null {
     finish();
     return null;
   }
-  const changes = { ...blockEditChanges(editor.doc), basePoint: be.basePoint, attributeDefs: be.attributeDefs };
+  const changes = { ...blockEditChanges(editor.doc), basePoint: be.basePoint, attributeDefs: be.attributeDefs, dynamic: specForSave(be.dynamic) };
   parent.doc._putRecord("blocks", be.original); // the command's inverse must restore the pre-edit body
   parent.bus.execute({ type: "update-block", name: be.name, changes });
   const saved = getBlock(parent.doc, be.name);
@@ -1761,6 +1763,15 @@ export function setBlockEditAttributes(defs: AttributeDef[]): void {
   const editor = activeSession();
   if (!editor.blockEdit) return;
   editor.blockEdit.attributeDefs = defs;
+  liveSyncBlock(editor);
+  useApp.setState((s) => ({ sessionsVersion: s.sessionsVersion + 1 }));
+}
+
+/** Replaces the edited block's dynamic spec (B-21) and mirrors it live. */
+export function setBlockEditDynamic(spec: DynamicSpec | undefined): void {
+  const editor = activeSession();
+  if (!editor.blockEdit) return;
+  editor.blockEdit.dynamic = spec;
   liveSyncBlock(editor);
   useApp.setState((s) => ({ sessionsVersion: s.sessionsVersion + 1 }));
 }
