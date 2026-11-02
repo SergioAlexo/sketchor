@@ -166,6 +166,8 @@ export const TOOL_ALIASES: Record<string, ToolId> = {
   ma: "match",
   match: "match",
   div: "divide",
+  arraypath: "arraypath",
+  arpath: "arraypath",
   b: "block",
   bbase: "blockbase",
   i: "insert",

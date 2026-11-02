@@ -270,7 +270,7 @@ These keep their original IDs; the full spec for each is in the named doc. Tick 
 - [x] T-21 Parallel snap + apparent intersection
 - [ ] T-27 Multifunction grip menu (hover a vertex grip → stretch / add vertex / remove vertex / convert to arc)
 - [x] T-29 Zoom selected
-- [ ] T-35 Array along a path (extends `pattern.ts`)
+- [x] T-35 Array along a path (extends `pattern.ts`)
 
 *Polyline + nest fixes — `docs/polyline-and-nest-fixes-plan.md`*
 - [ ] NF-03b Canvas markers for open contour ends (needs an additive host-API capability for plugin overlays, e.g. `ui.highlight`; bump `HOST_API_VERSION` minor)

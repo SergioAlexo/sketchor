@@ -68,6 +68,11 @@ describe("parseCommand", () => {
     expect(parseCommand("gdt flatness 0.05")).toEqual({ kind: "tool", tool: "tolerance", argument: "flatness 0.05" });
   });
 
+  it("parses array along path with its typed layout (T-35)", () => {
+    expect(parseCommand("arraypath")).toEqual({ kind: "tool", tool: "arraypath", argument: null });
+    expect(parseCommand("arraypath 8 noalign")).toEqual({ kind: "tool", tool: "arraypath", argument: "8 noalign" });
+  });
+
   it("parses simplify (P-03)", () => {
     expect(parseCommand("simplify")).toEqual({ kind: "app", id: "simplify" });
   });
@@ -78,7 +83,7 @@ describe("the alias tables", () => {
     const known = new Set([
       "select", "line", "polyline", "rectangle", "circle", "arc", "ellipse", "spline", "splinedit", "polygon", "slot", "point", "image",
       "measure", "straighten", "fill", "text", "mtext", "dim", "dimlinear", "dimaligned", "dimangular", "dimradial", "dimdiametric", "dimarc", "dimordinate", "dimjogged", "dimbaseline", "dimcontinue", "dimcenter", "dimcenterline", "qdim", "leader", "balloon", "leaderadd", "tolerance", "pan", "move", "copy", "rotate", "scale", "mirror",
-      "trim", "split", "fillet", "chamfer", "offset", "zoom", "divide", "align", "lengthen", "match", "stretch", "block", "blockbase", "insert", "attdef",
+      "trim", "split", "fillet", "chamfer", "offset", "zoom", "divide", "arraypath", "align", "lengthen", "match", "stretch", "block", "blockbase", "insert", "attdef",
     ]);
     for (const [alias, tool] of Object.entries(TOOL_ALIASES)) {
       expect(known.has(tool), `${alias} -> ${tool}`).toBe(true);

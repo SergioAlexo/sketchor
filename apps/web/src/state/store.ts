@@ -492,6 +492,7 @@ export type ToolId =
   | "offset"
   | "zoom"
   | "divide"
+  | "arraypath"
   | "align"
   | "lengthen"
   | "match"
@@ -550,6 +551,7 @@ export const TOOL_HINTS: Record<ToolId, string> = {
   chamfer: "Type a distance, then click two lines on the halves to keep - the corner is bevelled at that distance along each",
   offset: "Type the distance, click a line, arc, circle or polyline, then click the side the parallel copy goes on",
   zoom: "Click two corners of the area to zoom into - Shift+Z goes back to the previous view",
+  arraypath: "Array along path: select the objects, then click the path - type a count (arraypath 8) or a spacing (arraypath 25mm) first; words: align / noalign, keep / replace",
   divide: "Type the number of parts (or a spacing with a unit, e.g. 25mm), then click a line, arc, circle or polyline - point entities mark the divisions",
   align: "Select, then click a source point and where it goes, a second source point and where it goes - the selection moves and rotates to match (Ctrl-click the last point to scale too)",
   lengthen: "Type +5 / -5 (change), 40 (new total length) or 150% - then click a line or arc near the end to change",

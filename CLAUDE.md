@@ -606,7 +606,10 @@ Geometry the editing tools stand on, all in `packages/core` and tested:
 (signed left-offset per curve + re-joining; the join heuristics — drop
 inverted legs, drop anti-parallel slot walls, bridge collinear seams —
 are the 95 % case, not a full self-intersection cleanup). Tools in
-`tools/editTools.ts` only pick and commit `delete + add` batches.
+`tools/editTools.ts` only pick and commit `delete + add` batches. T-35: `pattern.ts`
+`pathPatternCommands` arrays a selection along a path (tool `arraypath`,
+`tools/arrayPathTool.ts`); `PathPattern` is deliberately not in the `PatternSpec`
+union the pattern plugin mirrors.
 
 Rules for a new tool (roadmap T-00):
 1. Geometry math is a pure function in `packages/core` with a test

@@ -1,6 +1,7 @@
 import type { Entity, EntityId } from "./entities";
-import { newEntityId, transformed, translated } from "./entities";
-import { rotatePoint, type Point } from "./geometry";
+import { centroidOfEntities, newEntityId, transformed, translated } from "./entities";
+import { pathOf, type Path } from "./intersect";
+import { dist, rotatePoint, type Point } from "./geometry";
 import { kindBounds, kindTransform } from "./kinds/registry";
 import type { Command } from "./commands";
 import type { SketchDocument } from "./document";
@@ -125,4 +126,141 @@ function centerOf(entity: Entity): Point {
       return b ? { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 } : { x: 0, y: 0 };
     }
   }
+}
+
+/* --------------------------- array along a path --------------------------- */
+
+/**
+ * T-35: array along a path (AutoCAD ARRAYPATH). Copies of the selection are
+ * placed at stations along another entity — a line, arc, circle, polyline,
+ * ellipse or spline — either `count` of them spread over the whole path
+ * ("divide") or one every `spacing` from the start ("measure"). The
+ * selection's base point (default: its centroid) rides the path; with `align`
+ * each copy also turns by how far the path's direction has turned since the
+ * first station, so a part drawn in place at the path's start keeps its
+ * orientation relative to the curve.
+ *
+ * It is not part of {@link PatternSpec}: the pattern plugin mirrors that union
+ * over the public API and a third member would break its exhaustive layout.
+ * The result is the same kind of thing as the other patterns — independent
+ * `add-entity` copies, one undo step; the originals stay unless
+ * `replaceSource`, which deletes them (AutoCAD's array consumes the source).
+ */
+export interface PathPattern {
+  /** The entity the copies follow. */
+  path: EntityId;
+  /** `count`: that many stations over the whole path; `spacing`: one every `spacing` from the start. */
+  mode: "count" | "spacing";
+  /** Total stations (count mode); minimum 1. */
+  count: number;
+  /** Centre-to-centre distance along the path (spacing mode); must be positive. */
+  spacing: number;
+  /** Rotate the copies to follow the path's direction. */
+  align: boolean;
+  /** Distance along the path where the first station sits (default 0). */
+  startOffset?: number;
+  /** The point of the selection that rides the path (default: the selection's centroid). */
+  basePoint?: Point;
+  /** Delete the originals after copying. */
+  replaceSource?: boolean;
+}
+
+/** Stations are capped so a tiny spacing on a long path cannot freeze the app. */
+export const MAX_PATH_STATIONS = 10000;
+
+export interface PathStation {
+  point: Point;
+  /** Direction of travel at the station, radians. */
+  angle: number;
+}
+
+/** Total length of a path of curves, and a lookup from distance to point + direction. */
+function pathFrames(path: Path): { length: number; at: (s: number) => PathStation } | null {
+  const lengths = path.curves.map((c) => (c.kind === "segment" ? dist(c.a, c.b) : c.radius * arcSweepMagnitude(c)));
+  const length = lengths.reduce((a, b) => a + b, 0);
+  if (!(length > 1e-12)) return null;
+  const at = (s: number): PathStation => {
+    let target = Math.max(0, Math.min(length, s));
+    for (let i = 0; i < path.curves.length; i++) {
+      const last = i === path.curves.length - 1;
+      if (target < lengths[i] - 1e-12 || last) {
+        const c = path.curves[i];
+        const t = lengths[i] > 0 ? Math.max(0, Math.min(1, target / lengths[i])) : 0;
+        if (c.kind === "segment") {
+          return { point: { x: c.a.x + (c.b.x - c.a.x) * t, y: c.a.y + (c.b.y - c.a.y) * t }, angle: Math.atan2(c.b.y - c.a.y, c.b.x - c.a.x) };
+        }
+        const dir = c.ccw || c.full ? 1 : -1;
+        const a = c.startAngle + dir * arcSweepMagnitude(c) * t;
+        return { point: { x: c.center.x + c.radius * Math.cos(a), y: c.center.y + c.radius * Math.sin(a) }, angle: a + (dir * Math.PI) / 2 };
+      }
+      target -= lengths[i];
+    }
+    /* unreachable: the last curve always answers */
+    return { point: { x: 0, y: 0 }, angle: 0 };
+  };
+  return { length, at };
+}
+
+function arcSweepMagnitude(c: Extract<Path["curves"][number], { kind: "arc" }>): number {
+  if (c.full) return Math.PI * 2;
+  const raw = c.ccw ? c.endAngle - c.startAngle : c.startAngle - c.endAngle;
+  const s = ((raw % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  return s === 0 ? Math.PI * 2 : s;
+}
+
+/** The stations a spec puts on `path` (empty for an unusable path or spec). */
+export function pathPatternStations(path: Path, spec: Pick<PathPattern, "mode" | "count" | "spacing" | "startOffset">): PathStation[] {
+  const frames = pathFrames(path);
+  if (!frames) return [];
+  const offset = Math.max(0, Math.min(frames.length, spec.startOffset ?? 0));
+  const usable = frames.length - offset;
+  const distances: number[] = [];
+  if (spec.mode === "count") {
+    const n = Math.min(MAX_PATH_STATIONS, Math.max(1, Math.floor(spec.count)));
+    // An open path spans first-to-last inclusive; a closed one must not stack a copy on the start.
+    const step = n === 1 ? 0 : path.closed ? usable / n : usable / (n - 1);
+    for (let k = 0; k < n; k++) distances.push(offset + step * k);
+  } else {
+    if (!(spec.spacing > 0)) return [];
+    for (let k = 0; k < MAX_PATH_STATIONS; k++) {
+      const s = offset + k * spec.spacing;
+      if (path.closed ? s >= frames.length - 1e-9 : s > frames.length + 1e-9) break;
+      distances.push(s);
+    }
+  }
+  return distances.map((s) => frames.at(s));
+}
+
+/** Entities an array along the path would add for `sourceCount` selected entities (0 when the path is unusable). */
+export function pathPatternCopyCount(doc: SketchDocument, spec: PathPattern, sourceCount: number): number {
+  const target = doc.get(spec.path);
+  const p = target ? pathOf(target) : null;
+  return p ? pathPatternStations(p, spec).length * sourceCount : 0;
+}
+
+/**
+ * The commands that array `ids` along `spec.path`. Empty when the path is
+ * missing or has no stroke, the spec makes no station, or nothing is selected
+ * (the path itself is never one of its own sources).
+ */
+export function pathPatternCommands(doc: SketchDocument, ids: EntityId[], spec: PathPattern): Command[] {
+  const target = doc.get(spec.path);
+  const path = target ? pathOf(target) : null;
+  if (!path) return [];
+  const sources = ids.filter((id) => id !== spec.path).map((id) => doc.get(id)).filter((e): e is Entity => !!e);
+  if (sources.length === 0) return [];
+  const stations = pathPatternStations(path, spec);
+  if (stations.length === 0) return [];
+
+  const base = spec.basePoint ?? centroidOfEntities(sources);
+  const copies: Entity[] = [];
+  for (const st of stations) {
+    const turn = spec.align ? st.angle - stations[0].angle : 0;
+    for (const source of sources) {
+      copies.push({ ...transformed(source, base, st.point.x - base.x, st.point.y - base.y, turn, 1), id: newEntityId(), name: undefined });
+    }
+  }
+  const commands: Command[] = copies.map((entity) => ({ type: "add-entity", entity }) as Command);
+  if (spec.replaceSource) commands.push({ type: "delete-entities", ids: sources.map((s) => s.id) });
+  return commands;
 }

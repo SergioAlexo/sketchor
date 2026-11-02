@@ -10,6 +10,7 @@ import { SplineEditTool } from "./splineEditTool";
 import { CopyTool, MirrorTool, MoveTool, RotateTool, ScaleTool } from "./modifyTools";
 import { DimTool } from "./dimTools";
 import { LeaderAddTool, LeaderTool } from "./leaderTool";
+import { ArrayPathTool } from "./arrayPathTool";
 import { ToleranceTool } from "./toleranceTool";
 import type { Tool } from "./tool";
 
@@ -42,6 +43,7 @@ const TOOLS: Partial<Record<ToolId, Tool>> = {
   offset: new OffsetTool(),
   zoom: new ZoomWindowTool(),
   divide: new DivideTool(),
+  arraypath: new ArrayPathTool(),
   align: new AlignTool(),
   lengthen: new LengthenTool(),
   match: new MatchTool(),
