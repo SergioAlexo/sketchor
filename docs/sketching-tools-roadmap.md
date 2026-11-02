@@ -9,6 +9,7 @@ Status as of 2026-09-11 (`main` @ v0.14.4).
 ### Progress log
 
 | Date | Items | Notes |
+| 2026-11-02 | **T-16** fence trim | `packages/core/src/trimFence.ts` (tested): `trimByFence` applies `trimAt` at every crossing of the stroke with an entity (in stroke order, each against the original drawing as cutters). Framework gets an optional `Tool.fence(ctx, path)`: a press-drag with such a tool draws the fence and hands it over on release (a click is still a pick; Shift still extends). Trim tool implements it. |
 | 2026-11-02 | **T-15** through-point + round gap | `offsetThroughPoint` and an `OffsetGap` ("extend"/"round", AutoCAD OFFSETGAPTYPE) argument on `offsetEntity`/`offsetPath`: round keeps raw legs at outer corners and joins them with an arc about the original vertex (tested on a rectangle). Offset tool: Tab toggles distance/through, Shift+Tab toggles round/extend corners. |
 | 2026-11-02 | **T-17** (arcs/circles) | Core was already `filletCurves` (C-08, nearest-to-picks solution). New: `filletCurveConstraints` (associative.ts) — T-46 coincident + tangent (+ radius) for every line/arc/circle pair (point-on-curve on a circle), wired into the Fillet tool; solver test confirms they are satisfied. Chamfer stays lines-only. |
 |---|---|---|
@@ -257,7 +258,7 @@ Distance (typed) or **through point**; then click entities, side by cursor; repe
 - polyline → offset each segment (line or bulge arc), then join consecutive offsets: intersect adjacent line/line, insert a bulge arc at convex corners (AutoCAD `OFFSETGAPTYPE=1` behaviour is round; 0 = extend to intersection — offer both, default extend), and **drop segments that invert** (this is the hard part — a simple "remove segments whose direction flipped + re-intersect neighbours" pass covers 95 % of real outlines). Tests on a rectangle, a rounded rectangle, a concave L-shape, and a closed outline where inner offset collapses a short edge.
 - Closed polyline result stays closed. Layer/colour copied from source.
 
-### T-16 · Trim / Extend / Split — **P0, L** — 🟡 2026-09-21 (click trim, Shift extend, split; fence drag open)
+### T-16 · Trim / Extend / Split — **P0, L** — ✅ 2026-11-02
 
 **Ref:** AutoCAD 2021+ *quick trim* mode (no boundary selection — just click or drag across the pieces to remove) plus Shift = extend; Onshape `Split`.
 

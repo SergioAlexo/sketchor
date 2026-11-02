@@ -263,7 +263,7 @@ These keep their original IDs; the full spec for each is in the named doc. Tick 
 - [ ] T-00 Migrate the legacy tools (select, measure, text, image, fill, straighten, dim, pan) out of `Viewport.tsx`'s switch onto the `tools/` framework; delete their `interaction` kinds. Do this **before** C-05/C-06, B-04, H-04, D-02c add more tools.
 - [ ] T-08 Post-commit quick-edit box (edit the length/radius just drawn) — becomes a driving dimension once D-02b lands; build it on D-02b if that's done first
 - [x] T-15 Offset "through point" mode + round-gap option (`OFFSETGAPTYPE`)
-- [ ] T-16 Trim / extend by fence drag
+- [x] T-16 Trim / extend by fence drag
 - [~] T-17 Fillet / chamfer between arcs and circles (and line–arc) — fillet done incl. T-46 constraints; open: chamfer between arcs
 - [ ] T-21 Parallel snap + apparent intersection
 - [ ] T-27 Multifunction grip menu (hover a vertex grip → stretch / add vertex / remove vertex / convert to arc)

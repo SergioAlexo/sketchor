@@ -25,6 +25,7 @@ import {
   splitAt,
   trimAt,
   trimHatch,
+  trimByFence,
 } from "@sketchor/core";
 import { hiddenLayerSet } from "../state/store";
 import { associativeOn } from "./autoConstrain";
@@ -107,7 +108,7 @@ export class TrimTool implements Tool {
   private message: string | null = null;
 
   prompt(): string {
-    return this.message ?? "Trim: click the piece to remove (everything visible cuts) — Shift-click near an end to extend it instead";
+    return this.message ?? "Trim: click or drag a stroke across the pieces to remove (everything visible cuts) — Shift-click near an end to extend it instead";
   }
   busy(): boolean {
     return false;
@@ -117,6 +118,22 @@ export class TrimTool implements Tool {
   }
   cancel(): void {
     this.message = null;
+  }
+
+  /** T-16: drag a stroke across the pieces to remove; each crossed piece is trimmed against the original drawing. */
+  fence(ctx: ToolContext, path: Point[]): void {
+    this.message = null;
+    const r = trimByFence(visible(ctx), path);
+    if (!r) {
+      this.message = "The stroke didn't cross anything that a cutting edge bounds — drag across the pieces to remove";
+      return;
+    }
+    const commands: Command[] = [{ type: "delete-entities", ids: r.remove }];
+    for (const piece of r.add) {
+      const { name: _dropped, ...rest } = piece;
+      commands.push({ type: "add-entity", entity: { ...rest, id: newEntityId() } as Entity });
+    }
+    ctx.commit(commands);
   }
 
   pick(ctx: ToolContext, p: Pick): void {

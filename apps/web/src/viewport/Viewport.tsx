@@ -143,7 +143,13 @@ type Interaction =
    * box) or, with the fence modifier held, as a **fence** — an open stroke
    * that takes everything it crosses.
    */
-  | { kind: "free-select"; startScreen: Point; points: Point[]; additive: boolean; fence: boolean };
+  | { kind: "free-select"; startScreen: Point; points: Point[]; additive: boolean; fence: boolean }
+  /**
+   * A press with a fence-capable framework tool (trim, T-16): released after
+   * a drag it is the tool's fence stroke, released near where it started it
+   * is the ordinary click the tool would have got on press (`click`).
+   */
+  | { kind: "tool-fence"; startScreen: Point; points: Point[]; click: Pick; snapPoint: Point };
 
 const DRAW_KINDS = ["measure", "dim"] as const;
 
@@ -457,7 +463,9 @@ export function Viewport() {
               kind: interaction.fence ? ("fence" as const) : ("lasso" as const),
               mode: freeSelectMode(interaction.points),
             }
-          : null,
+          : interaction.kind === "tool-fence" && interaction.points.length > 1
+            ? { points: interaction.points, kind: "fence" as const, mode: "crossing" as BoxSelectMode }
+            : null,
       boxSelect:
         interaction.kind === "box-select"
           ? {
@@ -1199,6 +1207,10 @@ export function Viewport() {
     const fwTool = getTool(app.tool);
     if (fwTool) {
       const { snap } = resolvePick(world, e.shiftKey);
+      if (fwTool.fence && !e.shiftKey) {
+        interactionRef.current = { kind: "tool-fence", startScreen: screen, points: [world], click: pickFrom(e, world, snap), snapPoint: snap.point };
+        return;
+      }
       fwTool.pick(toolCtx, pickFrom(e, world, snap));
       relativeZeroRef.current = snap.point;
       setTyped(null);
@@ -1615,6 +1627,10 @@ export function Viewport() {
         const target = noSnap(e) ? world : findSnap(doc, view, world, { exclude: [entity.id], settings: useSnapSettings.getState().settings }).point;
         interactionRef.current = { ...interaction, preview: gripPreviewFor(entity, interaction.grip, target) };
       }
+    } else if (interaction.kind === "tool-fence") {
+      const last = interaction.points[interaction.points.length - 1];
+      if (dist(last, world) > 2 / view.scale) interaction.points.push(world);
+      interactionRef.current = { ...interaction };
     } else if (interaction.kind === "free-select") {
       // One point per move event is more than the shape needs; thin as we go
       // so a long lasso stays a few dozen edges rather than a few hundred.
@@ -1681,6 +1697,28 @@ export function Viewport() {
       }
     }
     const interaction = interactionRef.current;
+    if (interaction.kind === "tool-fence") {
+      const tool = getTool(useApp.getState().tool);
+      const screen = screenPos(e);
+      interactionRef.current = { kind: "idle" };
+      if (tool) {
+        if (dist(screen, interaction.startScreen) < 5) {
+          tool.pick(toolCtx, interaction.click);
+          relativeZeroRef.current = interaction.snapPoint;
+          setTyped(null);
+        } else {
+          tool.fence?.(toolCtx, simplifyPath(interaction.points, 2 / viewRef.current.scale));
+        }
+        syncPrompt();
+      }
+      redraw();
+      try {
+        canvasRef.current!.releasePointerCapture(e.pointerId);
+      } catch {
+        // see setPointerCapture note
+      }
+      return;
+    }
     if (interaction.kind === "free-select") {
       const app = useApp.getState();
       const path = simplifyPath(interaction.points, 2 / viewRef.current.scale);

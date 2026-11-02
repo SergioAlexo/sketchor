@@ -71,6 +71,12 @@ export interface Tool {
   pick(ctx: ToolContext, pick: Pick): void;
   /** Double-click / double-tap. Return true when consumed (otherwise the viewport zooms to fit). */
   doubleClick?(ctx: ToolContext, pick: Pick): boolean;
+  /**
+   * Fence drag (trim, T-16): when defined, a press-and-drag hands the tool the
+   * stroke (world points) on release instead of a pick; a press without a
+   * drag (and any Shift press) is still an ordinary `pick`.
+   */
+  fence?(ctx: ToolContext, path: Point[]): void;
   /** Keys while the tool is active (not typed coordinates). Return true when consumed. */
   key?(ctx: ToolContext, e: KeyboardEvent): boolean;
   /**
