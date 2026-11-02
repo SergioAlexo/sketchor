@@ -93,6 +93,8 @@ export * from "./blocks/fields";
 export * from "./blocks/attributes";
 export * from "./blocks/library";
 export * from "./blocks/manage";
+export * from "./layouts/types";
+export * from "./layouts/ops";
 export * from "./blocks/insertEdit";
 export * from "./blocks/refedit";
 export { insertContents } from "./kinds/insert";

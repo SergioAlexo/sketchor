@@ -1,4 +1,4 @@
-import { type BlockDefinition, entitiesToSvgDocument, flattenInserts } from "@sketchor/core";
+import { type BlockDefinition, entitiesToSvgDocument, flattenInserts, modelEntities } from "@sketchor/core";
 import { doc, hiddenLayerSet, useApp } from "../state/store";
 import { activeSaveTarget } from "../io/drawingFile";
 import { escapeHtml, printHtml } from "./printHtml";
@@ -15,7 +15,8 @@ export function printDrawing(): void {
   const blocks = doc.records("blocks") as BlockDefinition[];
   const bodyHidden = blocks.some((b) => b.entities.some((e) => e.layer !== undefined && e.layer !== "0" && hidden.has(e.layer)));
   const keep = blocks.length > 0 && !bodyHidden;
-  const all = keep ? doc.all() : flattenInserts(doc, doc.all());
+  const model = modelEntities(doc);
+  const all = keep ? model : flattenInserts(doc, model);
   const entities = all.filter((e) => !hidden.has(e.layer ?? "0"));
   if (entities.length === 0) return;
 

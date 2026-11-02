@@ -217,7 +217,7 @@ Tick `[x]` and add a progress-log row as items land. Order = recommended executi
 - [ ] B-27 Dynamic block tests
 
 **10 · Paper space**
-- [ ] L-01 Layout model
+- [x] L-01 Layout model (entity `space` back-pointer instead of a per-layout id list; add/rename/delete/reorder-layouts, move-to-space; bus.activeSpace stamps new entities; model-space exports skip paper entities)
 - [ ] L-02 Layout tabs + page setup
 - [ ] L-03 ViewportEntity + MSPACE/PSPACE
 - [ ] L-04 Title blocks + fields

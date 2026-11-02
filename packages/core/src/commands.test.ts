@@ -3,6 +3,7 @@ import { CommandBus, type Command } from "./commands";
 import { SketchDocument } from "./document";
 import type { CircleEntity, LineEntity, PolylineEntity } from "./entities";
 import type { Constraint } from "./constraints";
+import { newLayout, paperSpec } from "./layouts/types";
 
 /**
  * The one architectural rule (see CLAUDE.md): the document is only ever
@@ -50,7 +51,10 @@ function fixture(withBlocks = false): { doc: SketchDocument; bus: CommandBus } {
   doc._putRecord("layers", { name: "notes", visible: false, locked: true });
   doc._patchSettings({ insUnits: 4 });
   doc._putRecord("params", { name: "w", expression: "10" });
-  if (withBlocks) addBlocks(doc);
+  if (withBlocks) {
+    addBlocks(doc);
+    addLayouts(doc);
+  }
   return { doc, bus: new CommandBus(doc) };
 }
 
@@ -59,6 +63,13 @@ function addBlocks(doc: SketchDocument): void {
   doc._putRecord("blocks", { name: "B1", basePoint: { x: 0, y: 0 }, entities: [line("b1l")], attributeDefs: [{ tag: "T", at: { x: 0, y: 1 }, height: 1, rotation: 0, default: "x" }], explodable: true, scaleUniformly: false });
   doc._putRecord("blocks", { name: "B2", basePoint: { x: 0, y: 0 }, entities: [{ id: "n1", type: "insert", block: "B1", insert: { x: 1, y: 1 }, scale: { x: 1, y: 1 }, rotation: 0, attributes: {} }], attributeDefs: [], explodable: true, scaleUniformly: false });
   doc._put({ id: "i1", type: "insert", block: "B1", insert: { x: 20, y: 20 }, scale: { x: 2, y: 2 }, rotation: 0.5, attributes: {} });
+}
+
+/** L-01: layouts "SheetA" (with one paper-space line) and "SheetB". */
+function addLayouts(doc: SketchDocument): void {
+  doc._putRecord("layouts", newLayout("SheetA"));
+  doc._putRecord("layouts", newLayout("SheetB", paperSpec("A3", "portrait")));
+  doc._put({ ...line("p1"), space: "SheetA" } as LineEntity);
 }
 
 /**
@@ -126,6 +137,13 @@ const CASES: { name: string; command: Command }[] = [
   { name: "rename-block (rewrites inserts and nested inserts)", command: { type: "rename-block", from: "B1", to: "PART" } },
   { name: "delete-block (purge)", command: { type: "delete-block", name: "B1", purge: true } },
   { name: "explode-insert", command: { type: "explode-insert", id: "i1" } },
+  { name: "add-layout", command: { type: "add-layout", layout: newLayout("SheetC") } },
+  { name: "add-layout (at index)", command: { type: "add-layout", layout: newLayout("SheetC"), index: 0 } },
+  { name: "rename-layout (rewrites paper-space entities)", command: { type: "rename-layout", from: "SheetA", to: "Plan" } },
+  { name: "delete-layout (removes its entities)", command: { type: "delete-layout", name: "SheetA" } },
+  { name: "reorder-layouts", command: { type: "reorder-layouts", names: ["SheetB", "SheetA"] } },
+  { name: "move-to-space (into a layout)", command: { type: "move-to-space", ids: ["e1", "e2"], space: "SheetB" } },
+  { name: "move-to-space (back to model)", command: { type: "move-to-space", ids: ["p1"], space: null } },
   { name: "set-settings", command: { type: "set-settings", patch: { insUnits: 1, ltscale: 2.5 } } },
   { name: "set-settings (remove a key)", command: { type: "set-settings", patch: { insUnits: null as unknown as undefined } } },
   {

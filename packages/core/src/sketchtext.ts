@@ -7,6 +7,7 @@ import { isFullEllipse } from "./ellipse";
 import { clampedUniformKnots, interpolateNurbs, isValidNurbs } from "./nurbs";
 import type { SketchDocument } from "./document";
 import type { Command } from "./commands";
+import { spaceOf } from "./layouts/types";
 
 /**
  * Sketch code: a human-readable, line-oriented text form of the document.
@@ -929,6 +930,7 @@ export function diffToCommands(doc: SketchDocument, parsed: ParsedEntity[]): Com
         if (existing.linetype !== undefined) updated.linetype = existing.linetype;
         if (existing.lineweight !== undefined) updated.lineweight = existing.lineweight;
         if (existing.construction !== undefined) updated.construction = existing.construction;
+        { const sp = spaceOf(existing); if (sp) (updated as { space?: string }).space = sp; } // L-01: sketch code has no word for the sheet an entity is on
         if (existing.type === "line" && existing.infinite && updated.type === "line") updated.infinite = true;
         if (existing.type === "dimension" && updated.type === "dimension") {
           // Code carries neither the associations to geometry nor style overrides / expressions: keep them.

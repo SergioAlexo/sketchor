@@ -10,6 +10,8 @@ import { setActiveBlocks } from "./blocks/context";
 import { setActiveDimHost } from "./dimensions/context";
 import { planDefineBlock, planDeleteBlock, planExplode, planRenameBlock, planUpdateBlock } from "./blocks/ops";
 import type { AttributeDef, BlockDefinition } from "./blocks/types";
+import { planAddLayout, planDeleteLayout, planMoveToSpace, planRenameLayout, planReorderLayouts } from "./layouts/ops";
+import { withSpace, type LayoutRecord } from "./layouts/types";
 import { PARAMS_TABLE, refreshExpressions, validateParam } from "./expr";
 import { entityRefRewritersFor, recordRefRewritersFor, type DocSettings, type TableRecord } from "./tables";
 
@@ -79,11 +81,28 @@ export type Command =
   /** T-45: define or redefine a named parameter (`expression` may reference other parameters); dimensions and constraints with an `expression` follow. */
   | { type: "put-param"; name: string; expression: string; comment?: string }
   | { type: "delete-param"; name: string }
+  /** L-01: add a layout (sheet); `index` places it among the tabs. Refused when the name is empty or taken. */
+  | { type: "add-layout"; layout: LayoutRecord; index?: number }
+  /** L-01: rename a layout and re-point everything drawn on it. */
+  | { type: "rename-layout"; from: string; to: string }
+  /** L-01: remove a layout and every entity on it. */
+  | { type: "delete-layout"; name: string }
+  /** L-01: new tab order (layouts not named keep their relative order after). */
+  | { type: "reorder-layouts"; names: string[] }
+  /** L-01: move entities to a layout (`space` = its name) or back to model space (`null`), coordinates untouched. */
+  | { type: "move-to-space"; ids: EntityId[]; space: string | null }
   | { type: "batch"; commands: Command[] };
 
 interface HistoryEntry {
   command: Command;
   inverse: Command[];
+}
+
+/** Puts `add-entity` commands that name no space onto `space` (recursing into batches). */
+function stampSpace(command: Command, space: string): Command {
+  if (command.type === "add-entity") return (command.entity as { space?: string }).space === undefined ? { ...command, entity: withSpace(command.entity, space) } : command;
+  if (command.type === "batch") return { ...command, commands: command.commands.map((c) => stampSpace(c, space)) };
+  return command;
 }
 
 export class CommandBus {
@@ -105,6 +124,12 @@ export class CommandBus {
    */
   locked = false;
   onBlocked: (() => void) | null = null;
+  /**
+   * L-01: the layout the user is drawing on, or null for model space. A new
+   * entity (`add-entity`) that names no `space` of its own is put on it, so
+   * every tool and plugin draws on the sheet it is looking at.
+   */
+  activeSpace: string | null = null;
 
   constructor(readonly doc: SketchDocument) {
     setActiveBlocks(doc);
@@ -129,6 +154,7 @@ export class CommandBus {
 
   execute(command: Command): void {
     if (this.locked) return this.onBlocked?.();
+    if (this.activeSpace) command = stampSpace(command, this.activeSpace);
     setActiveBlocks(this.doc);
     setActiveDimHost(this.doc);
     const assoc = associationState(this.doc);
@@ -408,6 +434,23 @@ export class CommandBus {
                 : command.type === "delete-block"
                   ? planDeleteBlock(doc, command)
                   : planExplode(doc, command.id);
+        return plan ? this.apply({ type: "batch", commands: plan }) : [];
+      }
+      case "add-layout":
+      case "rename-layout":
+      case "delete-layout":
+      case "reorder-layouts":
+      case "move-to-space": {
+        const plan =
+          command.type === "add-layout"
+            ? planAddLayout(doc, command.layout, command.index)
+            : command.type === "rename-layout"
+              ? planRenameLayout(doc, command.from, command.to)
+              : command.type === "delete-layout"
+                ? planDeleteLayout(doc, command.name)
+                : command.type === "reorder-layouts"
+                  ? planReorderLayouts(doc, command.names)
+                  : planMoveToSpace(doc, command.ids, command.space);
         return plan ? this.apply({ type: "batch", commands: plan }) : [];
       }
       case "batch": {

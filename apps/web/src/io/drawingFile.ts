@@ -1,5 +1,5 @@
 import { emitFileSaved } from "./savedFiles";
-import { type BlockDefinition, importPdf, type ForeignRecord, type TextStyle, decodeDxfBytes, sizeWarning, entitiesToDxf, entitiesToDxf2018, entitiesToEps, entitiesToEpsFile, entitiesToSvgDocument, flattenInserts } from "@sketchor/core";
+import { type BlockDefinition, importPdf, type ForeignRecord, type TextStyle, decodeDxfBytes, sizeWarning, entitiesToDxf, entitiesToDxf2018, entitiesToEps, entitiesToEpsFile, entitiesToSvgDocument, flattenInserts, modelEntities } from "@sketchor/core";
 import { DWG_UNREADABLE, dwgToDxfText } from "../browser/dwgImport";
 import { isModelFile, loadModel } from "../model3d/stepImport";
 import { acceptList, allExtensions, formatOf } from "./formats";
@@ -113,7 +113,8 @@ function serialize(format: SaveFormat): string | Uint8Array {
   const blocks = doc.records("blocks") as BlockDefinition[];
   const r12 = format === "dxf-r12" || format === "dxf-r12-blocks" || (format === "dxf" && dxfSourceVersions.get(activeSessionId()) === "r12");
   const keepBlocks = blocks.length > 0 && (!r12 || format === "dxf-r12-blocks") && format !== "svg-laser" && format !== "eps" && format !== "eps-preview";
-  const entities = keepBlocks ? doc.all() : flattenInserts(doc, doc.all());
+  const model = modelEntities(doc); // paper-space entities live in layouts (L-01); DXF layouts are L-07
+  const entities = keepBlocks ? model : flattenInserts(doc, model);
   if (format === "eps" || format === "eps-preview") {
     // EPS has no blocks (flattened above). Text-only for plain EPS; the preview variant is a binary DOS-EPS file.
     const title = defaultSaveName(format).replace(/\.eps$/i, "");
