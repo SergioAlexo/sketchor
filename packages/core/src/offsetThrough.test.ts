@@ -47,7 +47,7 @@ describe("offset through a point and the round gap type (T-15)", () => {
     expect(round.closed).toBe(true);
     const arcs = polylineSegments(round).filter((s) => s.bulge);
     expect(arcs).toHaveLength(4);
-    for (const s of arcs) expect(bulgeToArc(s.a, s.b, s.bulge!).radius).toBeCloseTo(1, 6);
+    for (const s of arcs) expect(bulgeToArc(s.a, s.b, s.bulge!)!.radius).toBeCloseTo(1, 6);
     const edges: [number, number, number, number][] = [
       [0, 0, 10, 0],
       [10, 0, 10, 4],
