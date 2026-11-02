@@ -12,6 +12,7 @@ import {
   saveDisplayUnit,
   type DisplayUnit,
 } from "../units";
+import { inActiveSpace } from "../layouts/layoutState";
 import { formatOf, magnitudeBucket, reportError, track } from "../metrics/metrics";
 import {
   CommandBus,
@@ -825,7 +826,7 @@ export function isPickable(entity: Entity, hidden: Set<string>, locked: Set<stri
 export function selectableEntities(): Entity[] {
   const hidden = hiddenLayerSet();
   const locked = lockedLayerSet();
-  return doc.all().filter((e) => isPickable(e, hidden, locked));
+  return doc.all().filter((e) => isPickable(e, hidden, locked) && inActiveSpace(e));
 }
 
 /** Create-block tool settings (B-03): the definition's name/options and what happens to the selected objects. */

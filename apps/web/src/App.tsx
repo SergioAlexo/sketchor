@@ -38,6 +38,7 @@ import { PluginsPanel } from "./plugins/PluginsPanel";
 import { listActions, listExporters, onRegistriesChange, runCommand, runExporter, runGenerator } from "./plugins/host/registries";
 import { StraightenPanel } from "./viewport/StraightenPanel";
 import { TabStrip } from "./tabs/TabStrip";
+import { LayoutTabs } from "./layouts/LayoutTabs";
 
 // The 3D viewer pulls in three.js; it's loaded only once a model tab exists.
 const ModelViewport = lazy(() => import("./model3d/ModelViewport").then((m) => ({ default: m.ModelViewport })));
@@ -1516,6 +1517,7 @@ export function App() {
               </>
             )}
           </main>
+          {!modelTab && <LayoutTabs />}
         </div>
         {showDiag && <DiagnosticsPanel onClose={() => setShowDiag(false)} />}
         {showDup && <DuplicatesPanel onClose={() => setShowDup(false)} />}

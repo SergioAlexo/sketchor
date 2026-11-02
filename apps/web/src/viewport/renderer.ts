@@ -18,7 +18,10 @@ import {
   transformed,
   translated,
   drawOrderOf,
+  spaceOf,
+  type LayoutRecord,
 } from "@sketchor/core";
+import { drawSheet } from "./sheetRender";
 import type { MeasureResult } from "../state/store";
 import { gridStep, worldToScreen, type View } from "./view";
 import type { Snap } from "./snapping";
@@ -33,6 +36,8 @@ export interface TransformPreview {
 }
 
 export interface RenderUiState {
+  /** L-02: the layout being shown (paper space), or null/absent for model space. */
+  layout?: LayoutRecord | null;
   selection: ReadonlySet<EntityId>;
   /** B-04 edit in place: the surrounding drawing in the edited block's local coordinates, drawn faded behind everything. */
   backdrop?: readonly Entity[] | null;
@@ -136,7 +141,8 @@ export function render(
   ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, width, height);
 
-  drawGrid(ctx, width, height, view);
+  if (ui.layout) drawSheet(ctx, view, ui.layout, COLORS.entity);
+  else drawGrid(ctx, width, height, view);
 
   if (ui.closedRegions.length > 0) drawClosedRegions(ctx, view, ui.closedRegions);
 
@@ -152,7 +158,9 @@ export function render(
   beginHatchFrame();
   textStyleLookup = (name) => doc.getRecord("textStyles", name);
   const ltscale = doc.settings.ltscale ?? 1;
-  const everything = doc.all();
+  const layoutName = ui.layout?.name ?? null;
+  // L-01/L-02: each space draws only its own entities (paper entities never show in model space and vice versa).
+  const everything = doc.all().filter((e) => (spaceOf(e) ?? null) === layoutName);
   // H-08: lower drawOrder first (stable), so a hatch can sit behind its boundary.
   const drawList = everything.some((e) => drawOrderOf(e) !== 0) ? [...everything].sort((a, b) => drawOrderOf(a) - drawOrderOf(b)) : everything;
   for (const entity of drawList) {

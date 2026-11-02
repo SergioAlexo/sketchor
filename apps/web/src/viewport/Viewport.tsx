@@ -3,7 +3,7 @@ import { runDimEdit } from "../tools/dimEditCommands";
 import { hatchesTinted } from "./hatchRender";
 import { useEffect, useRef, useState } from "react";
 import { autoConstrainSuppressed, withAutoConstraints } from "../tools/autoConstrain";
-import type { BoxSelectMode, ClosedRegion, Command, Entity, EntityId, Point, TextEntity } from "@sketchor/core";
+import type { BoxSelectMode, ClosedRegion, Command, Entity, EntityId, LayoutRecord, Point, TextEntity } from "@sketchor/core";
 import {
   applyGrip,
   gripPointRef,
@@ -93,6 +93,8 @@ import { track } from "../metrics/metrics";
 import { CommandBar, type CommandEcho } from "../tools/CommandBar";
 import { useTheme } from "../theme/themeStore";
 import { useMTextUi } from "../mtext/mtextUi";
+import { getActiveLayoutRecord, getSpaceState, inActiveSpace, saveLayoutView, savedLayoutView, useSpaceState } from "../layouts/layoutState";
+import { sheetRect } from "./sheetRender";
 
 /**
  * The half-finished states a pan can interrupt. Panning or zooming mid-draw
@@ -267,6 +269,11 @@ function entityLabel(entity: Entity): string {
   return `${entity.name ?? entity.type}${layer === "0" ? "" : ` · ${layer}`}`;
 }
 
+function sheetBounds(layout: LayoutRecord): { minX: number; minY: number; maxX: number; maxY: number } {
+  const r = sheetRect(layout);
+  return { minX: r.x, minY: r.y, maxX: r.x + r.w, maxY: r.y + r.h };
+}
+
 function hitTest(view: View, world: Point): EntityId | null {
   return hitCandidates(view, world)[0] ?? null;
 }
@@ -424,6 +431,7 @@ export function Viewport() {
         : null;
 
     render(ctx, w, h, viewRef.current, doc, {
+      layout: getActiveLayoutRecord(),
       selection: new Set(state.selection),
       backdrop: blockEditBackdrop(),
       preview,
@@ -528,7 +536,7 @@ export function Viewport() {
     const view = viewRef.current;
     const app = useApp.getState();
     const t = getTool(app.tool);
-    const raw = findSnap(doc, view, world, { anchor: t?.anchor() ?? null, settings: useSnapSettings.getState().settings });
+    const raw = findSnap(doc, view, world, { anchor: t?.anchor() ?? null, settings: useSnapSettings.getState().settings, entityFilter: inActiveSpace });
     const tracking = useTracking.getState();
     // Hovering a feature point makes it trackable, as in AutoCAD — no
     // separate gesture, and the acquired list is short enough to stay
@@ -681,17 +689,26 @@ export function Viewport() {
 
   const activeSessionId = useApp((s) => s.activeSessionId);
   const prevSessionIdRef = useRef(activeSessionId);
+  /** L-02: the space the canvas view currently belongs to, so a Model/Layout switch can save and restore pan/zoom per space. */
+  const spaceViewRef = useRef<{ session: string; layout: string | null }>({ session: activeSessionId, layout: null });
+  const sheetView = (layout: string, canvas: HTMLCanvasElement): View => {
+    const rec = getActiveLayoutRecord();
+    return fitToBounds(rec && rec.name === layout ? sheetBounds(rec) : { minX: 0, minY: 0, maxX: 297, maxY: 210 }, canvas.clientWidth, canvas.clientHeight, 0.12);
+  };
 
   // Switching tabs: save the outgoing tab's pan/zoom, restore (or default) the incoming one's.
   useEffect(() => {
     const prevId = prevSessionIdRef.current;
     if (prevId === activeSessionId) return;
-    setSessionView(prevId, viewRef.current);
+    if (spaceViewRef.current.layout) saveLayoutView(prevId, spaceViewRef.current.layout, viewRef.current);
+    else setSessionView(prevId, viewRef.current);
     prevSessionIdRef.current = activeSessionId;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const saved = getSessionView(activeSessionId);
+    const incomingLayout = getSpaceState().layout;
+    spaceViewRef.current = { session: activeSessionId, layout: incomingLayout };
+    const saved = incomingLayout ? (savedLayoutView(activeSessionId, incomingLayout) ?? sheetView(incomingLayout, canvas)) : getSessionView(activeSessionId);
     viewRef.current = saved ?? {
       scale: 2,
       ox: canvas.clientWidth * 0.25,
@@ -701,6 +718,25 @@ export function Viewport() {
     redraw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId]);
+
+  // Model <-> layout switch inside one tab: park this space's pan/zoom, restore (or frame the sheet for) the other.
+  const layoutNow = useSpaceState().layout;
+  useEffect(() => {
+    const last = spaceViewRef.current;
+    if (last.session !== activeSessionId) return; // a tab switch, handled above
+    if (last.layout === layoutNow) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (last.layout) saveLayoutView(activeSessionId, last.layout, viewRef.current);
+    else setSessionView(activeSessionId, viewRef.current);
+    spaceViewRef.current = { session: activeSessionId, layout: layoutNow };
+    viewRef.current = layoutNow
+      ? (savedLayoutView(activeSessionId, layoutNow) ?? sheetView(layoutNow, canvas))
+      : (getSessionView(activeSessionId) ?? { scale: 2, ox: canvas.clientWidth * 0.25, oy: canvas.clientHeight * 0.75 });
+    useApp.getState().setZoom(viewRef.current.scale);
+    redraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutNow, activeSessionId]);
 
   const measurement = useApp((s) => s.measurement);
   const pinnedMeasurements = useApp((s) => s.pinnedMeasurements);
@@ -714,15 +750,16 @@ export function Viewport() {
   const showConnectivityHint = useApp((s) => s.showConnectivityHint);
   const showClosedRegions = useApp((s) => s.showClosedRegions);
   const showSplineCvs = useApp((s) => s.showSplineCvs);
+  const spaceState = useSpaceState();
 
   // Closed-loop detection only needs to rerun when the document changes, not
   // on every redraw (pan/zoom/selection) — cached here. Computed regardless
   // of the display toggle, since the measure tool's area-click also needs
   // it even when the highlight fill itself is turned off.
   useEffect(() => {
-    closedRegionsRef.current = findClosedRegions(doc.all());
+    closedRegionsRef.current = findClosedRegions(doc.all().filter(inActiveSpace));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revision]);
+  }, [revision, spaceState.layout, spaceState.mspace]);
 
   // Redraw when document, selection, tool, measurement, layers, the straighten pick, heal findings, or the theme change
   useEffect(redraw, [
@@ -742,6 +779,7 @@ export function Viewport() {
     showClosedRegions,
     showSplineCvs,
     themeResolved,
+    spaceState,
   ]);
 
   // Diagnostics panel row click: frame that finding.
@@ -809,9 +847,11 @@ export function Viewport() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const hidden = hiddenLayerSet();
-    const visible = doc.all().filter((e) => !hidden.has(layerOf(e)));
+    const visible = doc.all().filter((e) => !hidden.has(layerOf(e)) && inActiveSpace(e));
     const targets = ids && ids.length ? visible.filter((e) => ids.includes(e.id)) : visible;
-    const bb = boundsOf(targets);
+    const sheet = getActiveLayoutRecord();
+    // In a layout "zoom extents" frames the sheet, as in AutoCAD.
+    const bb = sheet && !(ids && ids.length) ? sheetBounds(sheet) : boundsOf(targets);
     if (!bb) return;
     rememberView();
     viewRef.current = fitToBounds(bb, canvas.clientWidth, canvas.clientHeight);

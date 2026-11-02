@@ -1,4 +1,4 @@
-import type { Point, SketchDocument } from "@sketchor/core";
+import type { Entity, Point, SketchDocument } from "@sketchor/core";
 import {
   arcPointAt,
   arcSweep,
@@ -73,6 +73,8 @@ export interface SnapOptions {
   /** The tool's previous pick — what perpendicular and tangent snaps are measured from. */
   anchor?: Point | null;
   settings?: SnapSettings;
+  /** L-01: only entities passing this are snap targets (the space - model or one layout - being drawn in). */
+  entityFilter?: (e: Entity) => boolean;
 }
 
 /** Pick aperture, in pixels — also what object snap tracking uses for "lines up with". */
@@ -94,7 +96,8 @@ export function findSnap(doc: SketchDocument, view: View, cursor: Point, options
   const tol = SNAP_PX / view.scale;
   // While dragging a selection, its own geometry must not act as a snap target
   // — it moves with the cursor, so it would snap to itself and pin the drag.
-  const entities = excludeIds?.length ? doc.all().filter((e) => !excludeIds.includes(e.id)) : doc.all();
+  const inSpace = opts.entityFilter;
+  const entities = excludeIds?.length || inSpace ? doc.all().filter((e) => (!inSpace || inSpace(e)) && !excludeIds?.includes(e.id)) : doc.all();
 
   const bestOf = (candidates: Snap[]): Snap | null => {
     let best: Snap | null = null;
