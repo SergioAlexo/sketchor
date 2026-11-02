@@ -339,6 +339,8 @@ export interface ImporterContext {
  * directly — additive. 0.9.0 added `ui.pickFolder()` / `ui.readPickedFile()`,
  * a folder picker that lists files (subfolders included) and reads them back
  * — additive. 0.10.0 added `app.openDocumentTab(name, commands)`, which opens a
- * new tab holding a plugin-built drawing (the nest result) — additive.
+ * new tab holding a plugin-built drawing (the nest result) — additive. 0.11.0
+ * added the data-only `contributes.blocks` contribution point (B-24: `.dxf` /
+ * `.sketchor` block libraries listed in the Blocks panel) — additive.
  */
-export const HOST_API_VERSION = "0.10.0";
+export const HOST_API_VERSION = "0.11.0";

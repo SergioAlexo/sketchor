@@ -25,6 +25,7 @@ import {
 import { beginBlockEdit, bus, doc, useApp } from "../state/store";
 import { downloadText } from "./download";
 import { addToLibrary, loadLibrary, removeFromLibrary } from "./libraryStore";
+import { installBlockPack, loadContributedBlocks } from "./packStore";
 
 /**
  * The block library (B-06, Ctrl+3). "This drawing" lists the definitions with
@@ -54,7 +55,21 @@ export function BlockLibraryPanel({ onClose }: { onClose: () => void }) {
   const q = query.toLowerCase();
   const libs = library.filter((e) => e.def.name.toLowerCase().includes(q));
   // B-23: the shipped library, grouped by category (a dynamic block's thumbnail is its default state).
-  const shipped = useMemo(() => shippedLibrary().map((e) => ({ entry: e, category: SHIPPED_CATEGORY[e.def.name] ?? "Other" })), []);
+  const [packVersion, setPackVersion] = useState(0);
+  const packRef = useRef<HTMLInputElement>(null);
+  // B-24: blocks contributed by installed plugin packs follow the shipped ones.
+  const shipped = useMemo(
+    () => [...shippedLibrary().map((e) => ({ entry: e, category: SHIPPED_CATEGORY[e.def.name] ?? "Other" })), ...loadContributedBlocks().map((c) => ({ entry: c.entry, category: c.category }))],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [packVersion],
+  );
+  const installPack = async (f: File) => {
+    const r = installBlockPack(await f.text());
+    if (r.ok) {
+      setPackVersion((v) => v + 1);
+      setNote(`Installed ${r.count} block${r.count === 1 ? "" : "s"} from ${r.id}${r.warnings.length ? `, ${r.warnings.length} warning(s): ${r.warnings[0]}` : ""}`);
+    } else setNote(r.reason);
+  };
   const shippedShown = shipped.filter((s) => `${s.entry.def.name} ${s.category} ${s.entry.def.description ?? ""}`.toLowerCase().includes(q));
 
   const thumb = (entities: ReturnType<typeof blockPreviewEntities>) => ({ __html: entitiesToSvg(entities, { size: 56 }) });
@@ -238,7 +253,7 @@ export function BlockLibraryPanel({ onClose }: { onClose: () => void }) {
             <div key={e.def.name}>
               {(i === 0 || shippedShown[i - 1].category !== category) && <div className="straighten-hint" style={{ padding: "6px 8px 0" }}>{category}</div>}
               <div className="fill-row" data-testid={`blocklib-sk-${e.def.name}`} style={{ padding: "4px 8px", alignItems: "center", gap: 8 }}>
-                <div style={{ width: 56, height: 56, flex: "none" }} dangerouslySetInnerHTML={{ __html: entitiesToSvg(evaluateDynamic(e.def, {}), { size: 56 }) }} />
+                <div style={{ width: 56, height: 56, flex: "none" }} dangerouslySetInnerHTML={{ __html: entitiesToSvg(evaluateDynamic(e.def, {}).filter((x) => x.type !== "insert"), { size: 56 }) }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ overflow: "hidden", textOverflow: "ellipsis" }} title={e.def.description}>{e.def.name}</div>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -253,6 +268,24 @@ export function BlockLibraryPanel({ onClose }: { onClose: () => void }) {
               </div>
             </div>
           ))}
+        {source === "sketchor" && (
+          <div style={{ padding: 8 }}>
+            <input
+              ref={packRef}
+              type="file"
+              accept=".json"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void installPack(f);
+                e.target.value = "";
+              }}
+            />
+            <button className="btn ghost sm" data-testid="blocklib-install-pack" onClick={() => packRef.current?.click()}>
+              Install a block pack...
+            </button>
+          </div>
+        )}
         {source === "library" && (
           <div style={{ padding: 8 }}>
             <input

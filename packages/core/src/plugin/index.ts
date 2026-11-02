@@ -10,3 +10,4 @@ export * from "./hostApi";
 export * from "./signing";
 export * from "./themeBundle";
 export * from "./patternBundle";
+export * from "./blockBundle";

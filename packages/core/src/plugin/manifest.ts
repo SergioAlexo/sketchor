@@ -45,6 +45,15 @@ export interface PluginContributions {
   themes?: ThemeContribution[];
   /** Hatch patterns (H-06): data-only `.pat` files in the bundle, parsed by `parsePat`. */
   hatchPatterns?: HatchPatternContribution[];
+  /** Block libraries (B-24): data-only `.dxf` / `.sketchor` files whose blocks join the "Sketchor library" panel. */
+  blocks?: BlockContribution[];
+}
+
+export interface BlockContribution {
+  /** Bundle-relative path of a `.dxf` or `.sketchor` file, e.g. "blocks/doors.dxf". Each named block in it becomes a library entry (a file with no blocks becomes one block). */
+  file: string;
+  /** Library category the blocks are listed under (default: the plugin's name). */
+  category?: string;
 }
 
 export interface HatchPatternContribution {
@@ -118,7 +127,7 @@ export function validateManifest(value: unknown): ManifestValidation {
   const themeOnly = isThemeOnly(obj as unknown as PluginManifest);
   if (themeOnly) {
     if (obj.main !== undefined) errors.push('a theme-only plugin must not declare "main"');
-  } else if (!isPatternOnly(obj as unknown as PluginManifest)) {
+  } else if (!isPatternOnly(obj as unknown as PluginManifest) && !isBlocksOnly(obj as unknown as PluginManifest)) {
     requireString(obj, "main", errors);
   }
   optionalString(obj, "description", errors);
@@ -149,6 +158,7 @@ export function validateManifest(value: unknown): ManifestValidation {
     }
     if (isRecord(contributes) && contributes.themes !== undefined) validateThemeContributions(contributes.themes, errors);
     if (isRecord(contributes) && contributes.hatchPatterns !== undefined) validateHatchPatternContributions(contributes.hatchPatterns, errors);
+    if (isRecord(contributes) && contributes.blocks !== undefined) validateBlockContributions(contributes.blocks, errors);
   }
 
   if (errors.length > 0) return { ok: false, errors };
@@ -216,11 +226,28 @@ function validateHatchPatternContributions(v: unknown, errors: string[]): void {
   });
 }
 
-/** A bundle-relative `.json` (or `.pat`) path that cannot climb out of the bundle. */
-export function isSafeBundlePath(p: string, ext: "json" | "pat" = "json"): boolean {
+function validateBlockContributions(v: unknown, errors: string[]): void {
+  if (!Array.isArray(v)) {
+    errors.push('"contributes.blocks" must be an array');
+    return;
+  }
+  v.forEach((t, i) => {
+    const at = `contributes.blocks[${i}]`;
+    if (!isRecord(t)) return void errors.push(`"${at}" must be an object`);
+    if (typeof t.file !== "string" || !isSafeBundlePath(t.file, "block")) {
+      errors.push(`"${at}.file" must be a relative .dxf or .sketchor path inside the bundle (no "..", no leading "/")`);
+    }
+    if (t.category !== undefined && (typeof t.category !== "string" || !t.category.trim() || t.category.length > 40)) {
+      errors.push(`"${at}.category" must be a short non-empty string when present`);
+    }
+  });
+}
+
+/** A bundle-relative `.json` (or `.pat`; `.dxf`/`.sketchor` for "block") path that cannot climb out of the bundle. */
+export function isSafeBundlePath(p: string, ext: "json" | "pat" | "block" = "json"): boolean {
   return (
     p.length <= 200 &&
-    (ext === "pat" ? /\.pat$/i : /\.json$/i).test(p) &&
+    (ext === "pat" ? /\.pat$/i : ext === "block" ? /\.(dxf|sketchor)$/i : /\.json$/i).test(p) &&
     !p.startsWith("/") &&
     !p.includes("\\") &&
     !/^[a-z]:/i.test(p) &&
@@ -238,6 +265,14 @@ export function isThemeOnly(m: Pick<PluginManifest, "contributes" | "main" | "ui
   if (!c || !Array.isArray(c.themes) || c.themes.length === 0) return false;
   if (m.ui !== undefined || (m.permissions?.length ?? 0) > 0) return false;
   return Object.entries(c).every(([k, v]) => k === "themes" || (Array.isArray(v) && v.length === 0));
+}
+
+/** B-24: a plugin that contributes block libraries and nothing that runs. Data (a DXF/.sketchor is parsed, never executed), so it installs unsigned like a theme. */
+export function isBlocksOnly(m: Pick<PluginManifest, "contributes" | "main" | "ui" | "permissions">): boolean {
+  const c = m.contributes;
+  if (!c || !Array.isArray(c.blocks) || c.blocks.length === 0) return false;
+  if (m.main !== undefined || m.ui !== undefined || (m.permissions?.length ?? 0) > 0) return false;
+  return Object.entries(c).every(([k, v]) => k === "blocks" || (Array.isArray(v) && v.length === 0));
 }
 
 /** H-06: a plugin that contributes hatch patterns and nothing that runs. Data, so it installs unsigned like a theme. */
