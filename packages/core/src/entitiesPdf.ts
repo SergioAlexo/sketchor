@@ -36,6 +36,13 @@ export interface PdfDrawOptions {
    * also what makes the black/white labels on them legible.
    */
   fill?: boolean;
+  /**
+   * L-06: draw at a fixed mapping instead of fitting to the box: page x = ox + wx * scale, page y = oy - wy * scale
+   * (a sheet printed 1:1, or the model seen through a viewport). The box is then unused.
+   */
+  fixed?: { scale: number; ox: number; oy: number };
+  /** L-06: stroke width in points for an entity (true lineweights); undefined keeps `strokeWidth`. */
+  widthOf?: (e: Entity) => number | undefined;
 }
 
 export interface PdfDrawResult {
@@ -56,20 +63,21 @@ export function drawEntitiesToPdf(
   const entities = explodeDimensions(entitiesIn as Entity[]);
   const stroke = opts.strokeColor ?? "#111111";
   const drawable = entities.filter((e) => !(e.type === "line" && e.infinite) && e.type !== "image");
-  const b = boundsOf(drawable as Entity[]);
-  if (!b) return { scale: 1 };
+  const fixed = opts.fixed;
+  const b = fixed ? null : boundsOf(drawable as Entity[]);
+  if (!fixed && !b) return { scale: 1 };
 
-  const worldW = Math.max(b.maxX - b.minX, 1e-6);
-  const worldH = Math.max(b.maxY - b.minY, 1e-6);
-  const scale = Math.min(box.width / worldW, box.height / worldH);
+  const worldW = b ? Math.max(b.maxX - b.minX, 1e-6) : 1;
+  const worldH = b ? Math.max(b.maxY - b.minY, 1e-6) : 1;
+  const scale = fixed ? fixed.scale : Math.min(box.width / worldW, box.height / worldH);
   // Centre whatever slack the aspect-ratio difference leaves.
   const offsetX = box.x + (box.width - worldW * scale) / 2;
   const offsetY = box.y + (box.height - worldH * scale) / 2;
   // World Y grows up, page Y grows down.
-  const at = (p: Point): PdfPoint => ({
-    x: offsetX + (p.x - b.minX) * scale,
-    y: offsetY + (b.maxY - p.y) * scale,
-  });
+  const at = (p: Point): PdfPoint =>
+    fixed
+      ? { x: fixed.ox + p.x * scale, y: fixed.oy - p.y * scale }
+      : { x: offsetX + (p.x - b!.minX) * scale, y: offsetY + (b!.maxY - p.y) * scale };
 
   const width = opts.strokeWidth ?? 0.5;
   const paintOf = (e: Entity) => {
@@ -78,7 +86,7 @@ export function drawEntitiesToPdf(
     // Real mm pattern, scaled from world to page units same as everything else here.
     const linePattern = "linetype" in e && e.linetype ? builtinLinetype(e.linetype).pattern : [];
     const dash = linePattern.length > 0 ? linePattern.map((v) => Math.max(Math.abs(v) * scale, 0.1)) : undefined;
-    return { stroke: e.color ?? stroke, fill, width, dash };
+    return { stroke: e.color ?? stroke, fill, width: opts.widthOf?.(e) ?? width, dash };
   };
 
   /** An arc as a run of short chords — the same tessellation the SVG export uses. */

@@ -22,6 +22,7 @@ import { bus, doc, useApp } from "../state/store";
 import { setActiveLayout, setMspace, useSpaceState } from "./layoutState";
 import { PageSetupDialog } from "./PageSetupDialog";
 import { SheetsDialog } from "./SheetsDialog";
+import { allLayoutNames, publishLayouts } from "./publish";
 
 /**
  * L-02: the bottom strip of a drawing tab: Model | Layout1 | Layout2 | +.
@@ -144,6 +145,16 @@ export function LayoutTabs() {
       {space.layout && (
         <button className="layout-tab" data-testid="layout-sheets" title="Edit project, client, drawn by... for every sheet at once" onClick={() => setSheets(true)}>
           Sheets...
+        </button>
+      )}
+      {space.layout && (
+        <button className="layout-tab" data-testid="layout-plot" title="Plot this layout to PDF at its paper size (1:1)" onClick={() => publishLayouts([space.layout!])}>
+          Plot
+        </button>
+      )}
+      {layouts.length > 1 && (
+        <button className="layout-tab" data-testid="layout-publish" title="Publish every layout as the pages of one PDF" onClick={() => publishLayouts(allLayoutNames())}>
+          Publish all
         </button>
       )}
       {space.layout && (

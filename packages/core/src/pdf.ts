@@ -135,22 +135,47 @@ function literal(text: string): string {
 const KAPPA = 0.5522847498;
 
 export class PdfBuilder {
-  readonly width: number;
-  readonly height: number;
+  /** Size of the page being drawn (each page may have its own, see {@link addPage}). */
+  get width(): number {
+    return this.curSize.width;
+  }
+  get height(): number {
+    return this.curSize.height;
+  }
+  private curSize: PdfPageSize;
+  /** Sizes of the finished pages, parallel to `pages`. */
+  private readonly pageSizes: PdfPageSize[] = [];
   private readonly pages: string[] = [];
   private current: string[] = [];
   /** Gradient dictionaries (`/Sh1 << … >>`), shared by every page's resources. */
   private readonly shadings: string[] = [];
 
   constructor(size: PdfPageSize = PDF_LETTER) {
-    this.width = size.width;
-    this.height = size.height;
+    this.curSize = { width: size.width, height: size.height };
   }
 
-  /** Finishes the current page and starts a blank one. */
-  addPage(): void {
+  /** Finishes the current page and starts a blank one - of `size` when given (a drawing's sheets differ), else the same size. */
+  addPage(size?: PdfPageSize): void {
     this.pages.push(this.current.join("\n"));
+    this.pageSizes.push(this.curSize);
     this.current = [];
+    if (size) this.curSize = { width: size.width, height: size.height };
+  }
+
+  /** Resizes the page in progress (only meaningful before anything is drawn on it). */
+  setPageSize(size: PdfPageSize): void {
+    this.curSize = { width: size.width, height: size.height };
+  }
+
+  /** Everything drawn until {@link endClip} is cut to this polygon (page coordinates, Y down). */
+  beginClip(points: readonly PdfPoint[]): void {
+    if (points.length < 3) return;
+    const path = points.map((p, i) => `${num(p.x)} ${num(this.ty(p.y))} ${i === 0 ? "m" : "l"}`).join(" ");
+    this.current.push(`q\n${path} h W n`);
+  }
+
+  endClip(): void {
+    this.current.push("Q");
   }
 
   /** How many pages the file has so far, counting the one in progress. */
@@ -303,6 +328,7 @@ export class PdfBuilder {
   /** The finished file. */
   bytes(): Uint8Array {
     const pages = [...this.pages, this.current.join("\n")];
+    const sizes = [...this.pageSizes, this.curSize];
     // Object numbering: 1 Catalog, 2 Pages, 3 Helvetica, 4 Helvetica-Bold,
     // then a Page + Contents pair per page.
     const objects: string[] = [];
@@ -313,7 +339,7 @@ export class PdfBuilder {
     objects.push(`<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>`);
     pages.forEach((content, i) => {
       objects.push(
-        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${num(this.width)} ${num(this.height)}] ` +
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${num(sizes[i].width)} ${num(sizes[i].height)}] ` +
           `/Resources << /Font << /F1 3 0 R /F2 4 0 R >>${this.shadings.length > 0 ? ` /Shading << ${this.shadings.join(" ")} >>` : ""} >> /Contents ${6 + i * 2} 0 R >>`,
       );
       objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
