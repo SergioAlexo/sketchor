@@ -1055,6 +1055,21 @@ function drawSnapMarker(ctx: CanvasRenderingContext2D, view: View, snap: Snap): 
       ctx.moveTo(s.x - 5, s.y + 5);
       ctx.lineTo(s.x + 5, s.y - 5);
       break;
+    case "apparent":
+      // AutoCAD's apparent intersection: a square with a cross.
+      ctx.rect(s.x - 6, s.y - 6, 12, 12);
+      ctx.moveTo(s.x - 6, s.y - 6);
+      ctx.lineTo(s.x + 6, s.y + 6);
+      ctx.moveTo(s.x + 6, s.y - 6);
+      ctx.lineTo(s.x - 6, s.y + 6);
+      break;
+    case "parallel":
+      // Two parallel slashes.
+      ctx.moveTo(s.x - 6, s.y + 3);
+      ctx.lineTo(s.x + 2, s.y - 7);
+      ctx.moveTo(s.x - 2, s.y + 7);
+      ctx.lineTo(s.x + 6, s.y - 3);
+      break;
     case "tracking":
       // A diamond: the point is on a guide, not on geometry.
       ctx.moveTo(s.x, s.y - 6);

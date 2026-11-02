@@ -26,7 +26,11 @@ import { gridStep, type View } from "./view";
  * on-curve beat extension beat the grid — see findSnap. "perpendicular"
  * and "tangent" need an anchor (the tool's last pick) and only appear when
  * one is given. "tracking" is not found here: the viewport produces it
- * when ortho/polar projected the cursor (tools/tracking.ts).
+ * when ortho/polar projected the cursor (tools/tracking.ts), and so is
+ * "parallel" (T-21, `objectTracking.ts` `parallelTrack`: a ray from the
+ * anchor along a line the cursor hovered earlier). "apparent" is the
+ * intersection of two lines' *extensions* (AutoCAD APPINT), ranked just below
+ * the midpoint: a specific point, but one that does not exist on geometry.
  */
 export type SnapKind =
   | "origin"
@@ -40,6 +44,8 @@ export type SnapKind =
   | "tangent"
   | "on-line"
   | "extension"
+  | "apparent"
+  | "parallel"
   | "grid"
   | "tracking";
 
@@ -48,6 +54,8 @@ export interface Snap {
   kind: SnapKind;
   /** For an extension snap: the endpoint the guide ray is drawn from. */
   guideFrom?: Point;
+  /** For a nearest-point snap on a straight piece: that piece, so the viewport can acquire it for a parallel snap (T-21). */
+  refLine?: { a: Point; b: Point };
 }
 
 /** Which snap kinds are on (T-21's per-kind switches). Persisted; see snapSettings.ts. */
@@ -64,6 +72,8 @@ export const ALL_SNAPS_ON: SnapSettings = {
   tangent: true,
   "on-line": true,
   extension: true,
+  apparent: true,
+  parallel: true,
   grid: true,
 };
 
@@ -126,11 +136,11 @@ export function findSnap(doc: SketchDocument, view: View, cursor: Point, options
     // along" candidates are worked out here.
     for (const s of kindSnaps(e)) (s.kind === "midpoint" ? midpoints : featurePoints).push(s);
     if (e.type === "line") {
-      onCurve.push({ point: closestPointOnSegment(cursor, e.a, e.b), kind: "on-line" });
+      onCurve.push({ point: closestPointOnSegment(cursor, e.a, e.b), kind: "on-line", refLine: { a: e.a, b: e.b } });
     } else if (e.type === "polyline") {
       for (const seg of polylineSegments(e)) {
         if (!bulgeToArc(seg.a, seg.b, seg.bulge)) {
-          onCurve.push({ point: closestPointOnSegment(cursor, seg.a, seg.b), kind: "on-line" });
+          onCurve.push({ point: closestPointOnSegment(cursor, seg.a, seg.b), kind: "on-line", refLine: { a: seg.a, b: seg.b } });
         }
       }
     } else if (e.type !== "circle" && e.type !== "arc" && e.type !== "point" && e.type !== "text" && e.type !== "image") {
@@ -194,7 +204,10 @@ export function findSnap(doc: SketchDocument, view: View, cursor: Point, options
     extensions.push({ point: foot, kind: "extension", guideFrom: t < 0 ? l.a : l.b });
   }
 
-  const snap = bestOf(featurePoints) ?? bestOf(midpoints) ?? bestOf(onCurve) ?? bestOf(extensions);
+  // Apparent intersection: lines that do not touch but would if extended.
+  const apparent: Snap[] = apparentIntersections(lines, cursor, tol).map((point) => ({ point, kind: "apparent" as const }));
+
+  const snap = bestOf(featurePoints) ?? bestOf(midpoints) ?? bestOf(apparent) ?? bestOf(onCurve) ?? bestOf(extensions);
   if (snap) return snap;
 
   if (!on.grid) return { point: cursor, kind: "grid" };
@@ -206,6 +219,46 @@ export function findSnap(doc: SketchDocument, view: View, cursor: Point, options
     },
     kind: "grid",
   };
+}
+
+/**
+ * T-21 apparent intersection: where two straight pieces would cross if
+ * extended, for pairs that do not actually touch (a real crossing is an
+ * "intersection" snap already). Only pieces whose infinite line passes within
+ * `tol` of the cursor can matter, and, as with extension snaps, the crossing
+ * must lie within three lengths before / four after each piece. Nearly
+ * parallel pairs (sine under 0.05) have no meaningful crossing.
+ */
+export function apparentIntersections(lines: readonly { a: Point; b: Point }[], cursor: Point, tol: number): Point[] {
+  const near: { a: Point; b: Point; dx: number; dy: number; len: number }[] = [];
+  for (const l of lines) {
+    const dx = l.b.x - l.a.x;
+    const dy = l.b.y - l.a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-9) continue;
+    const off = Math.abs((cursor.x - l.a.x) * dy - (cursor.y - l.a.y) * dx) / len;
+    if (off <= tol) near.push({ ...l, dx, dy, len });
+    if (near.length >= 60) break;
+  }
+  const out: Point[] = [];
+  const eps = 1e-9;
+  for (let i = 0; i < near.length; i++) {
+    for (let j = i + 1; j < near.length; j++) {
+      const p = near[i];
+      const q = near[j];
+      const cross = p.dx * q.dy - p.dy * q.dx;
+      if (Math.abs(cross) / (p.len * q.len) < 0.05) continue;
+      const wx = q.a.x - p.a.x;
+      const wy = q.a.y - p.a.y;
+      const t = (wx * q.dy - wy * q.dx) / cross;
+      const s = (wx * p.dy - wy * p.dx) / cross;
+      if (t >= -eps && t <= 1 + eps && s >= -eps && s <= 1 + eps) continue; // they really cross
+      if (t < -3 || t > 4 || s < -3 || s > 4) continue;
+      const x = { x: p.a.x + p.dx * t, y: p.a.y + p.dy * t };
+      if (dist(x, cursor) <= tol) out.push(x);
+    }
+  }
+  return out;
 }
 
 /** Cheap bounding-box test: is any part of the curve within `tol` of the cursor? */

@@ -80,7 +80,7 @@ import { CONSTRAINT_GLYPH_OFFSET, CONSTRAINT_GLYPH_SIZE, render } from "./render
 import { CONSTRAINT_GLYPHS } from "../constraints/ConstraintPanel";
 import { setImageDecodeCallback } from "./imageCache";
 import { findSnap, snapMovingSelection, snapRotation, SNAP_PX, type Snap } from "./snapping";
-import { acquirePoint, trackAlignment, trackingAngles } from "./objectTracking";
+import { acquireLine, acquirePoint, parallelTrack, trackAlignment, trackingAngles, type TrackLine } from "./objectTracking";
 import { fitToBounds, gridStep, screenToWorld, worldToScreen, zoomAt, type View } from "./view";
 import { getTool, type Pick, type ToolContext } from "../tools";
 import { copySelectionToClipboard, pasteFromClipboard } from "../io/clipboard";
@@ -251,6 +251,7 @@ const FEATURE_SNAP_KINDS = new Set<Snap["kind"]>([
   "node",
   "perpendicular",
   "tangent",
+  "apparent",
 ]);
 
 /**
@@ -352,6 +353,7 @@ export function Viewport() {
   const trackingRayRef = useRef<{ from: Point; to: Point; angleDeg: number } | null>(null);
   /** Object snap tracking (T-20): feature points the cursor has hovered, newest first, and the guides in play. */
   const acquiredRef = useRef<Point[]>([]);
+  const acquiredLinesRef = useRef<TrackLine[]>([]);
   const trackRaysRef = useRef<{ from: Point; to: Point; angleDeg: number }[]>([]);
   /** Last pointer position on the canvas, where the typed-coordinate box opens. */
   const lastScreenRef = useRef<Point | null>(null);
@@ -544,6 +546,8 @@ export function Viewport() {
     if (tracking.otrack && FEATURE_SNAP_KINDS.has(raw.kind)) {
       acquiredRef.current = acquirePoint(acquiredRef.current, raw.point);
     }
+    // T-21: hovering a straight piece acquires it for a parallel snap.
+    if (tracking.otrack && raw.kind === "on-line" && raw.refLine) acquiredLinesRef.current = acquireLine(acquiredLinesRef.current, raw.refLine);
     trackRaysRef.current = [];
     if (!t) return { snap: raw, ray: null };
     const increment = trackingIncrement(tracking, shiftKey);
@@ -553,6 +557,13 @@ export function Viewport() {
         snap: { point: tracked.point, kind: "tracking" },
         ray: { from: tracked.ray.from, to: tracked.point, angleDeg: tracked.ray.angleDeg },
       };
+    }
+    if (tracking.otrack && !FEATURE_SNAP_KINDS.has(raw.kind) && useSnapSettings.getState().settings.parallel) {
+      const par = parallelTrack(world, t.anchor(), acquiredLinesRef.current, SNAP_PX / view.scale);
+      if (par) {
+        trackRaysRef.current = [{ from: par.ray.from, to: par.point, angleDeg: par.ray.angleDeg }];
+        return { snap: { point: par.point, kind: "parallel" }, ray: null };
+      }
     }
     if (tracking.otrack && !FEATURE_SNAP_KINDS.has(raw.kind)) {
       const hit = trackAlignment(world, acquiredRef.current, trackingAngles(increment), SNAP_PX / view.scale);
@@ -662,6 +673,7 @@ export function Viewport() {
     trackingRayRef.current = null;
     trackRaysRef.current = [];
     acquiredRef.current = [];
+    acquiredLinesRef.current = [];
     syncPrompt();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tool]);
@@ -951,6 +963,7 @@ export function Viewport() {
         e.preventDefault();
         useTracking.getState().toggleOtrack();
         acquiredRef.current = [];
+    acquiredLinesRef.current = [];
       } else if (getTool(app.tool)?.key?.(toolCtx, e)) {
         // The active tool's own keys (finish/close a polyline, arc modes, ...) come before the global ones.
         e.preventDefault();
@@ -973,6 +986,7 @@ export function Viewport() {
         setTyped(null);
         setCycle(null);
         acquiredRef.current = [];
+    acquiredLinesRef.current = [];
         interactionRef.current = { kind: "idle" };
         app.setSelection([]);
         app.setMeasurement(null);

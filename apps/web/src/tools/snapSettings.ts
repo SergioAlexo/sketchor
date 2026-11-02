@@ -21,6 +21,8 @@ export const SNAP_KIND_LABELS: { id: keyof SnapSettings; label: string; hint: st
   { id: "tangent", label: "Tangent", hint: "Where a line from the last point touches a circle or arc" },
   { id: "on-line", label: "Nearest", hint: "Nearest point along a line, arc or circle" },
   { id: "extension", label: "Extension", hint: "Along a line past its end" },
+  { id: "apparent", label: "Apparent intersection", hint: "Where two lines that do not touch would cross if extended" },
+  { id: "parallel", label: "Parallel", hint: "Hover a line, then draw parallel to it from the last point (needs TRACK)" },
   { id: "grid", label: "Grid", hint: "The adaptive grid, when nothing else is near" },
 ];
 

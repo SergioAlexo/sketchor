@@ -267,7 +267,7 @@ These keep their original IDs; the full spec for each is in the named doc. Tick 
 - [x] T-15 Offset "through point" mode + round-gap option (`OFFSETGAPTYPE`)
 - [x] T-16 Trim / extend by fence drag
 - [~] T-17 Fillet / chamfer between arcs and circles (and line–arc) — fillet done incl. T-46 constraints; open: chamfer between arcs
-- [ ] T-21 Parallel snap + apparent intersection
+- [x] T-21 Parallel snap + apparent intersection
 - [ ] T-27 Multifunction grip menu (hover a vertex grip → stretch / add vertex / remove vertex / convert to arc)
 - [x] T-29 Zoom selected
 - [ ] T-35 Array along a path (extends `pattern.ts`)

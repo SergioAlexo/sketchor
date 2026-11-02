@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SketchDocument, entityPoints, type Entity } from "@sketchor/core";
-import { ALL_SNAPS_ON, findSnap, snapMovingSelection, snapRotation } from "./snapping";
+import { ALL_SNAPS_ON, apparentIntersections, findSnap, snapMovingSelection, snapRotation } from "./snapping";
 import type { View } from "./view";
 
 const view: View = { scale: 1, ox: 0, oy: 0 }; // 1 px = 1 world unit → snap tol = 10
@@ -186,5 +186,42 @@ describe("findSnap object snaps", () => {
   it("marks point entities as nodes", () => {
     const s = findSnap(doc({ id: "p", type: "point", p: { x: 10, y: 10 } }), view, { x: 12, y: 9 });
     expect(s.kind).toBe("node");
+  });
+
+  it("T-21 apparent intersection: lines that stop short of each other snap where they would cross", () => {
+    // The horizontal stops at x=40 and the vertical starts at y=20: extended they would cross at (60, 0).
+    const d = doc(line("h", 0, 0, 40, 0), line("v", 60, 20, 60, 80));
+    const s = findSnap(d, view, { x: 62, y: 3 });
+    expect(s.kind).toBe("apparent");
+    expect(s.point.x).toBeCloseTo(60, 9);
+    expect(s.point.y).toBeCloseTo(0, 9);
+  });
+
+  it("apparent intersection outranks the nearest-point and extension tiers, but not a real feature point", () => {
+    // The cursor is near both lines' extensions (extension tier) and on the vertical's body (nearest tier).
+    const d = doc(line("h", 0, 0, 40, 0), line("v", 60, -30, 60, 80));
+    expect(findSnap(d, view, { x: 61, y: 4 }).kind).toBe("apparent");
+    // A real endpoint close by still wins.
+    const e = doc(line("h", 0, 0, 40, 0), line("v", 60, 3, 60, 80));
+    expect(findSnap(e, view, { x: 60, y: 4 }).kind).toBe("endpoint");
+  });
+
+  it("a real crossing is an intersection, not an apparent one; parallel lines never cross", () => {
+    const crossing = doc(line("a", 0, 0, 100, 100), line("b", 0, 100, 100, 0));
+    expect(findSnap(crossing, view, { x: 51, y: 49 }).kind).toBe("intersection");
+    expect(apparentIntersections([{ a: { x: 0, y: 0 }, b: { x: 100, y: 100 } }, { a: { x: 0, y: 100 }, b: { x: 100, y: 0 } }], { x: 50, y: 50 }, 10)).toEqual([]);
+    expect(apparentIntersections([{ a: { x: 0, y: 0 }, b: { x: 10, y: 0 } }, { a: { x: 0, y: 1 }, b: { x: 10, y: 1 } }], { x: 50, y: 0 }, 10)).toEqual([]);
+  });
+
+  it("apparent intersection honours its switch and ignores crossings absurdly far along the lines", () => {
+    const d = doc(line("h", 0, 0, 40, 0), line("v", 60, 20, 60, 80));
+    expect(findSnap(d, view, { x: 62, y: 3 }, { settings: { ...ALL_SNAPS_ON, apparent: false } }).kind).not.toBe("apparent");
+    expect(apparentIntersections([{ a: { x: 0, y: 0 }, b: { x: 1, y: 0 } }, { a: { x: 500, y: 20 }, b: { x: 500, y: 80 } }], { x: 500, y: 0 }, 10)).toEqual([]);
+  });
+
+  it("an on-line snap on a straight piece names it, so the viewport can acquire it for a parallel snap", () => {
+    const s = findSnap(doc(line("l", 0, 0, 100, 0)), view, { x: 30, y: 3 }, { settings: { ...ALL_SNAPS_ON, grid: false } });
+    expect(s.kind).toBe("on-line");
+    expect(s.refLine).toEqual({ a: { x: 0, y: 0 }, b: { x: 100, y: 0 } });
   });
 });

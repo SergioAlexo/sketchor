@@ -584,7 +584,10 @@ T-20) → raw cursor. A feature snap the cursor actually touched always wins,
 as in AutoCAD; tracking only replaces the fall-through result. Hovering a
 feature point acquires it (three deep, newest first), and `trackAlignment`
 returns the projection — or, when two acquired alignments cross near the
-cursor, their intersection. All three stages are pure and tested;
+cursor, their intersection. T-21: hovering a line also acquires it
+(`acquireLine`), and `parallelTrack` pulls the cursor onto the ray from the
+tool's anchor that runs parallel to it; the "apparent" snap (extended lines
+crossing) ranks just below midpoint. All three stages are pure and tested;
 `resolvePick` in `Viewport.tsx` is the only place that sequences them.
 
 Selection lives in `packages/core` too, so the rules are testable without a

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acquirePoint, trackAlignment, trackingAngles } from "./objectTracking";
+import { acquireLine, acquirePoint, parallelTrack, trackAlignment, trackingAngles } from "./objectTracking";
 
 /**
  * Object snap tracking is the difference between "roughly above that
@@ -106,5 +106,64 @@ describe("acquirePoint", () => {
     let acquired = [{ x: 1, y: 0 }, { x: 2, y: 0 }];
     for (let i = 0; i < 5; i++) acquired = acquirePoint(acquired, { x: 2, y: 0 }, 3);
     expect(acquired).toEqual([{ x: 2, y: 0 }, { x: 1, y: 0 }]);
+  });
+});
+
+/**
+ * Parallel snap (T-21): hover a line, then the cursor locks onto the ray from
+ * the last point that runs parallel to it. A wrong direction here draws a
+ * line a degree off "parallel" that no constraint check will catch later.
+ */
+describe("parallelTrack", () => {
+  const ref = { a: { x: 0, y: 0 }, b: { x: 100, y: 50 } };
+  const anchor = { x: 10, y: 200 };
+  const dir = { x: 100 / Math.hypot(100, 50), y: 50 / Math.hypot(100, 50) };
+
+  it("projects the cursor onto the parallel ray and reports the guide from the anchor", () => {
+    const hit = parallelTrack({ x: 210, y: 301 }, anchor, [ref], 5)!;
+    expect(hit).not.toBeNull();
+    const v = { x: hit.point.x - anchor.x, y: hit.point.y - anchor.y };
+    expect(v.x * dir.y - v.y * dir.x).toBeCloseTo(0, 9);
+    expect(hit.ray.from).toEqual(anchor);
+    expect(hit.ray.angleDeg).toBeCloseTo(Math.atan2(50, 100) * 180 / Math.PI, 9);
+  });
+
+  it("works backwards from the anchor too, and flips the guide angle", () => {
+    const hit = parallelTrack({ x: -190, y: 100 }, anchor, [ref], 5)!;
+    expect(hit.point.x).toBeLessThan(anchor.x);
+    expect(Math.abs(hit.ray.angleDeg)).toBeGreaterThan(90);
+  });
+
+  it("says nothing when the cursor is off the ray, on the anchor, or there is no anchor / line", () => {
+    expect(parallelTrack({ x: 210, y: 340 }, anchor, [ref], 5)).toBeNull();
+    expect(parallelTrack({ x: 12, y: 201 }, anchor, [ref], 5)).toBeNull();
+    expect(parallelTrack({ x: 210, y: 301 }, null, [ref], 5)).toBeNull();
+    expect(parallelTrack({ x: 210, y: 301 }, anchor, [], 5)).toBeNull();
+  });
+
+  it("ignores a line the anchor sits on, and a zero-length line", () => {
+    expect(parallelTrack({ x: 200, y: 100 }, { x: 40, y: 20 }, [ref], 5)).toBeNull();
+    expect(parallelTrack({ x: 210, y: 301 }, anchor, [{ a: { x: 3, y: 3 }, b: { x: 3, y: 3 } }], 5)).toBeNull();
+  });
+
+  it("the nearest of several acquired lines wins", () => {
+    const flat = { a: { x: 0, y: 0 }, b: { x: 50, y: 0 } };
+    const hit = parallelTrack({ x: 300, y: 201 }, anchor, [ref, flat], 8)!;
+    expect(hit.line).toBe(flat);
+    expect(hit.point.y).toBeCloseTo(200, 9);
+  });
+});
+
+describe("acquireLine", () => {
+  const l1 = { a: { x: 0, y: 0 }, b: { x: 1, y: 0 } };
+  const l2 = { a: { x: 0, y: 1 }, b: { x: 1, y: 1 } };
+  it("newest first, no duplicates (either end order), capped", () => {
+    let acq = acquireLine([], l1);
+    acq = acquireLine(acq, l2);
+    acq = acquireLine(acq, { a: l1.b, b: l1.a });
+    expect(acq.length).toBe(2);
+    expect(acq[0].a).toEqual(l1.b);
+    const many = [1, 2, 3, 4].reduce((a, k) => acquireLine(a, { a: { x: 0, y: k }, b: { x: 1, y: k } }), [] as ReturnType<typeof acquireLine>);
+    expect(many.length).toBe(3);
   });
 });

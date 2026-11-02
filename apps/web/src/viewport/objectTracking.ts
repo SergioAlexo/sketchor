@@ -116,3 +116,55 @@ export function acquirePoint(acquired: readonly Point[], p: Point, limit = 3, ep
   const rest = acquired.filter((q) => Math.hypot(q.x - p.x, q.y - p.y) > epsilon);
   return [p, ...rest].slice(0, limit);
 }
+
+/** A straight piece of drawing remembered for a parallel snap (T-21). */
+export interface TrackLine {
+  a: Point;
+  b: Point;
+}
+
+export interface ParallelHit {
+  point: Point;
+  /** The guide: from the anchor along the reference line's direction, towards the cursor. */
+  ray: TrackRay;
+  line: TrackLine;
+}
+
+/** Remembers a hovered line, newest first, capped at `limit`; a line already acquired just moves to the front. */
+export function acquireLine(acquired: readonly TrackLine[], line: TrackLine, limit = 3, epsilon = 1e-9): TrackLine[] {
+  const same = (l: TrackLine) =>
+    (Math.hypot(l.a.x - line.a.x, l.a.y - line.a.y) <= epsilon && Math.hypot(l.b.x - line.b.x, l.b.y - line.b.y) <= epsilon) ||
+    (Math.hypot(l.a.x - line.b.x, l.a.y - line.b.y) <= epsilon && Math.hypot(l.b.x - line.a.x, l.b.y - line.a.y) <= epsilon);
+  return [line, ...acquired.filter((l) => !same(l))].slice(0, limit);
+}
+
+/**
+ * Parallel snap (T-21, AutoCAD PAR): with a line acquired by hovering, the
+ * cursor is pulled onto the ray from `anchor` that runs parallel to it
+ * whenever it is within `tol` of that ray (either way along it). The nearest
+ * ray wins. A line the anchor itself lies on gives no snap - "parallel to the
+ * line I am standing on" is just that line - and neither does a cursor sitting
+ * on the anchor.
+ */
+export function parallelTrack(cursor: Point, anchor: Point | null, lines: readonly TrackLine[], tol: number): ParallelHit | null {
+  if (!anchor || lines.length === 0 || tol <= 0) return null;
+  if (Math.hypot(cursor.x - anchor.x, cursor.y - anchor.y) < tol) return null;
+  let best: { hit: ParallelHit; d: number } | null = null;
+  for (const line of lines) {
+    const dx = line.b.x - line.a.x;
+    const dy = line.b.y - line.a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-9) continue;
+    const ux = dx / len;
+    const uy = dy / len;
+    // The anchor on the reference line itself: nothing to be parallel to.
+    if (Math.abs((anchor.x - line.a.x) * uy - (anchor.y - line.a.y) * ux) < 1e-6) continue;
+    const d = Math.abs((cursor.x - anchor.x) * uy - (cursor.y - anchor.y) * ux);
+    if (d > tol || (best && d >= best.d)) continue;
+    const along = (cursor.x - anchor.x) * ux + (cursor.y - anchor.y) * uy;
+    const sign = along < 0 ? -1 : 1;
+    const angleDeg = (Math.atan2(uy * sign, ux * sign) * 180) / Math.PI;
+    best = { d, hit: { point: { x: anchor.x + ux * along, y: anchor.y + uy * along }, ray: { from: anchor, angleDeg }, line } };
+  }
+  return best ? best.hit : null;
+}
