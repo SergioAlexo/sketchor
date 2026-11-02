@@ -12,9 +12,15 @@ export interface FieldContext {
   sheet?: number;
   sheets?: number;
   scale?: string;
+  /** Named parameters (T-45) by name, for `{{param:width}}`. */
+  params?: Record<string, number>;
+  /** Sheet-set attributes (L-04: project, client, drawnby, title...), by lower-case name, for `{{project}}` etc. */
+  custom?: Record<string, string>;
 }
 
 let context: FieldContext = {};
+/** L-04: a per-evaluation context (the layout an insert is on), layered over the app-wide one by {@link withFieldContext}. */
+let override: FieldContext | null = null;
 let revision = 0;
 
 export function setFieldContext(patch: FieldContext): void {
@@ -25,7 +31,18 @@ export function setFieldContext(patch: FieldContext): void {
 }
 
 export function getFieldContext(): FieldContext {
-  return context;
+  return override ?? context;
+}
+
+/** Runs `fn` with `patch` layered over the app-wide context (fields in paper-space title blocks are per layout). */
+export function withFieldContext<T>(patch: FieldContext, fn: () => T): T {
+  const prev = override;
+  override = { ...context, ...patch };
+  try {
+    return fn();
+  } finally {
+    override = prev;
+  }
 }
 
 /** Changes whenever the context does — part of the key of cached insert evaluations. */
@@ -42,9 +59,14 @@ function today(): string {
 }
 
 /** Replaces `{{field}}` (case-insensitive); an unknown or unset field is left as written so the author sees the typo. */
-export function expandFields(text: string, ctx: FieldContext = context): string {
+export function expandFields(text: string, ctx: FieldContext = override ?? context): string {
   if (!text.includes("{{")) return text;
-  return text.replace(/\{\{\s*([A-Za-z_]+)\s*\}\}/g, (whole, raw: string) => {
+  return text.replace(/\{\{\s*([A-Za-z_][\w]*(?::[A-Za-z_]\w*)?)\s*\}\}/g, (whole, raw: string) => {
+    const colon = raw.indexOf(":");
+    if (colon > 0 && raw.slice(0, colon).toLowerCase() === "param") {
+      const v = ctx.params?.[raw.slice(colon + 1)];
+      return v === undefined ? whole : String(Math.round(v * 1e6) / 1e6);
+    }
     switch (raw.toLowerCase()) {
       case "filename":
         return ctx.filename ?? whole;
@@ -59,7 +81,7 @@ export function expandFields(text: string, ctx: FieldContext = context): string 
       case "scale":
         return ctx.scale ?? "1:1";
       default:
-        return whole;
+        return ctx.custom?.[raw.toLowerCase()] ?? whole;
     }
   });
 }

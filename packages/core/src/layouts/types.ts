@@ -85,6 +85,16 @@ export function paperSizeMm(p: PaperSpec): { w: number; h: number } {
   return { w: p.w * k, h: p.h * k };
 }
 
+/** Printable area (inside the margins) in mm, origin at the sheet's lower-left corner. */
+export function printableRectMm(layout: LayoutRecord): { x: number; y: number; w: number; h: number } {
+  const { w, h } = paperSizeMm(layout.paper);
+  const k = layout.paper.units === "in" ? 25.4 : 1;
+  const m = layout.margins;
+  const left = m.left * k;
+  const bottom = m.bottom * k;
+  return { x: left, y: bottom, w: Math.max(0, w - left - m.right * k), h: Math.max(0, h - bottom - m.top * k) };
+}
+
 export function newLayout(name: string, paper: PaperSpec = paperSpec("A4")): LayoutRecord {
   return {
     name,

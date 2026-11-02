@@ -4,7 +4,9 @@ import type { Point } from "../geometry";
 import { activeBlocks } from "../blocks/context";
 import { applyParamGrip, dynamicSpecOf, paramGrips } from "../blocks/dynamic";
 import { evaluateInsert, getBlock } from "../blocks/evaluate";
-import { fieldRevision } from "../blocks/fields";
+import { fieldRevision, withFieldContext, type FieldContext } from "../blocks/fields";
+import type { SketchDocument } from "../document";
+import { layoutFieldContext } from "../layouts/fields";
 import type { BlocksHost } from "../blocks/types";
 import { boundsOfPoints, kindBounds, kindHitDistance, kindSnaps, kindTessellate, type Affine, type EntityKind, type KindSnap } from "./registry";
 
@@ -21,6 +23,8 @@ interface Evaluated {
   host: BlocksHost;
   rev: number;
   fields: number;
+  /** L-04: the layout field context the contents were evaluated with (a title block's {{scale}} follows its viewport without a table change). */
+  ctxKey: string;
   entities: Entity[];
 }
 const evaluated = new WeakMap<InsertEntity, Evaluated>();
@@ -29,10 +33,13 @@ const evaluated = new WeakMap<InsertEntity, Evaluated>();
 export function insertContents(e: InsertEntity): Entity[] {
   const host = activeBlocks();
   if (!host) return [];
+  // A paper-space insert's fields (sheet, scale, parameters...) depend on its layout; model-space inserts keep the app-wide context.
+  const layoutCtx: FieldContext | null = (e as { space?: string }).space && typeof (host as Partial<SketchDocument>).all === "function" ? layoutFieldContext(host as SketchDocument, e) : null;
+  const ctxKey = layoutCtx ? JSON.stringify(layoutCtx) : "";
   const hit = evaluated.get(e);
-  if (hit && hit.host === host && hit.rev === host.tablesRevision && hit.fields === fieldRevision()) return hit.entities;
-  const entities = evaluateInsert(host, e);
-  evaluated.set(e, { host, rev: host.tablesRevision, fields: fieldRevision(), entities });
+  if (hit && hit.host === host && hit.rev === host.tablesRevision && hit.fields === fieldRevision() && hit.ctxKey === ctxKey) return hit.entities;
+  const entities = layoutCtx ? withFieldContext(layoutCtx, () => evaluateInsert(host, e)) : evaluateInsert(host, e);
+  evaluated.set(e, { host, rev: host.tablesRevision, fields: fieldRevision(), ctxKey, entities });
   return entities;
 }
 

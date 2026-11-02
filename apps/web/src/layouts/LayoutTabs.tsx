@@ -11,6 +11,7 @@ import {
   parseScale,
   scaleLabel,
   standardScaleName,
+  planTitleBlock,
   uniqueLayoutName,
   viewportPreset,
   type LayoutRecord,
@@ -20,6 +21,7 @@ import { useTargetViewport } from "./targetViewport";
 import { bus, doc, useApp } from "../state/store";
 import { setActiveLayout, setMspace, useSpaceState } from "./layoutState";
 import { PageSetupDialog } from "./PageSetupDialog";
+import { SheetsDialog } from "./SheetsDialog";
 
 /**
  * L-02: the bottom strip of a drawing tab: Model | Layout1 | Layout2 | +.
@@ -33,6 +35,7 @@ export function LayoutTabs() {
   const [menu, setMenu] = useState<{ x: number; y: number; name: string } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [setup, setSetup] = useState<string | null>(null);
+  const [sheets, setSheets] = useState(false);
 
   // A layout can disappear under the user (delete, undo of its creation): fall back to Model.
   const gone = space.layout !== null && !doc.hasRecord(LAYOUTS_TABLE, space.layout);
@@ -125,6 +128,25 @@ export function LayoutTabs() {
         +
       </button>
       {space.layout && (
+        <button
+          className="layout-tab"
+          data-testid="layout-title-block"
+          title="Insert a border and a title block (fields: sheet, scale, date, project...)"
+          onClick={() => {
+            const cmds = planTitleBlock(doc, space.layout!);
+            if (cmds) bus.execute({ type: "batch", commands: cmds });
+            else window.alert("The printable area is too small for the title block.");
+          }}
+        >
+          Title block
+        </button>
+      )}
+      {space.layout && (
+        <button className="layout-tab" data-testid="layout-sheets" title="Edit project, client, drawn by... for every sheet at once" onClick={() => setSheets(true)}>
+          Sheets...
+        </button>
+      )}
+      {space.layout && (
         <button className="layout-tab setup" data-testid="layout-page-setup" onClick={() => setSetup(space.layout)} title="Page setup">
           Page setup
         </button>
@@ -139,6 +161,7 @@ export function LayoutTabs() {
           <button onClick={() => { remove(menu.name); setMenu(null); }}>Delete</button>
         </div>
       )}
+      {sheets && <SheetsDialog onClose={() => setSheets(false)} />}
       {setup && <PageSetupDialog name={setup} onClose={() => setSetup(null)} />}
     </div>
   );
