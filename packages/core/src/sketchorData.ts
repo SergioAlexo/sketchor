@@ -42,6 +42,12 @@ export interface SketchorDocData {
   dims?: Record<string, Record<string, unknown>>;
   /** D-10: full `dimStyles` records (child styles, arrow kinds, colours…). */
   dimStyles?: TableRecord[];
+  /** L-07: the exact `layouts` records (plot style, attributes, margins in paper units). */
+  layouts?: TableRecord[];
+  /** L-07: each viewport's own fields (mm, exact), by entity id. */
+  viewports?: Record<string, Record<string, unknown>>;
+  /** L-04: the sheet set's shared title-block attributes. */
+  sheetSet?: Record<string, string>;
 }
 
 export const SKETCHOR_DICT_KEY = "SKETCHOR_DATA";

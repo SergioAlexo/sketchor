@@ -8,7 +8,9 @@ import { hasLeaderRecord, isPlainLeader, leaderDxfInfo, leaderRecordText, leader
 import { DIM_STYLE_PRESETS, DEFAULT_DIM_STYLE, dimStyleOf, dimStyleRecord } from "../dimensions/style";
 import { activeDimHost, styleOnlyHost } from "../dimensions/context";
 import { STANDARD_TEXT_STYLE, type TextStyle } from "../textStyle";
-import type { DimensionEntity, Entity } from "../entities";
+import type { DimensionEntity, Entity, PolylineEntity, ViewportEntity } from "../entities";
+import type { LayoutRecord } from "../layouts/types";
+import { layoutObjectText, overallViewportText, paperBlockName, viewportEntityText, type LayoutWritePlan, type ViewportWriteInfo } from "./layouts";
 import { layerOf } from "../entities";
 import type { BlockDefinition } from "../blocks/types";
 import { scaleBlockDefinition, scaleEntityKeepingInserts } from "../dxf";
@@ -173,7 +175,7 @@ function header(insUnits: number, bounds: { minX: number; minY: number; maxX: nu
   );
 }
 
-function tablesSection(plan: Plan, layers: string[], blockDefs: readonly BlockDefinition[], textStyles: readonly TextStyle[] = [], dimStyles: readonly { name: string; vars: [number, number | string][] }[] = []): string {
+function tablesSection(plan: Plan, layers: string[], blockDefs: readonly BlockDefinition[], textStyles: readonly TextStyle[] = [], dimStyles: readonly { name: string; vars: [number, number | string][] }[] = [], layoutPlans: readonly LayoutWritePlan[] = []): string {
   const { h, layerHandles, linetypeHandles } = plan;
   const layerEntries = layers.map((name) => layerEntry(layerHandles.get(name)!, h.layerTable, name));
   const ltypeEntries = [...linetypeHandles].map(([name, handle]) => ltypeEntry(handle, h.ltypeTable, name));
@@ -199,26 +201,30 @@ function tablesSection(plan: Plan, layers: string[], blockDefs: readonly BlockDe
     table("BLOCK_RECORD", h.blockRecordTable, [
       blockRecordEntry(h.modelSpaceBlockRecord, h.blockRecordTable, "*Model_Space"),
       blockRecordEntry(h.paperSpaceBlockRecord, h.blockRecordTable, "*Paper_Space"),
+      ...layoutPlans.filter((l) => l.index > 0).map((l) => blockRecordEntry(l.record, h.blockRecordTable, l.blockName)),
       ...blockDefs.map((d) => blockRecordEntry(plan.blocks.get(d.name)!.record, h.blockRecordTable, d.name)),
     ]) +
     `0\nENDSEC\n`
   );
 }
 
-function blockBeginEnd(beginH: string, endH: string, recordH: string, name: string): string {
+function blockBeginEnd(beginH: string, endH: string, recordH: string, name: string, body = ""): string {
   return (
     `0\nBLOCK\n5\n${beginH}\n330\n${recordH}\n100\nAcDbEntity\n8\n0\n100\nAcDbBlockBegin\n` +
     `2\n${name}\n70\n0\n10\n0.0\n20\n0.0\n30\n0.0\n3\n${name}\n1\n\n` +
+    body +
     `0\nENDBLK\n5\n${endH}\n330\n${recordH}\n100\nAcDbEntity\n8\n0\n100\nAcDbBlockEnd\n`
   );
 }
 
-function blocksSection(plan: Plan, userBlocks: string): string {
+function blocksSection(plan: Plan, userBlocks: string, layoutPlans: readonly LayoutWritePlan[] = [], layoutBodies: readonly string[] = []): string {
   const { h } = plan;
   return (
     `0\nSECTION\n2\nBLOCKS\n` +
     blockBeginEnd(h.modelSpaceBlockBegin, h.modelSpaceBlockEnd, h.modelSpaceBlockRecord, "*Model_Space") +
     blockBeginEnd(h.paperSpaceBlockBegin, h.paperSpaceBlockEnd, h.paperSpaceBlockRecord, "*Paper_Space") +
+    // L-07: the sheets after the first keep their entities inside their own `*Paper_Space<n>` block, as AutoCAD does.
+    layoutPlans.filter((l) => l.index > 0).map((l) => blockBeginEnd(l.begin, l.end, l.record, l.blockName, layoutBodies[l.index] ?? "")).join("") +
     userBlocks +
     `0\nENDSEC\n`
   );
@@ -253,7 +259,7 @@ function groupObjects(plan: Plan, groups: readonly Group[], flat: (g: Group) => 
   return { dict, objects };
 }
 
-function objectsSection(plan: Plan, groupsPart: { dict: string; objects: string }, data: SketchorDocData | null, mleader: { dict: string; style: string; textHeight: number; arrow: number } | null = null): string {
+function objectsSection(plan: Plan, groupsPart: { dict: string; objects: string }, data: SketchorDocData | null, mleader: { dict: string; style: string; textHeight: number; arrow: number } | null = null, layoutPlans: readonly LayoutWritePlan[] = [], inchUnits = false): string {
   const { h } = plan;
   const root =
     `0\nDICTIONARY\n5\n${h.rootDict}\n330\n0\n100\nAcDbDictionary\n281\n1\n` +
@@ -266,14 +272,17 @@ function objectsSection(plan: Plan, groupsPart: { dict: string; objects: string 
   const groupDict = `0\nDICTIONARY\n5\n${h.groupDict}\n330\n${h.rootDict}\n100\nAcDbDictionary\n281\n1\n` + groupsPart.dict;
   const layoutDict =
     `0\nDICTIONARY\n5\n${h.layoutDict}\n330\n${h.rootDict}\n100\nAcDbDictionary\n281\n1\n` +
-    `3\nModel\n350\n${h.modelLayout}\n3\nLayout1\n350\n${h.layout1Layout}\n`;
+    `3\nModel\n350\n${h.modelLayout}\n` +
+    (layoutPlans.length > 0 ? layoutPlans.map((l) => `3\n${l.layout.name}\n350\n${l.object}\n`).join("") : `3\nLayout1\n350\n${h.layout1Layout}\n`);
   return (
     `0\nSECTION\n2\nOBJECTS\n` +
     root +
     groupDict +
     layoutDict +
     layoutObject(h.modelLayout, h.layoutDict, "Model", h.modelSpaceBlockRecord, 0) +
-    layoutObject(h.layout1Layout, h.layoutDict, "Layout1", h.paperSpaceBlockRecord, 1) +
+    (layoutPlans.length > 0
+      ? layoutPlans.map((l) => layoutObjectText(l, h.layoutDict, inchUnits)).join("")
+      : layoutObject(h.layout1Layout, h.layoutDict, "Layout1", h.paperSpaceBlockRecord, 1)) +
     groupsPart.objects +
     (mleader ? mleaderStyleObjects({ dict: mleader.dict, style: mleader.style, rootDict: h.rootDict }, mleader.textHeight, mleader.arrow) : "") +
     xrecord +
@@ -299,6 +308,13 @@ export interface DxfWriteOptions2018 {
   groups?: readonly Group[];
   constraints?: readonly Constraint[];
   params?: readonly TableRecord[];
+  /**
+   * L-07: the drawing's layouts with the entities drawn on each (paper-space coordinates, mm like everything else).
+   * Each becomes a LAYOUT object, a `*Paper_Space` block and VIEWPORT entities; `entitiesIn` stays model space.
+   */
+  layouts?: readonly { layout: LayoutRecord; entities: readonly Entity[] }[];
+  /** L-04: the sheet set's shared attributes (`settings.sheetSet`), carried in the SKETCHOR record. */
+  sheetSet?: Record<string, string>;
 }
 
 /**
@@ -350,7 +366,7 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
     entities.push(e);
   }
   // B-25: non-default instances of dynamic blocks point at anonymous *U<n> blocks holding what they show.
-  const dynExport = planDynamicExport(options.blocks ?? [], entities);
+  const dynExport = planDynamicExport(options.blocks ?? [], [...entities, ...(options.layouts ?? []).flatMap((l) => l.entities)]);
   const blockHost = styleOnlyHost(dimHost);
   const blockDefs = [
     ...[...(options.blocks ?? []), ...dynExport.blocks].map((d) => (d.entities.some((e) => e.type === "dimension") ? { ...d, entities: explodeDimensions(d.entities, blockHost) } : d)),
@@ -358,7 +374,13 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   ].map((d) => (scale !== 1 ? scaleBlockDefinition(d, scale) : d));
   const defByName = new Map(blockDefs.map((d) => [d.name, d]));
   const scaled = scale !== 1 ? entities.map((e) => scaleEntityKeepingInserts(e, scale)) : entities;
-  const everyEntity = [...scaled, ...blockDefs.flatMap((d) => d.entities)];
+  // L-07: paper-space entities, in file units like model space (a dimension on a sheet is written as its parts; a viewport keeps its mm values and is converted where it is written).
+  const paperSheets = (options.layouts ?? []).map((l) => ({
+    layout: l.layout,
+    entities: l.entities.flatMap((e) => (e.type === "dimension" ? explodeDimension(e, dimHost) : [e])).map((e) => (e.type === "viewport" || scale === 1 ? e : scaleEntityKeepingInserts(e, scale))),
+  }));
+  const paperAll = paperSheets.flatMap((s) => s.entities);
+  const everyEntity = [...scaled, ...paperAll, ...blockDefs.flatMap((d) => d.entities)];
   const foreign = (options.foreign ?? []).filter((f) => f.units === insUnits || f.units === 0 || insUnits === 0);
   const layers = [...new Set([...everyEntity.map((e) => layerOf(e)), ...foreign.map((f) => f.layer)])];
   if (layers.length === 0) layers.push("0");
@@ -367,6 +389,16 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
 
   const plan = buildPlan(layers, linetypes, blockDefs);
   const next = () => plan.alloc.alloc();
+  const layoutPlans: LayoutWritePlan[] = paperSheets.map((s, index) => ({
+    layout: s.layout,
+    index,
+    blockName: paperBlockName(index),
+    record: index === 0 ? plan.h.paperSpaceBlockRecord : next(),
+    begin: index === 0 ? plan.h.paperSpaceBlockBegin : next(),
+    end: index === 0 ? plan.h.paperSpaceBlockEnd : next(),
+    object: index === 0 ? plan.h.layout1Layout : next(),
+    overall: next(),
+  }));
   const handleOf = new Map<string, string>();
   // D-10: the MLEADERSTYLE object a MULTILEADER points at (allocated only when one is written).
   const firstMLeader = entitiesIn.find((e) => e.type === "dimension" && leaderInfo.has(e.id) && !isPlainLeader(e));
@@ -392,6 +424,16 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   const groupHandles = new Map(groups.map((g) => [g.id, next()] as const));
   const reactorsOf = new Map<string, string[]>();
   for (const g of groups) for (const m of new Set(flat(g.id))) reactorsOf.set(m, [...(reactorsOf.get(m) ?? []), groupHandles.get(g.id)!]);
+  // L-07: ids 2.. for each sheet's viewports (1 is the sheet's overall viewport); frozen layers as LAYER handles.
+  const vpInfo = new Map<string, ViewportWriteInfo>();
+  for (const s of paperSheets) {
+    let id = 2;
+    for (const e of s.entities) {
+      if (e.type !== "viewport") continue;
+      vpInfo.set(e.id, { id, status: id, frozen: (e.frozenLayers ?? []).map((name) => plan.layerHandles.get(name)).filter((x): x is string => !!x), scale });
+      id++;
+    }
+  }
   const write = (e: Entity, owner: string): string => {
     const h = next();
     handleOf.set(e.id, h);
@@ -401,6 +443,18 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
       const dyn = dynExport.stateOf(e);
       const uDef = dyn ? defByName.get(dyn.name) : undefined;
       text = uDef && dyn ? insertEntity2018({ ...e, block: dyn.name }, uDef, h, owner, next, { block: e.block, params: dyn.params }) : def ? insertEntity2018(e, def, h, owner, next) : ""; // an insert of an unknown block draws nothing
+    } else if (e.type === "viewport") {
+      const info = vpInfo.get(e.id);
+      if (!info) {
+        text = "";
+      } else {
+        // A clipped window names a closed polyline as its boundary (group 340).
+        const clipHandle = e.clip && e.clip.length >= 3 ? next() : undefined;
+        const clipText = clipHandle
+          ? entityDxf2018({ id: `${e.id}:clip`, type: "polyline", ...(e.layer !== undefined ? { layer: e.layer } : {}), points: e.clip!.map((p) => ({ x: p.x * scale, y: p.y * scale })), closed: true } satisfies PolylineEntity, clipHandle, owner, next)
+          : "";
+        text = viewportEntityText(e, h, owner, { ...info, ...(clipHandle ? { clip: clipHandle } : {}) }) + clipText;
+      }
     } else if (e.type === "dimension" && tolStyle.has(e.id)) {
       text = `0\nTOLERANCE\n` + entityHead(h, owner, e) + toleranceRecordText(e, tolStyle.get(e.id)!) + entityXdataText(e);
     } else if (e.type === "dimension" && leaderInfo.has(e.id)) {
@@ -444,6 +498,15 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   const exported = scaled.filter((e) => !(e.type === "line" && e.infinite));
   const entitiesText = exported.map((e) => write(e, plan.h.modelSpaceBlockRecord)).join("") + foreign.map((f) => foreignEntityText(f, next(), plan.h.modelSpaceBlockRecord)).join("");
 
+  // L-07: each sheet = its overall viewport, then its entities. The first sheet lives in ENTITIES (`67 1`), the others in their blocks.
+  const layoutBodies = paperSheets.map((s, index) => {
+    const lp = layoutPlans[index];
+    let body = overallViewportText(lp.overall, lp.record, s.layout, scale) + s.entities.filter((e) => !(e.type === "line" && e.infinite)).map((e) => write(e, lp.record)).join("");
+    if (index === 0) body = body.split("100\nAcDbEntity\n").join("100\nAcDbEntity\n67\n1\n");
+    return body;
+  });
+  const entitiesTextAll = entitiesText + (layoutBodies[0] ?? "");
+
   const groupsPart = groupObjects(plan, groups, (g) => flat(g.id), handleOf, groupHandles);
   const blockExtras: Record<string, BlockExtras> = {};
   for (const d of options.blocks ?? []) {
@@ -472,16 +535,31 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   if (options.constraints?.length) docData.constraints = [...options.constraints];
   if (options.params?.length) docData.params = [...options.params];
   if (Object.keys(blockExtras).length) docData.blocks = blockExtras;
-  const objects = objectsSection(plan, groupsPart, Object.keys(docData).length > 1 ? docData : null, mleader);
+  // L-07: the exact layout records (plot style, attributes...), each viewport's own fields in mm, and the sheet set.
+  if (paperSheets.length) {
+    docData.layouts = paperSheets.map((s) => ({ ...s.layout }));
+    const vps: Record<string, Record<string, unknown>> = {};
+    for (const l of options.layouts ?? []) {
+      for (const e of l.entities) {
+        if (e.type !== "viewport") continue;
+        const { id, type, name, layer, color, fill, linetype, lineweight, construction, ...rest } = e;
+        void id; void type; void name; void layer; void color; void fill; void linetype; void lineweight; void construction;
+        vps[e.id] = rest;
+      }
+    }
+    if (Object.keys(vps).length) docData.viewports = vps;
+  }
+  if (options.sheetSet && Object.keys(options.sheetSet).length) docData.sheetSet = { ...options.sheetSet };
+  const objects = objectsSection(plan, groupsPart, Object.keys(docData).length > 1 ? docData : null, mleader, layoutPlans, insUnits === 1);
 
   // Tables allocate handles for their extra records, so build them before $HANDSEED is read.
-  const tablesText = tablesSection(plan, layers, blockDefs, options.textStyles, dimStyleVars);
+  const tablesText = tablesSection(plan, layers, blockDefs, options.textStyles, dimStyleVars, layoutPlans);
   return (
     header(insUnits, bounds, plan.alloc.seed(), options.currentDimStyle || "Standard") +
     `0\nSECTION\n2\nCLASSES\n${foreign.map(foreignClassText).join("")}0\nENDSEC\n` +
     tablesText +
-    blocksSection(plan, userBlocks) +
-    `0\nSECTION\n2\nENTITIES\n${entitiesText}0\nENDSEC\n` +
+    blocksSection(plan, userBlocks, layoutPlans, layoutBodies) +
+    `0\nSECTION\n2\nENTITIES\n${entitiesTextAll}0\nENDSEC\n` +
     objects +
     `0\nEOF\n`
   );

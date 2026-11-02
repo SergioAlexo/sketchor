@@ -1,6 +1,7 @@
 import { parseDxfHatch } from "./hatch/hatchDxf";
 import { hatchArt } from "./hatch/render";
-import type { DimensionEntity, Entity, InsertEntity, SplineEntity } from "./entities";
+import type { DimensionEntity, Entity, InsertEntity, SplineEntity, ViewportEntity } from "./entities";
+import { newLayout, normalizeLayout, paperKeyFor, type LayoutRecord } from "./layouts/types";
 import type { AttributeDef, BlockDefinition } from "./blocks/types";
 import { blockWouldCycle } from "./blocks/evaluate";
 import { imageCorners, newEntityId, polylineSegments, textCorners, transformed } from "./entities";
@@ -640,6 +641,14 @@ export interface DxfParseResult {
   params: TableRecord[];
   /** X-09: unmodelled entities kept verbatim for re-save. */
   foreign: ForeignRecord[];
+  /**
+   * L-07: the file's paper-space layouts (mm, in tab order) and what is drawn on them (`space` set, viewports included).
+   * `entities` is model space only, so thumbnails, fit and every caller that has no sheets are unaffected.
+   */
+  layouts: LayoutRecord[];
+  paperEntities: Entity[];
+  /** L-04: the sheet set's shared attributes from a Sketchor-written file. */
+  sheetSet?: Record<string, string>;
 }
 
 /** Font file name (group 3) → a `TextStyle.font` value: `.shx` → `shx:<name>`, `.ttf`/`.otf` → `ttf:<family>`, anything else the stroke font. */
@@ -1280,7 +1289,15 @@ export function parseDxf(text: string, options: DxfParseOptions = {}): DxfParseR
   const allPairs = tokenize(text);
   const resolved = resolveUnits(allPairs);
   const insUnits = resolved.source === "none" ? (options.assumeUnits ?? 0) : resolved.code;
-  const raws = collectRawEntities(allPairs);
+  const allRaws = collectRawEntities(allPairs);
+  // L-07: records flagged `67 1` are paper space (a legacy POLYLINE's VERTEX/SEQEND records follow their parent).
+  const raws: RawEntity[] = [];
+  const paperRaws: RawEntity[] = [];
+  let inPaper = false;
+  for (const r of allRaws) {
+    if (r.type !== "VERTEX" && r.type !== "SEQEND") inPaper = num(r, 67, 0) === 1;
+    (inPaper ? paperRaws : raws).push(r);
+  }
   const blocks = collectBlocks(allPairs);
   const keep = (options.blocks ?? "keep") === "keep";
 
@@ -1303,6 +1320,7 @@ export function parseDxf(text: string, options: DxfParseOptions = {}): DxfParseR
     }
   }
   const entities = scaleToMm(converted, insUnits);
+  const paper = importPaperSpace(allPairs, paperRaws, blocks, { blocks, warnings, depth: 0, stack: new Set(), keep, hatchSources, handleToId, usedIds, foreign: [], dynImport: dynPlan }, MM_PER_INSUNIT[insUnits] || 1, (code) => scaleToMmFactor(code));
   const blockDefs = keep ? buildBlockDefinitions(blocks, { blocks, warnings, depth: 0, stack: new Set(), keep, handleToId: bodyHandles, dynImport: dynPlan }, insUnits) : [];
   if (dynPlan) {
     for (const [name, spec] of dynPlan.specs(bodyHandles)) {
@@ -1348,13 +1366,24 @@ export function parseDxf(text: string, options: DxfParseOptions = {}): DxfParseR
     if (i >= 0) dimStyles[i] = exact;
     else dimStyles.push(exact);
   }
+  // L-07: a Sketchor-written file restores each layout record and viewport exactly (plot style, attributes, overrides, mm-precise numbers).
+  for (const exact of sketchor.data?.layouts ?? []) {
+    const i = paper.layouts.findIndex((l) => l.name === exact.name);
+    if (i >= 0) paper.layouts[i] = normalizeLayout(exact);
+  }
+  if (sketchor.data?.viewports) {
+    for (const e of paper.entities) {
+      const x = e.type === "viewport" ? sketchor.data.viewports[e.id] : undefined;
+      if (x) Object.assign(e, x);
+    }
+  }
 
   return {
     entities,
     blocks: blockDefs,
     dimStyles: dimStyles.filter((r) => !(r.name === "Standard" && Object.keys(r).length === 1)),
     warnings: dedupe(warnings),
-    report: buildImportReport(raws),
+    report: buildImportReport(allRaws),
     insUnits,
     unitSource: resolved.source,
     textStyles: collectTextStyles(allPairs, MM_PER_INSUNIT[insUnits] || 1),
@@ -1362,6 +1391,9 @@ export function parseDxf(text: string, options: DxfParseOptions = {}): DxfParseR
     groups: sketchor.groups,
     constraints: sketchor.data?.constraints ?? [],
     params: sketchor.data?.params ?? [],
+    layouts: paper.layouts,
+    paperEntities: paper.entities,
+    ...(sketchor.data?.sheetSet ? { sheetSet: sketchor.data.sheetSet } : {}),
   };
 }
 
@@ -1398,6 +1430,163 @@ function keepForeign(raws: RawEntity[], pairs: Pair[], insUnits: number): Foreig
  * each non-anonymous DXF GROUP with 2+ importable members becomes a group.
  * Members are checked against `entityIds`, so a group never names a ghost.
  */
+/** Millimetres per file unit for a `$INSUNITS`-style code (the same table model space uses). */
+function scaleToMmFactor(code: number): number {
+  return MM_PER_INSUNIT[code] || 1;
+}
+
+/** The value of the last `code` pair (LAYOUT objects repeat group 1/330: plot settings first, the layout itself after). */
+function lastStr(raw: RawEntity, code: number, fallback = ""): string {
+  for (let i = raw.pairs.length - 1; i >= 0; i--) if (raw.pairs[i].code === code) return raw.pairs[i].value.trim();
+  return fallback;
+}
+
+/**
+ * L-07: LAYOUT objects -> layout records, and the paper-space records of each (ENTITIES `67 1` for the layout that owns
+ * `*Paper_Space`, the `*Paper_Space<n>` BLOCKS bodies for the rest) -> entities with `space` set, VIEWPORTs -> viewport entities.
+ * Paper numbers are in the layout's plot units (group 72) and come out in mm; a viewport's model numbers use the file's units.
+ */
+function importPaperSpace(
+  pairs: Pair[],
+  paperRaws: RawEntity[],
+  blocks: Map<string, BlockDef>,
+  ctx: ConvertContext,
+  modelK: number,
+  _unused: (code: number) => number,
+): { layouts: LayoutRecord[]; entities: Entity[] } {
+  const tables = collectSectionRecords(pairs, "TABLES");
+  const recordName = new Map<string, string>();
+  const layerName = new Map<string, string>();
+  for (const r of tables) {
+    if (r.type === "BLOCK_RECORD") recordName.set(str(r, 5, "").toUpperCase(), str(r, 2, ""));
+    else if (r.type === "LAYER") layerName.set(str(r, 5, "").toUpperCase(), str(r, 2, ""));
+  }
+  type Info = { name: string; tab: number; source: string | null; raw: RawEntity };
+  const infos: Info[] = [];
+  for (const r of collectSectionRecords(pairs, "OBJECTS")) {
+    if (r.type !== "LAYOUT") continue;
+    const name = lastStr(r, 1, "");
+    const tab = num(r, 71, 0);
+    if (!name || name.toLowerCase() === "model" || tab === 0) continue;
+    infos.push({ name, tab, source: recordName.get(lastStr(r, 330, "").toUpperCase()) ?? null, raw: r });
+  }
+  infos.sort((a, b) => a.tab - b.tab);
+  if (infos.length === 0 && paperRaws.length === 0) return { layouts: [], entities: [] };
+  if (infos.length === 0) infos.push({ name: "Layout1", tab: 1, source: "*Paper_Space", raw: { type: "LAYOUT", pairs: [] } });
+
+  const layouts: LayoutRecord[] = [];
+  const entities: Entity[] = [];
+  const taken = new Set<string>();
+  const sourceOf = (info: Info, index: number): RawEntity[] => (info.source && info.source.toLowerCase() !== "*paper_space" ? (blocks.get(info.source)?.body ?? []) : index === 0 || info.source ? paperRaws : []);
+  // The placeholder LAYOUT every AC1032 file carries (no paper size, nothing on it) is not a sheet.
+  const real = infos.filter((info, index) => sourceOf(info, index).length > 0 || num(info.raw, 44, 0) > 0 || info.raw.pairs.length === 0);
+  real.forEach((info, index) => {
+    let name = info.name;
+    for (let i = 2; taken.has(name); i++) name = `${info.name} (${i})`;
+    taken.add(name);
+    const inch = num(info.raw, 72, 1) === 0;
+    const kp = inch ? 25.4 : 1;
+    const rotated = num(info.raw, 73, 0) % 2 === 1;
+    let w = num(info.raw, 44, 0);
+    let h = num(info.raw, 45, 0);
+    if (!(w > 0 && h > 0)) {
+      w = 297;
+      h = 210;
+    } else if (rotated) [w, h] = [h, w];
+    const base = newLayout(name);
+    const flags = num(info.raw, 70, 0);
+    const sheetStyle = str(info.raw, 7, "").toLowerCase();
+    const size = paperKeyFor(w, h);
+    const portrait = h > w;
+    const layout: LayoutRecord = {
+      ...base,
+      paper: {
+        size,
+        w: inch ? w / 25.4 : w,
+        h: inch ? h / 25.4 : h,
+        units: inch ? "in" : "mm",
+        orientation: portrait ? "portrait" : "landscape",
+      },
+      margins: {
+        left: num(info.raw, 40, 0) / kp,
+        bottom: num(info.raw, 41, 0) / kp,
+        right: num(info.raw, 42, 0) / kp,
+        top: num(info.raw, 43, 0) / kp,
+      },
+      plotSettings: {
+        scaleLineweights: (flags & 64) !== 0,
+        plotStyle: sheetStyle.includes("mono") ? "monochrome" : sheetStyle.includes("gray") ? "grayscale" : "as displayed",
+        center: (flags & 4) !== 0,
+        plotArea: num(info.raw, 74, 5) === 1 ? "extents" : "layout",
+      },
+    };
+    if (info.raw.pairs.length === 0) layout.margins = { ...base.margins };
+    layouts.push(layout);
+
+    const source = sourceOf(info, infos.indexOf(info));
+    // A clipped VIEWPORT names a polyline (340) as its window: that record is the window, not a drawing entity.
+    const clipHandles = new Set(source.filter((r) => r.type === "VIEWPORT").map((r) => str(r, 340, "").toUpperCase()).filter(Boolean));
+    const clipRaw = new Map<string, RawEntity>();
+    const content: RawEntity[] = [];
+    for (const r of source) {
+      const handle = str(r, 5, "").toUpperCase();
+      if (r.type === "VIEWPORT") continue;
+      if (handle && clipHandles.has(handle)) clipRaw.set(handle, r);
+      else content.push(r);
+    }
+    const converted = convertRecords(content, ctx);
+    for (const e of kp === 1 ? converted : converted.map((x) => scaleImported(x, kp))) entities.push({ ...e, space: name } as Entity);
+    for (const r of source) {
+      if (r.type !== "VIEWPORT") continue;
+      const id = num(r, 69, 0);
+      if (id === 1) continue; // the sheet's own overall viewport
+      const vp = viewportFromRaw(r, kp, modelK, layerName, clipRaw, ctx, name);
+      if (vp) entities.push(vp);
+    }
+  });
+  return { layouts, entities };
+}
+
+/** One VIEWPORT record -> a viewport entity in mm (paper numbers x `kp`, model numbers x `modelK`); null when it has no usable size. */
+function viewportFromRaw(raw: RawEntity, kp: number, modelK: number, layerName: Map<string, string>, clipRaw: Map<string, RawEntity>, ctx: ConvertContext, space: string): Entity | null {
+  const width = num(raw, 40, 0) * kp;
+  const height = num(raw, 41, 0) * kp;
+  const viewHeight = num(raw, 45, 0) * modelK;
+  if (!(width > 0 && height > 0 && viewHeight > 0)) return null;
+  const flags = num(raw, 90, 0);
+  const frozen = raw.pairs.filter((p) => p.code === 331).map((p) => layerName.get(p.value.trim().toUpperCase())).filter((x): x is string => !!x);
+  const layer = str(raw, 8, "0") || "0";
+  const e: ViewportEntity = {
+    id: newEntityId(),
+    type: "viewport",
+    ...(layer !== "0" ? { layer } : {}),
+    space,
+    center: { x: num(raw, 10) * kp, y: num(raw, 20) * kp },
+    width,
+    height,
+    viewCenter: { x: num(raw, 12) * modelK, y: num(raw, 22) * modelK },
+    scale: height / viewHeight,
+    ...(flags & 16384 ? { locked: true } : {}),
+    ...(frozen.length ? { frozenLayers: [...new Set(frozen)] } : {}),
+  };
+  const clip = clipRaw.get(str(raw, 340, "").toUpperCase());
+  if (clip && (clip.type === "LWPOLYLINE" || clip.type === "POLYLINE")) {
+    const pts = lwpolylineVertices(clip).map((v) => ({ x: v.x * kp, y: v.y * kp }));
+    if (pts.length >= 3) e.clip = pts;
+  }
+  const x = parseEntityXdata(raw.pairs);
+  if (x.name) e.name = x.name;
+  if (x.id && ctx.usedIds && !ctx.usedIds.has(x.id)) {
+    ctx.usedIds.add(x.id);
+    e.id = x.id;
+  }
+  const color = rawColor(raw);
+  if (color) e.color = color;
+  const handle = str(raw, 5, "");
+  if (handle && ctx.handleToId) ctx.handleToId.set(handle.toUpperCase(), e.id);
+  return e;
+}
+
 function readObjects(
   pairs: Pair[],
   handleToId: Map<string, string>,

@@ -199,7 +199,7 @@ export function applySketchCode(text: string): ParseIssue[] {
 }
 
 /** Shared by every import path: replaces (or adds to) the drawing's entities as one undoable step. */
-function applyImportedEntities(entities: Entity[], replace: boolean, blocks: BlockDefinition[] = [], textStyles: TextStyle[] = [], extras: { groups?: Group[]; constraints?: Constraint[]; params?: TableRecord[]; foreign?: TableRecord[]; dimStyles?: TableRecord[] } = {}): void {
+function applyImportedEntities(entities: Entity[], replace: boolean, blocks: BlockDefinition[] = [], textStyles: TextStyle[] = [], extras: { groups?: Group[]; constraints?: Constraint[]; params?: TableRecord[]; foreign?: TableRecord[]; dimStyles?: TableRecord[]; layouts?: TableRecord[]; paperEntities?: Entity[]; sheetSet?: Record<string, string> } = {}): void {
   const commands: Command[] = [];
   if (!replace) {
     // Ids restored from SKETCHOR XDATA may already exist here: an add-import gets fresh ids, and the id-keyed extras are dropped.
@@ -216,6 +216,8 @@ function applyImportedEntities(entities: Entity[], replace: boolean, blocks: Blo
     for (const r of doc.records("dimStyles")) commands.push({ type: "delete-table-record", table: "dimStyles", name: r.name });
     for (const r of doc.records("params")) commands.push({ type: "delete-table-record", table: "params", name: r.name });
     for (const r of doc.records("foreign")) commands.push({ type: "delete-table-record", table: "foreign", name: r.name });
+    for (const r of doc.records("layouts")) commands.push({ type: "delete-table-record", table: "layouts", name: r.name });
+    if (doc.settings.sheetSet) commands.push({ type: "set-settings", patch: { sheetSet: null as unknown as undefined } });
   }
   // D-01: the file's text styles; an add-import never overwrites an existing style of the same name.
   for (const s of textStyles) if (replace || !doc.hasRecord("textStyles", s.name)) commands.push({ type: "put-table-record", table: "textStyles", record: s });
@@ -224,6 +226,10 @@ function applyImportedEntities(entities: Entity[], replace: boolean, blocks: Blo
   // B-07: the file's block definitions come before the inserts that name them; an existing block of the same name is never overwritten by an add-import.
   for (const b of blocks) if (replace || !doc.hasRecord("blocks", b.name)) commands.push({ type: "put-table-record", table: "blocks", record: b });
   for (const entity of entities) commands.push({ type: "add-entity", entity });
+  // L-07: the file's layouts, then what is drawn on them (each entity names its layout in `space`); the sheet set's shared attributes.
+  for (const record of extras.layouts ?? []) commands.push({ type: "put-table-record", table: "layouts", record });
+  for (const entity of extras.paperEntities ?? []) commands.push({ type: "add-entity", entity });
+  if (extras.sheetSet) commands.push({ type: "set-settings", patch: { sheetSet: extras.sheetSet } });
   // X-05/X-08: groups (parents before children), the `params` table and constraints a Sketchor-written DXF carries.
   for (const record of extras.params ?? []) commands.push({ type: "put-table-record", table: "params", record });
   for (const record of extras.foreign ?? []) commands.push({ type: "put-table-record", table: "foreign", record });
@@ -298,7 +304,7 @@ export function importDxfText(text: string, replace = true): { count: number; wa
 /** {@link importDxfText} for an already-parsed file. */
 function importParsedDxf(result: DxfParseResult, replace: boolean): { count: number; warnings: string[] } {
   const { entities, warnings, report, insUnits, unitSource } = result;
-  applyImportedEntities(entities, replace, result.blocks, result.textStyles, { groups: result.groups, constraints: result.constraints, params: result.params, foreign: result.foreign, dimStyles: result.dimStyles });
+  applyImportedEntities(entities, replace, result.blocks, result.textStyles, { groups: result.groups, constraints: result.constraints, params: result.params, foreign: result.foreign, dimStyles: result.dimStyles, layouts: result.layouts, paperEntities: result.paperEntities, ...(result.sheetSet ? { sheetSet: result.sheetSet } : {}) });
   useApp.getState().setImportReport(report);
   useApp.getState().setFileWarnings(warnings.filter((w) => !w.startsWith("unsupported entity")));
   useApp.getState().setImportUnits({ code: insUnits, source: unitSource });

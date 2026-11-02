@@ -1,5 +1,5 @@
 import { emitFileSaved } from "./savedFiles";
-import { type BlockDefinition, importPdf, type ForeignRecord, type TextStyle, decodeDxfBytes, sizeWarning, entitiesToDxf, entitiesToDxf2018, entitiesToEps, entitiesToEpsFile, entitiesToSvgDocument, flattenInserts, modelEntities } from "@sketchor/core";
+import { type BlockDefinition, importPdf, type ForeignRecord, type TextStyle, decodeDxfBytes, sizeWarning, entitiesToDxf, entitiesToDxf2018, entitiesToEps, entitiesToEpsFile, entitiesToSvgDocument, flattenInserts, modelEntities, layoutList, layoutEntities, sheetSetAttributes } from "@sketchor/core";
 import { DWG_UNREADABLE, dwgToDxfText } from "../browser/dwgImport";
 import { isModelFile, loadModel } from "../model3d/stepImport";
 import { acceptList, allExtensions, formatOf } from "./formats";
@@ -126,7 +126,7 @@ function serialize(format: SaveFormat): string | Uint8Array {
     // declared unit so the file's numbers represent real-world size.
     const insUnits = displayUnitToDxfCode(displayUnit);
     const scale = factorFromMm(displayUnit);
-    return r12 ? entitiesToDxf(entities, insUnits, scale, keepBlocks ? blocks : undefined) : entitiesToDxf2018(entities, { insUnits, scale, textStyles: doc.records("textStyles") as TextStyle[], dimStyles: doc.records("dimStyles"), ...(doc.settings.currentDimStyle ? { currentDimStyle: doc.settings.currentDimStyle } : {}), ...(keepBlocks ? { blocks } : {}), groups: doc.groups(), constraints: doc.constraints(), params: doc.records("params"), foreign: doc.records("foreign") as ForeignRecord[] });
+    return r12 ? entitiesToDxf(entities, insUnits, scale, keepBlocks ? blocks : undefined) : entitiesToDxf2018(entities, { insUnits, scale, textStyles: doc.records("textStyles") as TextStyle[], dimStyles: doc.records("dimStyles"), ...(doc.settings.currentDimStyle ? { currentDimStyle: doc.settings.currentDimStyle } : {}), ...(keepBlocks ? { blocks } : {}), groups: doc.groups(), constraints: doc.constraints(), params: doc.records("params"), foreign: doc.records("foreign") as ForeignRecord[], layouts: layoutList(doc).map((layout) => ({ layout, entities: layoutEntities(doc, layout.name) })), sheetSet: sheetSetAttributes(doc) });
   }
   // True physical size: inches only when the tab works in inches/feet.
   const displayUnit = useApp.getState().displayUnit;

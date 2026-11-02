@@ -66,6 +66,13 @@ export const PAPER_SIZES: Readonly<Record<string, readonly [number, number]>> = 
 
 export const PAPER_SIZE_NAMES: readonly string[] = [...Object.keys(PAPER_SIZES), "Custom"];
 
+/** Our size key for a paper of `w` x `h` mm (either orientation), or "Custom". */
+export function paperKeyFor(wMm: number, hMm: number): string {
+  const [a, b] = wMm <= hMm ? [wMm, hMm] : [hMm, wMm];
+  for (const [key, [s, l]] of Object.entries(PAPER_SIZES)) if (Math.abs(a - s) < 1 && Math.abs(b - l) < 1) return key;
+  return "Custom";
+}
+
 export function paperSpec(size: string, orientation: "landscape" | "portrait" = "landscape", custom?: { w: number; h: number; units?: PaperUnits }): PaperSpec {
   const dims = PAPER_SIZES[size];
   if (!dims || size === "Custom") {
