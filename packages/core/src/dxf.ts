@@ -24,6 +24,7 @@ import { dimStyleFromDxf } from "./dimensions/dxfVars";
 import { layoutDimension } from "./dimensions/layout";
 import { DEFAULT_DIM_STYLE } from "./dimensions/style";
 import type { ForeignRecord } from "./foreign";
+import { planDynamicImport, type DynamicImportPlan } from "./blocks/dynamicImport";
 
 /** Minimal XML text-content escape for the thumbnail SVG. */
 function escapeXml(s: string): string {
@@ -863,6 +864,8 @@ interface ConvertContext {
   usedIds?: Set<string>;
   /** X-09: top-level records no case modelled, collected to be kept verbatim. */
   foreign?: RawEntity[];
+  /** B-26: AutoCAD dynamic blocks found in the file; an INSERT of one of their `*U` states becomes a live instance. */
+  dynImport?: DynamicImportPlan;
 }
 
 /**
@@ -1079,7 +1082,16 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
         const block = ctx.blocks.get(name);
         // B-25: an INSERT of an anonymous `*U` block that Sketchor wrote names its dynamic block and values in XDATA — re-open it live (the `*U` geometry is what other readers show).
         const dynX = ctx.keep && name.startsWith("*U") ? parseEntityXdata(raw.pairs) : null;
-        const dynamicName = dynX?.block && ctx.blocks.has(dynX.block) && !dynX.block.startsWith("*") ? dynX.block : null;
+        let dynamicName: string | null = dynX?.block && ctx.blocks.has(dynX.block) && !dynX.block.startsWith("*") ? dynX.block : null;
+        let dynParams = dynX?.params;
+        // B-26: an AutoCAD dynamic block's `*U` state — re-open as a live instance when its objects and values map, else the `*U` geometry stays a static insert.
+        if (!dynamicName && ctx.keep && ctx.dynImport && name.startsWith("*U")) {
+          const rep = ctx.dynImport.represent(name, raw.pairs, (m) => warnings.push(m));
+          if (rep && ctx.blocks.has(rep.block)) {
+            dynamicName = rep.block;
+            dynParams = rep.params;
+          }
+        }
         if (dynamicName) name = dynamicName;
         if (ctx.keep && (block || dynamicName) && (dynamicName || !name.startsWith("*"))) {
           // B-07: keep the reference. Anonymous (`*U`, `*X`...) blocks are still expanded below.
@@ -1105,7 +1117,7 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
             scale: { x: num(raw, 41, 1) || 1, y: num(raw, 42, 1) || 1 },
             rotation: (num(raw, 50, 0) * Math.PI) / 180,
             attributes,
-            ...(dynamicName && dynX?.params ? { params: dynX.params } : {}),
+            ...(dynamicName && dynParams ? { params: dynParams } : {}),
             ...(rawLayer !== "0" ? { layer: rawLayer } : {}),
             ...(cols > 1 || rows > 1 ? { array: { cols, rows, colSpacing: num(raw, 44, 0), rowSpacing: num(raw, 45, 0) } } : {}),
           };
@@ -1276,7 +1288,10 @@ export function parseDxf(text: string, options: DxfParseOptions = {}): DxfParseR
   const handleToId = new Map<string, string>();
   const usedIds = new Set<string>();
   const foreignRaws: RawEntity[] = [];
-  const converted = convertRecords(raws, { blocks, warnings, depth: 0, stack: new Set(), keep, hatchSources, handleToId, usedIds, foreign: foreignRaws });
+  // B-26: AutoCAD dynamic blocks. The plan only needs the tables and objects to say which `*U` states are live; the specs are finished once the definitions (and their entity ids) exist.
+  const dynPlan = keep ? planDynamicImport(collectSectionRecords(allPairs, "TABLES"), collectSectionRecords(allPairs, "OBJECTS"), MM_PER_INSUNIT[insUnits] || 1) : undefined;
+  const bodyHandles = new Map<string, string>();
+  const converted = convertRecords(raws, { blocks, warnings, depth: 0, stack: new Set(), keep, hatchSources, handleToId, usedIds, foreign: foreignRaws, dynImport: dynPlan });
   // H-09: an associative HATCH follows its boundary objects only when every one of them came through as an entity.
   for (const e of converted) {
     const handles = e.type === "hatch" ? hatchSources.get(e.id) : undefined;
@@ -1288,7 +1303,14 @@ export function parseDxf(text: string, options: DxfParseOptions = {}): DxfParseR
     }
   }
   const entities = scaleToMm(converted, insUnits);
-  const blockDefs = keep ? buildBlockDefinitions(blocks, { blocks, warnings, depth: 0, stack: new Set(), keep }, insUnits) : [];
+  const blockDefs = keep ? buildBlockDefinitions(blocks, { blocks, warnings, depth: 0, stack: new Set(), keep, handleToId: bodyHandles, dynImport: dynPlan }, insUnits) : [];
+  if (dynPlan) {
+    for (const [name, spec] of dynPlan.specs(bodyHandles)) {
+      const d = blockDefs.find((x) => x.name === name);
+      if (d) d.dynamic = spec;
+    }
+    warnings.push(...dynPlan.warnings);
+  }
   const sketchor = readObjects(allPairs, handleToId, warnings, new Set(entities.map((e) => e.id)));
   if (sketchor.data?.blocks) {
     for (const d of blockDefs) {

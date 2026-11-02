@@ -214,7 +214,7 @@ Tick `[x]` and add a progress-log row as items land. Order = recommended executi
 - [ ] B-23 Shipped dynamic block library
 - [ ] B-24 `contributes.blocks`
 - [x] B-25 DXF export of dynamic blocks (*U + SKETCHOR XDATA) (AC1032 + R12 + SVG; blocks/dynamicExport.ts)
-- [ ] B-26 DXF import of AutoCAD dynamic blocks
+- [x] B-26 DXF import of AutoCAD dynamic blocks (blocks/dynamicImport.ts: linear/polar/xy/rotation/flip/visibility params + move/stretch/polar-stretch/scale/rotate/flip/array actions; lookup tables not mapped, warned; unmappable `*U` stays a static insert)
 - [ ] B-27 Dynamic block tests
 
 **10 · Paper space**
