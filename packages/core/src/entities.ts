@@ -488,7 +488,7 @@ export interface InsertEntity {
 }
 
 /** The dimension forms (D-02). */
-export type DimKind = "linear" | "aligned" | "angular2l" | "angular3p" | "radial" | "diametric" | "arclength" | "ordinate" | "jogged" | "centermark" | "centerline" | "leader";
+export type DimKind = "linear" | "aligned" | "angular2l" | "angular3p" | "radial" | "diametric" | "arclength" | "ordinate" | "jogged" | "centermark" | "centerline" | "leader" | "tolerance";
 
 /**
  * A dimension (D-02a): measured value, extension lines, dimension line,
@@ -503,7 +503,8 @@ export type DimKind = "linear" | "aligned" | "angular2l" | "angular3p" | "radial
  * angular2l: [line 1 a, line 1 b, line 2 a, line 2 b, a point on the arc];
  * radial/diametric: [centre, a point on the circle]; jogged: [centre, point on
  * the arc, substitute centre]; arclength: [centre, arc start, arc end, a point
- * on the dimension arc]; ordinate: [datum origin, feature, leader end].
+ * on the dimension arc]; ordinate: [datum origin, feature, leader end]; tolerance (D-06, a feature control
+ * frame): [left edge of the first row's middle], content in `textOverride` (`dimensions/gdt.ts`), rotation in `angle`.
  *
  * A driving dimension IS the solver constraint (`dimensions/driving.ts`):
  * `value` is its target (mm, or radians for angles) and the geometry follows.

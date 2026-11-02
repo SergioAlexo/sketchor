@@ -34,7 +34,8 @@ export function locatorIndex(e: DimensionEntity): number {
       return 4;
     case "centermark":
     case "centerline":
-      return -1; // nothing to place: they follow their geometry
+    case "tolerance":
+      return -1; // nothing to place: they follow their geometry / the one point is the frame itself
     case "leader":
       return e.defPoints.length - 1; // the attach point carries the content
     default:
@@ -99,6 +100,7 @@ export const dimensionKind: EntityKind<DimensionEntity> = {
     }
     const angular = e.kind === "angular2l" || e.kind === "angular3p";
     let angle = e.angle;
+    if (e.kind === "tolerance") angle = (e.angle ?? 0) + rot;
     if (e.kind === "linear") {
       const a = e.angle ?? 0;
       angle = Math.atan2(m[1] * Math.cos(a) + m[3] * Math.sin(a), m[0] * Math.cos(a) + m[2] * Math.sin(a));

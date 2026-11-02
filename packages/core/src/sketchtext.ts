@@ -301,12 +301,12 @@ export interface ParsedDimension {
   spline?: boolean;
 }
 
-const DIM_KINDS: readonly DimKind[] = ["linear", "aligned", "angular2l", "angular3p", "radial", "diametric", "arclength", "ordinate", "jogged", "centermark", "centerline", "leader"];
+const DIM_KINDS: readonly DimKind[] = ["linear", "aligned", "angular2l", "angular3p", "radial", "diametric", "arclength", "ordinate", "jogged", "centermark", "centerline", "leader", "tolerance"];
 const DIM_HEAD_RE = /^dimension\s+([A-Za-z_]\w*)\s+([a-z0-9]+)\s*(.*)$/;
 const ANGULAR_KINDS = new Set<DimKind>(["angular2l", "angular3p"]);
 
 /** Points each dimension kind needs. */
-const DIM_POINTS: Record<DimKind, number> = { linear: 3, aligned: 3, angular2l: 5, angular3p: 4, radial: 2, diametric: 2, arclength: 4, ordinate: 3, jogged: 3, centermark: 2, centerline: 4, leader: 2 };
+const DIM_POINTS: Record<DimKind, number> = { linear: 3, aligned: 3, angular2l: 5, angular3p: 4, radial: 2, diametric: 2, arclength: 4, ordinate: 3, jogged: 3, centermark: 2, centerline: 4, leader: 2, tolerance: 1 };
 
 function parseDimension(row: string): ParsedDimension | string {
   const head = DIM_HEAD_RE.exec(row);

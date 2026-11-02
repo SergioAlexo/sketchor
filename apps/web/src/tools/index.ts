@@ -10,6 +10,7 @@ import { SplineEditTool } from "./splineEditTool";
 import { CopyTool, MirrorTool, MoveTool, RotateTool, ScaleTool } from "./modifyTools";
 import { DimTool } from "./dimTools";
 import { LeaderAddTool, LeaderTool } from "./leaderTool";
+import { ToleranceTool } from "./toleranceTool";
 import type { Tool } from "./tool";
 
 /**
@@ -67,6 +68,7 @@ const TOOLS: Partial<Record<ToolId, Tool>> = {
   leader: new LeaderTool("leader"),
   balloon: new LeaderTool("balloon"),
   leaderadd: new LeaderAddTool(),
+  tolerance: new ToleranceTool(),
 };
 
 export function getTool(id: ToolId): Tool | null {

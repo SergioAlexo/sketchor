@@ -3,6 +3,7 @@ import { explodeDimension, explodeDimensions } from "../dimensions/explode";
 import { layoutOf } from "../dimensions/resolve";
 import { dimensionRecordText, hasDimensionRecord } from "../dimensions/dxfDim";
 import { dimStyleToDxf } from "../dimensions/dxfVars";
+import { toleranceRecordText } from "../dimensions/gdt";
 import { hasLeaderRecord, isPlainLeader, leaderDxfInfo, leaderRecordText, leaderTextPlacement, mleaderRecordText, mleaderStyleObjects, type LeaderDxfInfo } from "../dimensions/dxfLeader";
 import { DIM_STYLE_PRESETS, DEFAULT_DIM_STYLE, dimStyleOf, dimStyleRecord } from "../dimensions/style";
 import { activeDimHost, styleOnlyHost } from "../dimensions/context";
@@ -312,9 +313,16 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   const dimBlocks: BlockDefinition[] = [];
   const dimInfo = new Map<string, { block: string; style: string; textAt: { x: number; y: number }; measure: number }>();
   const leaderInfo = new Map<string, LeaderDxfInfo>();
+  // D-06: a feature control frame is a real TOLERANCE record (the value is the DIMSTYLE it names).
+  const tolStyle = new Map<string, string>();
   const entities: Entity[] = [];
   for (const e of entitiesIn) {
     if (e.type !== "dimension") {
+      entities.push(e);
+      continue;
+    }
+    if (e.kind === "tolerance" && e.defPoints.length >= 1) {
+      tolStyle.set(e.id, e.style || "Standard");
       entities.push(e);
       continue;
     }
@@ -388,6 +396,8 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
     if (e.type === "insert") {
       const def = defByName.get(e.block);
       text = def ? insertEntity2018(e, def, h, owner, next) : ""; // an insert of an unknown block draws nothing
+    } else if (e.type === "dimension" && tolStyle.has(e.id)) {
+      text = `0\nTOLERANCE\n` + entityHead(h, owner, e) + toleranceRecordText(e, tolStyle.get(e.id)!) + entityXdataText(e);
     } else if (e.type === "dimension" && leaderInfo.has(e.id)) {
       const info = leaderInfo.get(e.id)!;
       if (isPlainLeader(e)) {
@@ -417,7 +427,7 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   };
   // D-10: DIMSTYLE records — every record of the table, plus any style a dimension names that the table lacks (a built-in preset's values, else the defaults).
   const styleRecords: TableRecord[] = [...(options.dimStyles ?? [])];
-  for (const info of [...dimInfo.values(), ...[...leaderInfo.values()].filter((i) => i.style !== "Standard")]) {
+  for (const info of [...dimInfo.values(), ...[...leaderInfo.values()].filter((i) => i.style !== "Standard"), ...[...tolStyle.values()].filter((s) => s !== "Standard").map((style) => ({ style }))]) {
     if (styleRecords.some((r) => r.name === info.style)) continue;
     const preset = DIM_STYLE_PRESETS.find((p) => p.name === info.style);
     styleRecords.push(preset ? dimStyleRecord(preset) : { ...dimStyleRecord(DEFAULT_DIM_STYLE), name: info.style });
@@ -444,7 +454,7 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
   // D-10: exact dimension fields and full style records (what DXF groups cannot hold) ride in the SKETCHOR record, keyed by the ids XDATA restores.
   const dimsData: Record<string, Partial<DimensionEntity>> = {};
   for (const e of entitiesIn) {
-    if (e.type !== "dimension" || !(dimInfo.has(e.id) || leaderInfo.has(e.id))) continue;
+    if (e.type !== "dimension" || !(dimInfo.has(e.id) || leaderInfo.has(e.id) || tolStyle.has(e.id))) continue;
     const { id, type, name, layer, color, fill, linetype, lineweight, construction, ...rest } = e;
     void id; void type; void name; void layer; void color; void fill; void linetype; void lineweight; void construction;
     // A leader always carries its scale: the reader multiplies it by the file-unit conversion, which the exact record must undo.

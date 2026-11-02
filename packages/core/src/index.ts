@@ -41,6 +41,7 @@ export * from "./dimensions/build";
 export * from "./dimensions/edit";
 export * from "./dimensions/leader";
 export * from "./dimensions/leaderOps";
+export * from "./dimensions/gdt";
 export * from "./layerTable";
 export * from "./commands";
 export * from "./sketchtext";

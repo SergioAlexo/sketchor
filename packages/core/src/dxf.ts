@@ -19,6 +19,7 @@ import type { Constraint } from "./constraints";
 import type { TableRecord } from "./tables";
 import { dimensionFromRecord } from "./dimensions/dxfDim";
 import { leaderFromRecord, mleaderFromRecord } from "./dimensions/dxfLeader";
+import { toleranceFromRecord } from "./dimensions/gdt";
 import { dimStyleFromDxf } from "./dimensions/dxfVars";
 import { layoutDimension } from "./dimensions/layout";
 import { DEFAULT_DIM_STYLE } from "./dimensions/style";
@@ -1159,6 +1160,16 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
         const t = leaderText.get(ri);
         if (t) content = unescapeDxfText(t.type === "MTEXT" ? t.pairs.filter((p) => p.code === 3).map((p) => p.value).join("") + str(t, 1, "") : str(t, 1, ""));
         const d = raw.type === "LEADER" ? leaderFromRecord(raw, content) : mleaderFromRecord(raw);
+        if (d) entities.push({ id: newEntityId(), ...d, ...(layer && layer !== "0" ? { layer } : {}) } as Entity);
+        else {
+          warnings.push(`unsupported entity: ${raw.type}`);
+          if (ctx.depth === 0) ctx.foreign?.push(raw);
+        }
+        break;
+      }
+      case "TOLERANCE": {
+        // D-06: a feature control frame comes in as a `tolerance` dimension.
+        const d = toleranceFromRecord(raw.pairs);
         if (d) entities.push({ id: newEntityId(), ...d, ...(layer && layer !== "0" ? { layer } : {}) } as Entity);
         else {
           warnings.push(`unsupported entity: ${raw.type}`);

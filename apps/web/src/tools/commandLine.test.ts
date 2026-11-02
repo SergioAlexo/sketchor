@@ -62,6 +62,12 @@ describe("parseCommand", () => {
     expect(parseCommand("rebuild 8")).toEqual({ kind: "tool", tool: "splinedit", argument: "rebuild 8" });
   });
 
+  it("parses the feature control frame tool with its typed content (D-06)", () => {
+    expect(parseCommand("tol")).toEqual({ kind: "tool", tool: "tolerance", argument: null });
+    expect(parseCommand("tol position *0.5(M) A B")).toEqual({ kind: "tool", tool: "tolerance", argument: "position *0.5(M) A B" });
+    expect(parseCommand("gdt flatness 0.05")).toEqual({ kind: "tool", tool: "tolerance", argument: "flatness 0.05" });
+  });
+
   it("parses simplify (P-03)", () => {
     expect(parseCommand("simplify")).toEqual({ kind: "app", id: "simplify" });
   });
@@ -71,7 +77,7 @@ describe("the alias tables", () => {
   it("map only to tools the app has", () => {
     const known = new Set([
       "select", "line", "polyline", "rectangle", "circle", "arc", "ellipse", "spline", "splinedit", "polygon", "slot", "point", "image",
-      "measure", "straighten", "fill", "text", "mtext", "dim", "dimlinear", "dimaligned", "dimangular", "dimradial", "dimdiametric", "dimarc", "dimordinate", "dimjogged", "dimbaseline", "dimcontinue", "dimcenter", "dimcenterline", "qdim", "leader", "balloon", "leaderadd", "pan", "move", "copy", "rotate", "scale", "mirror",
+      "measure", "straighten", "fill", "text", "mtext", "dim", "dimlinear", "dimaligned", "dimangular", "dimradial", "dimdiametric", "dimarc", "dimordinate", "dimjogged", "dimbaseline", "dimcontinue", "dimcenter", "dimcenterline", "qdim", "leader", "balloon", "leaderadd", "tolerance", "pan", "move", "copy", "rotate", "scale", "mirror",
       "trim", "split", "fillet", "chamfer", "offset", "zoom", "divide", "align", "lengthen", "match", "stretch", "block", "blockbase", "insert", "attdef",
     ]);
     for (const [alias, tool] of Object.entries(TOOL_ALIASES)) {

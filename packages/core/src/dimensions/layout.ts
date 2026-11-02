@@ -2,6 +2,7 @@ import type { DimensionEntity } from "../entities";
 import type { Point } from "../geometry";
 import { arrowShape, isStrokeArrow } from "./arrows";
 import { formatDimText } from "./format";
+import { layoutFcf } from "./gdt";
 import { layoutLeader } from "./leader";
 import type { ArrowKind, DimStyle } from "./style";
 
@@ -481,6 +482,11 @@ function layoutKind(e: DimensionEntity, st: DimStyle, geo: DimGeometry): DimLayo
     }
     case "leader":
       return layoutLeader(e, st, k, pts);
+    case "tolerance": {
+      // D-06: a feature control frame - strokes only (symbols, boxes, lettering), so every renderer draws the same frame.
+      if (!need(1)) return empty;
+      return { lines: layoutFcf(e.textOverride, pts[0], st.textHeight * k, e.angle ?? 0), fills: [], text: null, measure: NaN };
+    }
     case "centermark": {
       // D-07: a cross at the centre; "mark" style = a short cross, otherwise it runs past the circle by the mark size.
       if (!need(1)) return empty;
