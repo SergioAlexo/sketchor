@@ -9,6 +9,7 @@ Status as of 2026-09-11 (`main` @ v0.14.4).
 ### Progress log
 
 | Date | Items | Notes |
+| 2026-11-02 | **T-15** through-point + round gap | `offsetThroughPoint` and an `OffsetGap` ("extend"/"round", AutoCAD OFFSETGAPTYPE) argument on `offsetEntity`/`offsetPath`: round keeps raw legs at outer corners and joins them with an arc about the original vertex (tested on a rectangle). Offset tool: Tab toggles distance/through, Shift+Tab toggles round/extend corners. |
 | 2026-11-02 | **T-17** (arcs/circles) | Core was already `filletCurves` (C-08, nearest-to-picks solution). New: `filletCurveConstraints` (associative.ts) — T-46 coincident + tangent (+ radius) for every line/arc/circle pair (point-on-curve on a circle), wired into the Fillet tool; solver test confirms they are satisfied. Chamfer stays lines-only. |
 |---|---|---|
 | 2026-09-22 | **T-41** constraint tools | Five new constraint types — **concentric, midpoint, symmetric, collinear, point-on-curve** — with solver residuals and end-to-end solve tests; `PointRef` grew a `vertex` + `index` form so a polyline's middle vertices and an arc's ends can be named. `constraintBuilder.ts` (pure, tested) is selection-driven, Onshape style: `constraintOptions(selection)` decides which buttons light up and what a disabled one should say, `buildConstraints` makes them, `nearestPair` picks the ends a user meant. `constraintDisplay.ts` (pure, tested) places the glyphs. UI: **Constraints panel** (`Ctrl+2`) with apply buttons + the sketch's constraint list (conflicts red, redundant italic, ✕ to remove, click a row to select its geometry), canvas **glyphs** with a visibility switch — click one to select what it holds, double-click to remove it. *Open:* T-42 driving dimensions (today distance/radius/angle lock the current value), T-43 inference, T-44 DOF colouring. |
@@ -249,7 +250,7 @@ Base point + factor or `R` reference (pick a known length, type what it should b
 
 Two points define the axis (with ortho/polar from T-09 for H/V axes); option keep/delete source (default keep, as AutoCAD `MIRROR`). Text is mirrored by position only, never mirrored as glyphs (AutoCAD `MIRRTEXT=0`). Core: `mirrored(entity, p1, p2)` in `entities.ts` — for arcs, swap `ccw` and reflect start/end; for polylines negate bulges (same trick `dxf.ts` uses for negative INSERT scale — reuse it).
 
-### T-15 · Offset — **P0, M** — 🟡 2026-09-21 (distance mode; through-point and round-gap option open)
+### T-15 · Offset — **P0, M** — ✅ 2026-11-02
 
 Distance (typed) or **through point**; then click entities, side by cursor; repeats until Esc. Core `offsetEntity(entity, d, side)`:
 - line → parallel line; circle/arc → concentric (reject if `r+d ≤ 0`);

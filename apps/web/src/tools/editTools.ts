@@ -17,6 +17,8 @@ import {
   layerOf,
   newEntityId,
   offsetEntity,
+  offsetThroughPoint,
+  type OffsetGap,
   pointsAlong,
   stretchEntities,
   transformed,
@@ -391,14 +393,33 @@ function nearestVertex(pl: PolylineEntity, p: Point): number | null {
 export class OffsetTool implements Tool {
   readonly id = "offset" as const;
   distance = 0;
+  /** T-15: "through" = the copy passes through a picked point instead of a typed distance. */
+  through = false;
+  /** OFFSETGAPTYPE: how outside corners of a polyline copy close. */
+  gap: OffsetGap = "extend";
   private target: Entity | null = null;
   private message: string | null = null;
 
   prompt(): string {
     if (this.message) return this.message;
+    const g = this.gap === "round" ? ", round corners" : "";
+    const tabs = " (Tab: distance/through, Shift+Tab: round/extend corners)";
+    if (this.through) {
+      if (this.target) return `Offset through point${g}: click the point the copy passes through`;
+      return `Offset through point${g}: click the entity to offset${tabs}`;
+    }
     const d = this.distance > 0 ? `distance ${fmt(this.distance)}` : "no distance yet";
-    if (this.target) return `Offset (${d}): click the side the copy goes on`;
-    return `Offset (${d}): type the distance, then click the entity to offset`;
+    if (this.target) return `Offset (${d}${g}): click the side the copy goes on`;
+    return `Offset (${d}${g}): type the distance, then click the entity to offset${tabs}`;
+  }
+  key(ctx: ToolContext, e: KeyboardEvent): boolean {
+    if (e.key !== "Tab" || e.ctrlKey || e.metaKey || e.altKey) return false;
+    if (e.shiftKey) this.gap = this.gap === "round" ? "extend" : "round";
+    else this.through = !this.through;
+    this.target = null;
+    this.message = null;
+    ctx.redraw();
+    return true;
   }
   busy(): boolean {
     return this.target !== null;
@@ -420,8 +441,8 @@ export class OffsetTool implements Tool {
   pick(ctx: ToolContext, p: Pick): void {
     this.message = null;
     if (!this.target) {
-      if (this.distance <= 0) {
-        this.message = "Type the offset distance first";
+      if (this.distance <= 0 && !this.through) {
+        this.message = "Type the offset distance first (or Tab for through-point mode)";
         return;
       }
       const e = entityAt(ctx, p.world);
@@ -433,9 +454,11 @@ export class OffsetTool implements Tool {
       this.target = e;
       return;
     }
-    const copy = offsetEntity(this.target, this.distance, p.world);
+    const copy = this.copyFor(this.target, this.through ? p.point : p.world);
     if (!copy) {
-      this.message = "That offset collapses the shape — try a smaller distance or the other side";
+      this.message = this.through
+        ? "That point is on the entity, or the offset collapses the shape"
+        : "That offset collapses the shape — try a smaller distance or the other side";
       this.target = null;
       return;
     }
@@ -449,8 +472,11 @@ export class OffsetTool implements Tool {
   }
   preview(_ctx: ToolContext, cursor: Point | null): Entity[] {
     if (!this.target || !cursor) return [];
-    const copy = offsetEntity(this.target, this.distance, cursor);
+    const copy = this.copyFor(this.target, cursor);
     return copy ? [{ ...copy, id: "preview" }] : [];
+  }
+  private copyFor(target: Entity, at: Point): Entity | null {
+    return this.through ? offsetThroughPoint(target, at, this.gap) : offsetEntity(target, this.distance, at, this.gap);
   }
 }
 

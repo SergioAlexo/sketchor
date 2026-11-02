@@ -36,6 +36,9 @@ import {
 
 const EPS = 1e-9;
 
+/** AutoCAD OFFSETGAPTYPE: `extend` (0) meets outer corners at a point, `round` (1) rounds them about the original vertex. */
+export type OffsetGap = "extend" | "round";
+
 /** +1 when `click` lies to the left of the path's nearest point (in travel direction), −1 to the right. */
 export function sideSign(path: Path, click: Point): number {
   let best = { d: Infinity, sign: 1 };
@@ -69,7 +72,7 @@ export function offsetCurve(c: Curve, s: number): Curve | null {
  * The offset of a whole path. Null when nothing survives (every leg
  * collapsed) — the caller reports "offset too large".
  */
-export function offsetPath(path: Path, s: number): Path | null {
+export function offsetPath(path: Path, s: number, gap: OffsetGap = "extend"): Path | null {
   const legs: Leg[] = [];
   for (const c of path.curves) {
     const o = offsetCurve(c, s);
@@ -78,7 +81,7 @@ export function offsetPath(path: Path, s: number): Path | null {
   if (legs.length === 0) return null;
   // Join neighbours, dropping legs that invert, until stable.
   for (let pass = 0; pass < legs.length + 2; pass++) {
-    const joined = joinLegs(legs, path.closed);
+    const joined = joinLegs(legs, path.closed, gap);
     const kept = joined.filter((l) => !l.kill && !inverted(l));
     if (kept.length === joined.length) {
       const curves = joined.map((l) => l.curve).filter((c) => curveLength(c) > EPS);
@@ -118,7 +121,7 @@ function inverted(l: Leg): boolean {
  * Works on fresh copies of the raw offsets so a dropped leg's neighbours
  * can be re-joined from scratch on the next pass.
  */
-function joinLegs(legs: Leg[], closed: boolean): Leg[] {
+function joinLegs(legs: Leg[], closed: boolean, gap: OffsetGap): Leg[] {
   const out: Leg[] = legs.map((l) => ({ original: l.original, raw: l.raw, curve: l.raw }));
   const n = out.length;
   const pairs = closed ? n : n - 1;
@@ -133,7 +136,11 @@ function joinLegs(legs: Leg[], closed: boolean): Leg[] {
     for (const h of hits) {
       if (!best || dist(h.point, vertex) < dist(best.point, vertex)) best = h;
     }
-    if (best && usable(a.curve, best.t1, true) && usable(b.curve, best.t2, false)) {
+    // Round gap: an outer corner (both legs would have to grow to meet) keeps the raw legs and gets an arc about the vertex.
+    const outer = gap === "round" && best && best.t1 > 1 + 1e-9 && best.t2 < -1e-9;
+    if (outer) {
+      a.gapAfter = { vertex, straight: false };
+    } else if (best && usable(a.curve, best.t1, true) && usable(b.curve, best.t2, false)) {
       a.curve = cutCurve(a.curve, 0, best.t1);
       b.curve = cutCurve(b.curve, best.t2, 1);
     } else if (dist(curveEnd(a.curve), curveStart(b.curve)) > 1e-6) {
@@ -203,7 +210,7 @@ function insertRoundJoins(legs: Leg[], closed: boolean, s: number): Curve[] {
  * no id/name; the caller assigns them. Null when the entity has no stroke,
  * or the offset collapses it (a circle offset inward past its center).
  */
-export function offsetEntity(entity: Entity, distance: number, side: Point): Entity | null {
+export function offsetEntity(entity: Entity, distance: number, side: Point, gap: OffsetGap = "extend"): Entity | null {
   if (entity.type === "ellipse" || entity.type === "spline") {
     const exact = offsetExactCurve(entity, distance, side);
     if (exact !== undefined) return exact;
@@ -211,9 +218,23 @@ export function offsetEntity(entity: Entity, distance: number, side: Point): Ent
   const path = pathOf(entity);
   if (!path || distance <= 0) return null;
   const s = distance * sideSign(path, side);
-  const out = offsetPath(path, s);
+  const out = offsetPath(path, s, gap);
   if (!out) return null;
   return entityFromPath(out, entity, "");
+}
+
+/**
+ * Offset "through point" (AutoCAD `OFFSET > Through`): the copy passes
+ * through `point`, i.e. the distance is how far the point is from the
+ * entity and the side is the point's side. Null when the point lies on it.
+ */
+export function offsetThroughPoint(entity: Entity, point: Point, gap: OffsetGap = "extend"): Entity | null {
+  const path = pathOf(entity);
+  if (!path) return null;
+  let d = Infinity;
+  for (const c of path.curves) d = Math.min(d, closestParam(c, point).distance);
+  if (!(d > 1e-9) || !Number.isFinite(d)) return null;
+  return offsetEntity(entity, d, point, gap);
 }
 
 const OFFSET_SAMPLES = 160;
