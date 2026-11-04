@@ -123,3 +123,4 @@ export * from "./layouts/viewport";
 export * from "./layouts/fields";
 export * from "./layouts/titleBlock";
 export * from "./layouts/plot";
+export * from "./projection/outline";

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { DocSession } from "../state/store";
-import { useApp } from "../state/store";
+import { bus, openNamedTab, useApp } from "../state/store";
 import { matchesBinding } from "../keybindings";
 import { formatArea, formatLength, formatMass, formatVolume } from "../units";
 import {
@@ -20,6 +20,7 @@ import {
 import { useTheme } from "../theme/themeStore";
 import { formatBytes } from "./importError";
 import { measureSelection, partOf, refLabel, type MeasureSegment, type SelRef } from "./measure";
+import { faceOutlineBlocker, outlineOfFace } from "./faceTo2d";
 import { pickEdge, pickVertex, type Projector } from "./picking";
 import { useOpenLoads } from "./stepImport";
 import type { Model3D } from "./types";
@@ -894,6 +895,22 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
   /** How many parts are on screen — the Isolate button lights up when it's just the selection. */
   const visiblePartCount = model.parts.length - hidden.size;
   const isolateParts = (parts: number[]) => isolate(parts, model.parts.length);
+  /** F-07: the picked flat face becomes a new 2D tab (lines, arcs, circles at the origin). */
+  const lastRef = selection[selection.length - 1];
+  const flatFace = lastRef && lastRef.kind === "face" && faceOutlineBlocker(model, lastRef.index) === null ? lastRef.index : null;
+  const faceTo2d = () => {
+    if (flatFace === null) return;
+    const r = outlineOfFace(model, flatFace);
+    if ("error" in r) {
+      window.alert(r.error);
+      return;
+    }
+    openNamedTab(r.name);
+    // `bus` is a live binding to the tab just opened.
+    bus.execute({ type: "batch", commands: r.entities.map((entity) => ({ type: "add-entity" as const, entity })) });
+    useApp.getState().syncLayersFromDoc();
+    useApp.getState().requestFit();
+  };
   const readoutTitle = selection
     .slice(-2)
     .map((r) => refLabel(model, r))
@@ -967,6 +984,14 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
             if (last) hidePart(partOf(model, last));
           }}
           testId="model-hide"
+        />
+        <ToolButton
+          title={flatFace === null ? "Select a flat face, then send its outline to a new 2D tab" : "Send the selected flat face's outline to a new 2D tab (true size, at the origin) - save it as DXF for the laser"}
+          label="To 2D"
+          icon={ICONS.to2d}
+          disabled={flatFace === null}
+          onClick={faceTo2d}
+          testId="model-face-to-2d"
         />
         <ToolButton
           title="Show all hidden parts (Shift+H)"
@@ -1118,6 +1143,12 @@ const ICONS = {
     <svg viewBox="0 0 24 24" width="18" height="18">
       <path d="M9 9h6v6H9z" {...stroke} />
       <path d="M4 4h3M4 4v3M20 4h-3M20 4v3M4 20h3M4 20v-3M20 20h-3M20 20v-3" {...stroke} />
+    </svg>
+  ),
+  to2d: (
+    <svg viewBox="0 0 24 24" width="18" height="18">
+      <path d="M4 8l8-4 8 4-8 4z" {...stroke} />
+      <path d="M12 12v4M9 16l3 3 3-3" {...stroke} />
     </svg>
   ),
   hide: (
