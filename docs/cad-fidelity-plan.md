@@ -298,7 +298,7 @@ These keep their original IDs; the full spec for each is in the named doc. Tick 
 - [ ] N-50 Spatial indexing so a sheet can hold more than ~600 identical instances (the current cap)
 - [ ] N-51 Common-line cutting
 - [~] N-52 Remnant library (save offcuts as stock) - done in the Sheet Nesting plugin: `remnants.ts` (largest clear rectangle per sheet, `applyRemnantsToStock`), "Save offcuts as stock" button in Results; open: panel not driven live (iframe is cross-origin), no separate remnant list UI beyond the stock rows, Sheet Metal Nest not wired
-- [ ] N-53 Micro-joints / tabs
+- [~] N-53 Micro-joints / tabs - pure planner done in `packages/plugin-gcode/src/tabs.ts` (`planTabs`, `splitLoopAtTabs`: evenly spaced tabs, count capped so each cut run >= a tab width, degenerate cases warn and fall back to the closed loop); open: not wired into `buildCutPlan`/the G-code writer (runs need laser-off rapids between them) and no tab count/width fields in the nest panels
 - [x] N-54 Save and reopen a nest job file - already landed in the Sheet Nesting plugin as RN-42 (`.sketchor-nest` via `serializeJobFile`/`parseJobFile`, Save job / Open job buttons; job + added files + custom sheets); ticked 2026-11-04. Sheet Metal Nest (`nestPlugin.ts`) has no job file; Sheet Nesting is the nest plugin that supersedes it
 - [ ] N-55 Part priority / due dates
 

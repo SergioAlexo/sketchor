@@ -54,6 +54,8 @@ candidate-based placement scales roughly cubically with how many instances end u
 sharing a sheet (~9s at 600 on a dev machine) — raising the cap further needs an
 algorithmic change (spatial indexing), not just a bigger number.
 
+**N-53** (micro-joints/tabs) planner: `packages/plugin-gcode/src/tabs.ts` is pure (`planTabs` + `splitLoopAtTabs` split a closed contour into cut runs and uncut bridges). Not yet wired into the toolpath builder/writer or the panels (open).
+
 N-54 (save/reopen job file) is already done in the Sheet Nesting plugin (RN-42, ticked 2026-11-04).
 
 **N-52** lives in the Sheet Nesting plugin (it owns the Stock on hand model): `packages/plugin-nest/src/remnants.ts` finds the largest rectangle clear of every placed part bounding box per sheet (min side 100 mm, min area 25000 mm2), and "Save offcuts as stock" adds them as qty-1 `Remnant W x H` rows (material/thickness carried, identical ones merged) and takes the inventory sheets the job used out of the list.
@@ -121,7 +123,7 @@ Decision: **upgrade `plugin-nest` in place** into "Sheet Metal Nest" rather than
 
 ## Phase 5 — Later
 
-Common-line cutting · remnant library (save offcuts as stock) · micro-joints/tabs · save/reopen nest job file · part priority / due dates.
+Common-line cutting · remnant library (save offcuts as stock) · micro-joints/tabs (planner done, N-53; wiring open) · save/reopen nest job file · part priority / due dates.
 
 ## Risks
 
