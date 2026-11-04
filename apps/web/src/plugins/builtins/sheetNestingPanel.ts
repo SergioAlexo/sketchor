@@ -263,6 +263,14 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         return (p.runs > 1 ? "Group " + p.run + " of " + p.runs + (p.label ? " (" + p.label + ")" : "") + " - " : "") + "best so far: " + (p.sheets != null ? p.sheets + " sheet(s)" : "...") + (p.unplaced ? ", " + p.unplaced + " not placed" : "") + " - " + (p.ms / 1000).toFixed(1) + " s";
       }
 
+      // NF-08: job name / notes for the printed report, and the autosave folder (kept here so a re-render does not clear them).
+      let jobName = "", jobNotes = "", printFolder = null;
+      function reportCard() {
+        const fl = printFolder && printFolder.supported !== false ? (printFolder.folder ? (printFolder.enabled ? "Copies are filed in: " : "Folder (paused): ") + esc(printFolder.folder) : "No autosave folder chosen.") : "";
+        return "<div class='row' style='margin-top:8px'><input data-id='jobname' data-jobname='1' placeholder='Job name (report title)' value='" + esc(jobName) + "'></div><textarea data-id='jobnotes' data-jobnotes='1' rows='2' placeholder='Notes for the report'>" + esc(jobNotes) + "</textarea>" +
+          (printFolder && printFolder.supported !== false ? "<div class='row' style='margin-top:4px'><button class='ghost sm' data-act='pick-print-folder'>Autosave folder...</button><span class='pdim'>" + fl + "</span></div>" : "");
+      }
+
       function resultCard() {
         if (!R) return "";
         const k = R.kpis;
@@ -277,7 +285,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         h += "<h4 style='margin-top:8px'>Sheets</h4>" + R.cards.map((c) =>
           "<div class='scard'><div><b>" + esc(c.title) + "</b>" + (c.group ? " <span class='muted'>" + esc(c.group) + "</span>" : "") + "<div class='pdim'>" + esc(c.size) + " &middot; " + c.parts + " parts &middot; " + Math.round(c.utilisation * 100) + "%</div></div>" +
           "<button class='ghost sm' data-act='dxf' data-i='" + c.index + "'>" + T.dxf + "</button></div>").join("");
-        h += "<div class='row' style='margin-top:8px'><button class='ghost sm' data-act='dxf-all'>" + T.allZip + "</button><select id='gsheet' style='width:auto;margin:0'>" + R.sheetLabels.map((l, i) => "<option value='" + i + "'>" + esc(l) + "</option>").join("") + "</select><button class='ghost sm' data-act='gcode'>" + T.gcode + "</button><button class='ghost sm' data-act='print'>Print report</button></div>";
+        h += "<div class='row' style='margin-top:8px'><button class='ghost sm' data-act='dxf-all'>" + T.allZip + "</button><select id='gsheet' style='width:auto;margin:0'>" + R.sheetLabels.map((l, i) => "<option value='" + i + "'>" + esc(l) + "</option>").join("") + "</select><button class='ghost sm' data-act='gcode'>" + T.gcode + "</button><button class='ghost sm' data-act='print'>Print report</button></div>" + reportCard();
         return h + "</div>";
       }
 
@@ -310,6 +318,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
 
       document.addEventListener("input", (e) => {
         const t = e.target;
+        if (t.dataset.jobname) { jobName = t.value; return; }
+        if (t.dataset.jobnotes) { jobNotes = t.value; return; }
         if (t.dataset.len) later("len" + t.dataset.len, () => setJob(lenPatch(t.dataset.len)));
         else if (t.dataset.stock) later("stock", () => post({ type: "stock-set", rows: stockRows() }), 400);
         else if (t.dataset.pset === "qty") later("q" + t.dataset.part, () => post({ type: "part-set", key: t.dataset.part, patch: { qty: t.value }, refresh: false }));
@@ -356,7 +366,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         else if (a === "dxf") post({ type: "export-dxf", sheetIndex: Number(b.dataset.i) });
         else if (a === "dxf-all") post({ type: "export-dxf", sheetIndex: -1 });
         else if (a === "gcode") post({ type: "export-gcode", sheetIndex: Number($("gsheet").value) });
-        else if (a === "print") post({ type: "print" });
+        else if (a === "pick-print-folder") post({ type: "pick-print-folder" });
+        else if (a === "print") post({ type: "print", jobName, notes: jobNotes });
       });
 
       $("file-parts").addEventListener("change", async (e) => {
@@ -388,6 +399,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (m.type === "status") { if (V) { V.status = m.status; V.partsProblem = m.partsProblem; V.canCalculate = m.canCalculate && !V.running; render(); } return; }
         if (m.type === "nest-progress") { progress = m; const el = document.querySelector(".msg.ok"); if (el && V && V.running) el.textContent = progressText(); return; }
         if (m.type === "result") { R = m; message = null; render(); return; }
+        if (m.type === "print-folder") { printFolder = m.folder; if (R) render(); return; }
         if (m.type === "cleared") { R = null; message = null; render(); return; }
         if (m.type === "error") { message = m.message; render(); return; }
         if (m.type === "selection-hint") { const el = $("sel-hint"); if (el) el.textContent = m.count ? m.count + " shape(s) selected" + (m.openCount ? ", " + m.openCount + " open" : "") : ""; return; }

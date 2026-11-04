@@ -31,6 +31,26 @@ export interface LastNestPlacement {
   area: number;
 }
 
+/** NF-08: the report with the user's job name as its title and their notes in the job header. */
+export function reportWithJob(n: LastNest, jobName: string, notes: string): LastNest {
+  const name = jobName.trim().slice(0, 120);
+  const note = notes.trim().slice(0, 1000);
+  if (!name && !note) return n;
+  return {
+    ...n,
+    title: name ? `${name} - ${n.title ?? "Nest report"}` : n.title,
+    details: note ? [...(n.details ?? []), ["Notes", note]] : n.details,
+  };
+}
+
+/** Autosave file name for a printed report: when it was generated, then the job name (so a folder of them sorts by time). */
+export function reportFileName(jobName: string, now = new Date()): string {
+  const pad = (v: number) => String(v).padStart(2, "0");
+  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+  const slug = jobName.trim().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 50);
+  return `nest-${stamp}${slug ? `-${slug}` : ""}`;
+}
+
 export interface LastNest {
   sheets: TrueNestSheet[];
   sheetLabels: string[];

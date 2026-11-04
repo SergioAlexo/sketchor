@@ -76,7 +76,7 @@ import { buildCutPlan, writeGcode, type GcodePlacement } from "@sketchor/plugin-
 import { entitiesToDxf, entityPoints, MM_PER_INSUNIT, parseDxf, scaleEntityKeepingInserts, textWidth, type Entity } from "@sketchor/core";
 import { type DisplayUnitInfo, type PickedFolder, type PluginModule } from "@sketchor/plugin-sdk";
 import { displayUnitToDxfCode, factorFromMm } from "../../units";
-import { buildNestReportHtml, buildNestReportPdf, type LastNest, type LastNestPlacement } from "./nestReport";
+import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportWithJob, type LastNest, type LastNestPlacement } from "./nestReport";
 import { SHEET_NESTING_PANEL_HTML } from "./sheetNestingPanel";
 
 /**
@@ -875,7 +875,18 @@ const plugin: PluginModule = {
       const msg = isObj(raw) ? raw : {};
       const type = msg.type;
 
-      if (type === "ready") return void (await pushInit());
+      if (type === "ready") {
+        await pushInit();
+        // NF-08: the autosave folder the Load Planner also uses.
+        void sketchor.ui.printFolder().then((folder) => sketchor.ui.postMessage({ type: "print-folder", folder })).catch(() => undefined);
+        return;
+      }
+      if (type === "pick-print-folder") {
+        // Runs inside the panel's click, which is what lets the host open the OS folder picker.
+        const info = await sketchor.ui.pickPrintFolder().catch(() => null);
+        if (info) void sketchor.ui.postMessage({ type: "print-folder", folder: info });
+        return;
+      }
 
       if (type === "job-set") {
         if (isObj(msg.patch)) applyPatch(msg.patch);
@@ -1156,7 +1167,9 @@ const plugin: PluginModule = {
 
       if (type === "print") {
         if (!lastNest) return fail("Nothing to print - nest some parts first.");
-        sketchor.ui.print(buildNestReportHtml(lastNest), { fileName: "nest-report", pdf: buildNestReportPdf(lastNest) });
+        const jobName = typeof msg.jobName === "string" ? msg.jobName : "";
+        const report = reportWithJob(lastNest, jobName, typeof msg.notes === "string" ? msg.notes : "");
+        sketchor.ui.print(buildNestReportHtml(report), { fileName: reportFileName(jobName), pdf: buildNestReportPdf(report) });
         return;
       }
 

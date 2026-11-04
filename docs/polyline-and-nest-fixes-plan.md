@@ -1,6 +1,6 @@
 # Polylines + Sheet Metal Nest fixes — plan
 
-Status: Phase 1 shipped (2026-09-25, commit `1641b69`). Item IDs are stable — reference them in commits.
+Status: Phase 1 shipped (2026-09-25, commit `1641b69`). Phase 3 (2026-11-04): NF-05 done (true-shape engine), NF-06 done (Sheet Nesting "Add files"), NF-07 done (result in a new tab, RN-40), NF-08 partial (job name, notes, autosave folder; report still built from the nest result rather than the canvas layers). Item IDs are stable — reference them in commits.
 Decisions from the user: nest result opens in a **new tab** (NF-07); adding a
 whole file makes **one part per file** (NF-06).
 `P-xx` = polyline fidelity, `NF-xx` = nesting fixes. Follows on from

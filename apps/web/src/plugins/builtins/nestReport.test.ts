@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Entity } from "@sketchor/core";
 import type { JobMetrics, TrueNestResult, TrueNestSheet } from "@sketchor/plugin-nest";
-import { buildNestReportHtml, buildNestReportPdf, type LastNest, type LastNestPlacement } from "./nestReport";
+import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportWithJob, type LastNest, type LastNestPlacement } from "./nestReport";
 
 /**
  * The report is the deliverable a fabricator actually works from — a wrong
@@ -272,5 +272,27 @@ describe("Sheet Nesting report options (additive: the older panel's output is un
     expect(html).toContain("<td>Washer plate</td><td>3</td><td>1</td><td>2</td>");
     expect(html).not.toContain("Parts ordered vs. placed");
     expect(asText(buildNestReportPdf(ln))).toContain("(Sheet 2/2 - Steel)");
+  });
+});
+
+describe("NF-08 job name and notes", () => {
+  it("puts the job name in the title and the notes in the header, and leaves the report alone when both are blank", () => {
+    const n = lastNest();
+    expect(reportWithJob(n, "  ", "")).toBe(n);
+    const r = reportWithJob(n, "Smith order 41", "Use 3 mm stock");
+    const html = buildNestReportHtml(r);
+    expect(html).toContain("Smith order 41");
+    expect(html).toContain("Use 3 mm stock");
+    expect(n.details ?? []).not.toContainEqual(["Notes", "Use 3 mm stock"]); // the stored nest is not mutated
+  });
+  it("escapes markup typed into the job name", () => {
+    const html = buildNestReportHtml(reportWithJob(lastNest(), "<img src=x onerror=alert(1)>", ""));
+    expect(html).not.toContain("<img src=x");
+  });
+  it("names the autosaved file by time first, then a safe slug of the job", () => {
+    const at = new Date(2026, 10, 4, 9, 5);
+    expect(reportFileName("", at)).toBe("nest-2026-11-04_0905");
+    expect(reportFileName("Smith / order #41!", at)).toBe("nest-2026-11-04_0905-Smith-order-41");
+    expect(reportFileName("../../etc", at)).toBe("nest-2026-11-04_0905-etc");
   });
 });
