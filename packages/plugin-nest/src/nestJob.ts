@@ -101,6 +101,9 @@ export interface NestJob {
   minHoleArea: number;
   searchLevel: SearchLevel;
   joinTolerance?: number;
+  /** N-53: G-code micro-joints per contour (0/absent = none) and their width in mm. */
+  tabCount?: number;
+  tabWidth?: number;
 }
 
 const GRAVITIES: Gravity[] = ["bottom-left", "bottom-right", "top-left", "top-right"];
@@ -258,6 +261,8 @@ export function parseNestJob(v: unknown): NestJob {
     minHoleArea: Math.max(0, num(v.minHoleArea, 0)),
     searchLevel: oneOf(v.searchLevel, SEARCH_LEVELS, d.searchLevel),
     ...(v.joinTolerance === undefined || v.joinTolerance === null ? {} : { joinTolerance: Math.max(0, Math.min(0.5, num(v.joinTolerance, 0))) }),
+    ...(num(v.tabCount, 0) >= 1 ? { tabCount: Math.min(99, Math.floor(num(v.tabCount, 0))) } : {}),
+    ...(num(v.tabWidth, 0) > 0 ? { tabWidth: Math.min(1000, num(v.tabWidth, 0)) } : {}),
   };
 }
 

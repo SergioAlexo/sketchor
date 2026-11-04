@@ -69,15 +69,31 @@ export function writeGcode(features: CutFeature[], opts: GcodeWriteOptions): str
     lines.push(profile.laserOnCode);
     lines.push(profile.pierceDwell(opts.pierceTimeSec));
     lines.push(`G1 X${fmt(feature.leadIn.x)} Y${fmt(feature.leadIn.y)} F${feed}`);
-    for (const curve of feature.loop) {
-      if (curve.kind === "segment") {
+    const emitCurves = (curves: CutFeature["loop"]) => {
+      for (const curve of curves) {
+        if (curve.kind === "segment") {
+          const end = curveEnd(curve);
+          lines.push(`G1 X${fmt(end.x)} Y${fmt(end.y)}`);
+          continue;
+        }
+        const start = curveStart(curve);
         const end = curveEnd(curve);
-        lines.push(`G1 X${fmt(end.x)} Y${fmt(end.y)}`);
-        continue;
+        lines.push(`${curve.ccw ? "G3" : "G2"} X${fmt(end.x)} Y${fmt(end.y)} I${fmt(curve.center.x - start.x)} J${fmt(curve.center.y - start.y)}`);
       }
-      const start = curveStart(curve);
-      const end = curveEnd(curve);
-      lines.push(`${curve.ccw ? "G3" : "G2"} X${fmt(end.x)} Y${fmt(end.y)} I${fmt(curve.center.x - start.x)} J${fmt(curve.center.y - start.y)}`);
+    };
+    if (!feature.runs) emitCurves(feature.loop);
+    else {
+      // N-53: beam off and rapid across every tab, then back on (with the same pierce dwell) for the next run.
+      feature.runs.forEach((run, i) => {
+        if (i > 0) {
+          lines.push(profile.laserOffCode);
+          const s = curveStart(run[0]);
+          lines.push(`G0 X${fmt(s.x)} Y${fmt(s.y)}`);
+          lines.push(profile.laserOnCode);
+          lines.push(profile.pierceDwell(opts.pierceTimeSec));
+        }
+        emitCurves(run);
+      });
     }
     lines.push(profile.laserOffCode);
   }

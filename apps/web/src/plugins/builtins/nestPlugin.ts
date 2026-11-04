@@ -80,6 +80,9 @@ export interface PersistedState {
   minHoleArea: number;
   /** N-14: how long to spend trying alternate orderings for a denser packing. Default "quick" (today's single deterministic pass). */
   searchLevel: SearchLevel;
+  /** N-53: micro-joints per contour in exported G-code (0 = none) and their width, mm. */
+  tabCount: number;
+  tabWidth: number;
   /**
    * NF-03: how close two ends have to be (mm) for "Add selection" to treat
    * them as meeting — real DXFs routinely have a gap of a few hundredths to
@@ -187,6 +190,8 @@ export function asState(v: unknown): PersistedState {
     gravity,
     minHoleArea: Math.max(0, num(o.minHoleArea, 0)),
     searchLevel,
+    tabCount: Math.min(99, Math.max(0, Math.floor(num(o.tabCount, 0)))),
+    tabWidth: Math.max(0, num(o.tabWidth, 3)),
     joinTolerance: o.joinTolerance === undefined || o.joinTolerance === null ? undefined : Math.max(0, Math.min(MAX_JOIN_TOLERANCE, num(o.joinTolerance, 0))),
   };
 }
@@ -690,7 +695,7 @@ const plugin: PluginModule = {
         const gcodePlacements: GcodePlacement[] = lastNest.placements
           .filter((p) => p.sheet === sheetIndex)
           .map((p) => ({ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }));
-        const plan = buildCutPlan(gcodePlacements, { kerf: state.kerf });
+        const plan = buildCutPlan(gcodePlacements, { kerf: state.kerf, tabs: state.tabCount > 0 ? { count: state.tabCount, width: state.tabWidth } : undefined });
         for (const warning of plan.warnings) sketchor.ui.notify(warning, { error: true });
 
         const stockRow = state.stock[lastNest.sheets[sheetIndex].stockIndex];
@@ -811,6 +816,8 @@ export const PANEL_HTML = String.raw`<!doctype html>
         <label>Spacing (<span class="u"></span>)<input id="set-spacing" type="number" min="0" step="any" /></label>
         <label>Edge margin (<span class="u"></span>)<input id="set-margin" type="number" min="0" step="any" /></label>
         <label>Kerf (<span class="u"></span>)<input id="set-kerf" type="number" min="0" step="any" /></label>
+        <label>Tabs per contour<input id="set-tabcount" type="number" min="0" step="1" title="G-code micro-joints: uncut bridges per contour, evenly spaced. 0 = none." /></label>
+        <label>Tab width (<span class="u"></span>)<input id="set-tabwidth" type="number" min="0" step="any" /></label>
         <label>Min hole size (<span class="u"></span>)<input id="set-minhole" type="number" min="0" step="any" title="Holes smaller than this aren't offered to in-hole parts" /></label>
         <label>Join tolerance (<span class="u"></span>)<input id="set-jointol" type="number" min="0" step="any" placeholder="exact" title="How close two ends have to be for &quot;Add selection&quot; to treat a shape as closed — raise this if real DXFs come in with small gaps. Blank = exact match only." /></label>
         <label>Gravity
@@ -861,7 +868,7 @@ export const PANEL_HTML = String.raw`<!doctype html>
       const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
       let unit = { unit: "mm", perMm: 1, label: "mm" };
-      let state = { stock: [], workingParts: [], spacing: 0, edgeMargin: 0, kerf: 0, gravity: "bottom-left", minHoleArea: 0, searchLevel: "quick" };
+      let state = { stock: [], workingParts: [], spacing: 0, edgeMargin: 0, kerf: 0, gravity: "bottom-left", minHoleArea: 0, searchLevel: "quick", tabCount: 0, tabWidth: 3 };
       let parts = []; // working-set parts, as last pushed by the plugin: {key,name,w,h,area,outer,settings}
       let saveTimer = 0;
 
@@ -973,6 +980,8 @@ export const PANEL_HTML = String.raw`<!doctype html>
         $("set-spacing").value = toU(state.spacing);
         $("set-margin").value = toU(state.edgeMargin);
         $("set-kerf").value = toU(state.kerf);
+        $("set-tabcount").value = state.tabCount || 0;
+        $("set-tabwidth").value = toU(state.tabWidth);
         // Stored as an area (mm²) but shown/edited as a side length — much
         // easier to reason about ("holes under 10mm across") than mm².
         $("set-minhole").value = toU(Math.sqrt(state.minHoleArea || 0));
@@ -986,6 +995,8 @@ export const PANEL_HTML = String.raw`<!doctype html>
       $("set-spacing").addEventListener("input", () => { state.spacing = fromU($("set-spacing").value); persist(); });
       $("set-margin").addEventListener("input", () => { state.edgeMargin = fromU($("set-margin").value); persist(); });
       $("set-kerf").addEventListener("input", () => { state.kerf = fromU($("set-kerf").value); persist(); });
+      $("set-tabcount").addEventListener("input", () => { state.tabCount = Math.max(0, Math.min(99, Math.floor(Number($("set-tabcount").value) || 0))); persist(); });
+      $("set-tabwidth").addEventListener("input", () => { state.tabWidth = Math.max(0, fromU($("set-tabwidth").value)); persist(); });
       $("set-minhole").addEventListener("input", () => { const side = fromU($("set-minhole").value); state.minHoleArea = Math.max(0, side * side); persist(); });
       $("set-jointol").addEventListener("input", () => {
         const raw = $("set-jointol").value;

@@ -70,6 +70,8 @@ describe("asState", () => {
       gravity: "top-right",
       minHoleArea: 25,
       searchLevel: "normal",
+      tabCount: 2,
+      tabWidth: 4,
     };
     expect(asState(valid)).toEqual(valid);
   });

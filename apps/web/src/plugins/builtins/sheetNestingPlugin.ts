@@ -76,6 +76,9 @@ import {
   type TrueNestSheet,
 } from "@sketchor/plugin-nest";
 import { buildCutPlan, writeGcode, type GcodePlacement } from "@sketchor/plugin-gcode";
+
+/** N-53: tab width used when a job asks for tabs but never set one. */
+const DEFAULT_TAB_WIDTH_MM = 3;
 import { entitiesToDxf, entityPoints, MM_PER_INSUNIT, parseDxf, scaleEntityKeepingInserts, textWidth, type Entity } from "@sketchor/core";
 import { type DisplayUnitInfo, type PickedFolder, type PluginModule } from "@sketchor/plugin-sdk";
 import { displayUnitToDxfCode, factorFromMm } from "../../units";
@@ -564,6 +567,8 @@ const plugin: PluginModule = {
       if (typeof patch.outputUnit === "string" && ["in", "indec", "ftin", "mm", "cm", "m"].includes(patch.outputUnit)) next.outputUnit = patch.outputUnit as NestJob["outputUnit"];
       if (patch.gravity === "bottom-left" || patch.gravity === "bottom-right" || patch.gravity === "top-left" || patch.gravity === "top-right") next.gravity = patch.gravity;
       if (patch.minHoleSide !== undefined) next.minHoleArea = Math.max(0, num(patch.minHoleSide)) ** 2;
+      if (patch.tabCount !== undefined) { const n = Math.max(0, Math.min(99, Math.floor(num(patch.tabCount)))); if (n >= 1) next.tabCount = n; else delete next.tabCount; }
+      if (patch.tabWidth !== undefined) { const w = Math.max(0, Math.min(1000, num(patch.tabWidth))); if (w > 0) next.tabWidth = w; else delete next.tabWidth; }
       if (patch.searchLevel === "quick" || patch.searchLevel === "normal" || patch.searchLevel === "thorough") next.searchLevel = patch.searchLevel;
       job = next;
       persistJob();
@@ -868,7 +873,7 @@ const plugin: PluginModule = {
       const gp: GcodePlacement[] = ln.placements
         .filter((p) => p.sheet === sheetIndex)
         .map((p) => ({ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }));
-      const plan = buildCutPlan(gp, { kerf: jobParamsMm(job).kerf });
+      const plan = buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined });
       for (const w of plan.warnings) notify(w, true);
       const cutRow = cutTableRowFor(lastStock[ln.sheets[sheetIndex]!.stockIndex] as StockRow | undefined, CUT_TABLE);
       if (!cutRow) notify("No cut-table match for this sheet's material/thickness - using a default feed rate; check it before running the program.", true);

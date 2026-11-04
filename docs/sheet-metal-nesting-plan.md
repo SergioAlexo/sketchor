@@ -54,7 +54,7 @@ candidate-based placement scales roughly cubically with how many instances end u
 sharing a sheet (~9s at 600 on a dev machine) — raising the cap further needs an
 algorithmic change (spatial indexing), not just a bigger number.
 
-**N-53** (micro-joints/tabs) planner: `packages/plugin-gcode/src/tabs.ts` is pure (`planTabs` + `splitLoopAtTabs` split a closed contour into cut runs and uncut bridges). Not yet wired into the toolpath builder/writer or the panels (open).
+**N-53** (micro-joints/tabs) planner: `packages/plugin-gcode/src/tabs.ts` is pure (`planTabs` + `splitLoopAtTabs` split a closed contour into cut runs and uncut bridges). Wired (`buildCutPlan` `tabs` option -> `CutFeature.runs` -> `writeGcode`; count/width fields in both nest panels).
 
 N-54 (save/reopen job file) is already done in the Sheet Nesting plugin (RN-42, ticked 2026-11-04).
 
@@ -123,7 +123,7 @@ Decision: **upgrade `plugin-nest` in place** into "Sheet Metal Nest" rather than
 
 ## Phase 5 — Later
 
-Common-line cutting · remnant library (save offcuts as stock) · micro-joints/tabs (planner done, N-53; wiring open) · save/reopen nest job file · part priority / due dates.
+Common-line cutting · remnant library (save offcuts as stock) · micro-joints/tabs (done, N-53) · save/reopen nest job file · part priority / due dates.
 
 ## Risks
 

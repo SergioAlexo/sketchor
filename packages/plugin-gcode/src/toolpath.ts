@@ -15,6 +15,7 @@ import {
   type Path,
   type Point,
 } from "@sketchor/core";
+import { loopLength, planTabs, sliceLoop } from "./tabs";
 
 /**
  * Toolpath planning (N-40/41) — turns a sheet's nested placements into an
@@ -53,6 +54,8 @@ export interface ToolpathOptions {
   leadInLength?: number;
   /** Toolpath start point (machine home), mm. Default {0,0}. */
   start?: Point;
+  /** N-53: evenly spaced uncut bridges on every closed contour. Default off (count 0 / omitted) - output is then unchanged. */
+  tabs?: { count: number; width: number; /** Arc length of the first tab centre (default: half a spacing). */ offset?: number };
 }
 
 export interface CutFeature {
@@ -65,6 +68,12 @@ export interface CutFeature {
   leadIn: Point;
   /** The closed loop, kerf-compensated, reordered to start and end at `leadIn`. */
   loop: Curve[];
+  /**
+   * N-53: with tabs, the cut runs in travel order (laser off + rapid between them,
+   * across each tab). `runs[0]` starts at `leadIn` - or, when a tab covers the loop
+   * start, at the first cut point, with `pierce`/`leadIn` moved there. Absent = cut `loop` in one go.
+   */
+  runs?: Curve[][];
 }
 
 export interface CutPlan {
@@ -212,6 +221,38 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
   const leadInLength = opts.leadInLength ?? 3;
   const start = opts.start ?? { x: 0, y: 0 };
   const warnings: string[] = [];
+  const tabOpts = opts.tabs && opts.tabs.count > 0 ? opts.tabs : undefined;
+
+  /** Splits a feature at its tabs (N-53). No tabs fit = left as the closed loop. */
+  const applyTabs = (f: CutFeature, label: string): void => {
+    if (!tabOpts) return;
+    const plan = planTabs(loopLength(f.loop), tabOpts);
+    for (const w of plan.warnings) warnings.push(`${label}: ${w}`);
+    if (plan.tabs.length === 0) return;
+    const per = plan.perimeter;
+    const runs: Curve[][] = [];
+    let cursor = 0;
+    for (const t of plan.tabs) {
+      if (t.start - cursor > EPS) runs.push(sliceLoop(f.loop, cursor, t.start));
+      cursor = Math.max(cursor, t.end);
+    }
+    if (per - cursor > EPS) runs.push(sliceLoop(f.loop, cursor, per));
+    if (runs.length === 0) return;
+    f.runs = runs;
+    const first = curveStart(runs[0][0]);
+    if (distance(first, f.leadIn) > 1e-6) {
+      // A tab covers the loop start: re-aim the lead-in at the first cut point, same side as before.
+      const t0 = tangentAt(f.loop[0], 0);
+      const out = { x: f.pierce.x - f.leadIn.x, y: f.pierce.y - f.leadIn.y };
+      const side = Math.sign(t0.x * out.y - t0.y * out.x) || 1;
+      const t1 = tangentAt(runs[0][0], 0);
+      const n = { x: -t1.y * side, y: t1.x * side };
+      const nl = Math.hypot(n.x, n.y) || 1;
+      const len = Math.hypot(out.x, out.y);
+      f.leadIn = first;
+      f.pierce = { x: first.x + (n.x / nl) * len, y: first.y + (n.y / nl) * len };
+    }
+  };
 
   interface Built {
     id: string;
@@ -242,14 +283,18 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
       const { path: comp, warning } = kerfCompensate(holePath, kerf, inside);
       if (warning) warnings.push(`part #${placement.number}, hole: ${warning}`);
       const { pierce, leadIn, loop } = planLeadIn(comp, inside, leadInLength);
-      features.push({ placementId: placement.id, partNumber: placement.number, role: "hole", pierce, leadIn, loop });
+      const f: CutFeature = { placementId: placement.id, partNumber: placement.number, role: "hole", pierce, leadIn, loop };
+      applyTabs(f, `part #${placement.number}, hole`);
+      features.push(f);
     }
     {
       const outside = outsideBoundsPoint(outerLoop.path);
       const { path: comp, warning } = kerfCompensate(outerLoop.path, kerf, outside);
       if (warning) warnings.push(`part #${placement.number}, outer: ${warning}`);
       const { pierce, leadIn, loop } = planLeadIn(comp, outside, leadInLength);
-      features.push({ placementId: placement.id, partNumber: placement.number, role: "outer", pierce, leadIn, loop });
+      const f: CutFeature = { placementId: placement.id, partNumber: placement.number, role: "outer", pierce, leadIn, loop };
+      applyTabs(f, `part #${placement.number}, outer`);
+      features.push(f);
     }
 
     built.push({ id: placement.id, number: placement.number, insideOfId: placement.insideOfId, features });
