@@ -2984,6 +2984,42 @@ kbd.shortcut-key-fixed {
   border-color: #e5484d;
 }
 
+.grip-menu {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.grip-menu-head {
+  padding: 2px 8px 4px;
+  color: var(--text-dim);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.grip-menu button {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.grip-menu button:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
 .typed-input-hint {
   color: var(--text-dim);
   font-size: 10px;

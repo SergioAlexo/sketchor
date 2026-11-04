@@ -8,7 +8,10 @@ import {
   applyGrip,
   gripPointRef,
   arcSweep,
+  applyGripMenuAction,
   boundsOf,
+  gripMenuActions,
+  gripMenuLabel,
   quickEditCommands,
   quickEditTarget,
   gripsOf,
@@ -96,6 +99,7 @@ import { COMMAND_LINE_ACTIONS } from "../metrics/actions";
 import { track } from "../metrics/metrics";
 import { CommandBar, type CommandEcho } from "../tools/CommandBar";
 import { QuickEditBox } from "../tools/QuickEditBox";
+import type { GripMenuTarget } from "../tools";
 import { parseLength } from "../tools/typedInput";
 import { useTheme } from "../theme/themeStore";
 import { useMTextUi } from "../mtext/mtextUi";
@@ -315,6 +319,15 @@ export function Viewport() {
   const hoverRef = useRef<EntityId | null>(null);
   /** The typed-coordinate box (T-08), open while a framework tool waits for a point and the user has started typing. */
   const [typed, setTyped] = useState<{ text: string; screen: Point } | null>(null);
+  // T-27: the hover menu of a polyline vertex grip.
+  const [gripMenu, setGripMenuState] = useState<GripMenuTarget | null>(null);
+  const gripMenuRef = useRef<GripMenuTarget | null>(null);
+  const setGripMenu = (m: GripMenuTarget | null) => {
+    const prev = gripMenuRef.current;
+    if (prev === m || (prev && m && prev.entityId === m.entityId && prev.index === m.index)) return;
+    gripMenuRef.current = m;
+    setGripMenuState(m);
+  };
   // T-08: the box that retypes the length/radius of what a draw tool just committed.
   const [quickEdit, setQuickEditState] = useState<{ id: EntityId; screen: Point } | null>(null);
   const quickEditRef = useRef<{ id: EntityId; screen: Point } | null>(null);
@@ -527,6 +540,7 @@ export function Viewport() {
       hitEntity: (world) => hitTest(viewRef.current, world),
       select: {
         view: () => viewRef.current,
+        setGripMenu: (m) => setGripMenu(m),
         glyphAt: (screen) => glyphAt(screen),
         cyclingHit: (world, screen) => cyclingHit(viewRef.current, world, screen),
         gripPreview: (entity, grip, target) => gripPreviewFor(entity, grip, target),
@@ -1313,6 +1327,7 @@ export function Viewport() {
     const world = screenToWorld(view, screen);
     const app = useApp.getState();
     if (quickEditRef.current) setQuickEdit(null);
+    setGripMenu(null);
 
     // Middle/right-drag pans from any tool, and explicitly preserves a
     // half-drawn line/polyline/circle/measurement rather than replacing it.
@@ -1858,6 +1873,35 @@ export function Viewport() {
           })}
         </div>
       )}
+      {gripMenu && (() => {
+        const pl = doc.get(gripMenu.entityId);
+        if (!pl || pl.type !== "polyline") return null;
+        const at = worldToScreen(viewRef.current, gripMenu.point);
+        return (
+          <div
+            className="grip-menu"
+            style={{ left: at.x + 6, top: at.y + 6 }}
+            data-testid="grip-menu"
+            onPointerLeave={() => setGripMenu(null)}
+            onPointerDown={(ev) => ev.stopPropagation()}
+          >
+            <div className="grip-menu-head">Stretch: drag the grip</div>
+            {gripMenuActions(pl, gripMenu.index).map((action) => (
+              <button
+                key={action}
+                onClick={() => {
+                  const next = applyGripMenuAction(pl, gripMenu.index, action);
+                  setGripMenu(null);
+                  if (next) bus.execute({ type: "update-entity", entity: next });
+                  redraw();
+                }}
+              >
+                {gripMenuLabel(action)}
+              </button>
+            ))}
+          </div>
+        );
+      })()}
       {quickEdit && (() => {
         const ent = doc.get(quickEdit.id);
         const target = ent ? quickEditTarget(ent) : null;

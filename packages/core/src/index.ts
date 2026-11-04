@@ -83,6 +83,7 @@ export * from "./nurbs";
 export * from "./spline";
 export * from "./filletCurves";
 export * from "./quickEdit";
+export * from "./gripMenu";
 export * from "./contrast";
 export * from "./themeAuthoring";
 export * from "./curveMeasure";

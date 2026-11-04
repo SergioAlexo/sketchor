@@ -7,6 +7,7 @@ import {
   entitiesInBox,
   entitiesInPolygon,
   entityPoints,
+  gripMenuActions,
   gripsOf,
   resolveSelection,
   simplifyPath,
@@ -17,7 +18,7 @@ import { selectableEntities, useApp } from "../state/store";
 import { findSnap, snapMovingSelection, snapRotation } from "../viewport/snapping";
 import { worldToScreen, type View } from "../viewport/view";
 import { useSnapSettings } from "./snapSettings";
-import type { PointerGesture, Tool, ToolContext, ToolOverlay } from "./tool";
+import type { Pick, PointerGesture, Tool, ToolContext, ToolOverlay } from "./tool";
 
 /**
  * The select tool (roadmap T-00: the last legacy tool, moved out of
@@ -127,6 +128,27 @@ export class SelectTool implements Tool {
   pick() {}
   preview() {
     return [];
+  }
+
+  /**
+   * T-27: hovering a polyline vertex grip of the selection opens its
+   * multifunction menu (add / remove vertex, convert segment to arc/line);
+   * dragging the grip still stretches the vertex.
+   */
+  hover(ctx: ToolContext, pick: Pick) {
+    const host = ctx.select;
+    if (this.g.kind !== "idle") {
+      host.setGripMenu(null);
+      return;
+    }
+    const view = host.view();
+    const hit = findGrip(ctx, useApp.getState().selection, worldToScreen(view, pick.world), view, false);
+    const entity = hit ? ctx.doc.get(hit.entityId) : undefined;
+    if (hit && entity?.type === "polyline" && hit.grip.kind === "vertex" && gripMenuActions(entity, hit.grip.index).length > 0) {
+      host.setGripMenu({ entityId: entity.id, index: hit.grip.index, point: hit.grip.point });
+    } else {
+      host.setGripMenu(null);
+    }
   }
 
   gestureActive() {

@@ -9,6 +9,7 @@ Status as of 2026-09-11 (`main` @ v0.14.4).
 ### Progress log
 
 | Date | Items | Notes |
+| 2026-11-04 | **T-27** vertex grip menu | Hover a polyline vertex grip: Add vertex / Remove vertex / Convert to arc (or line) via `gripMenu.ts`; drag still stretches. No touch equivalent yet; line/arc grips have no menu. |
 | 2026-11-04 | **T-08** quick edit | The open item from T-08 is done for line, circle and arc: after the tool commits one, a box beside it shows the length/radius (F2 or click to type, Enter applies). Pure logic in `quickEdit.ts`; Sketch mode additionally leaves a D-02b driving dimension. Polyline/rectangle are not offered. |
 | 2026-11-04 | **T-00** done | select, measure, text, mtext, image, straighten and pan moved onto the `tools/` framework (see the fidelity-plan log for the hooks added); `Viewport.tsx` no longer has a tool switch. |
 | 2026-11-02 | **T-35** array along a path | `pattern.ts` gains `PathPattern` + `pathPatternStations` / `pathPatternCommands` / `pathPatternCopyCount` (pure, 12 tests): copies of the selection at stations along a line / arc / circle / polyline / ellipse / spline (`pathOf`), either `count` stations over the whole path (open: first-to-last inclusive; closed: divided by the count so none stacks on the start) or one every `spacing` from the start; arc length is exact for lines and arcs (chain approximation for ellipse/spline), `startOffset`, `basePoint` (default the selection's centroid) rides the path, `align` turns each copy by how far the path direction has turned since the first station, `replaceSource` deletes the originals; capped at 10 000 stations. Kept out of the `PatternSpec` union on purpose (the pattern plugin mirrors that union over the public API). Tool `arraypath` (`apps/web/src/tools/arrayPathTool.ts`, alias `arpath`): select, type `8` (count) or `25mm` (spacing) plus `align/noalign` `keep/replace`, click the path; one undo step, copies end up selected. *Not done:* panel UI in the Pattern panel, associative (live) path arrays, 3D / item-count readout, not exercised in the running app. |
@@ -283,7 +284,7 @@ Pick two entities (lines, arcs, circles, or two adjacent polyline segments), rad
 
 ## 5. Phase 3 — Precision editing and remaining tools
 
-### T-27 · Grips — **P1, M** — 🟡 2026-09-21 (drag grips done; multifunction vertex menu open)
+### T-27 · Grips — **P1, M** — ✅ 2026-09-21 drag grips; 2026-11-04 multifunction polyline vertex menu
 
 **Ref:** AutoCAD. When one or a few entities are selected, draw small squares at endpoints, midpoint, center, quadrants, polyline vertices, arc ends/mid, text insertion, image corners. Drag an endpoint grip → move only that point (`update-entity`); drag a midpoint grip → move the whole entity; drag a circle's quadrant → change radius; polyline midpoint grip (AutoCAD's ▭ multifunction grip) → hover menu: *Stretch / Add vertex / Convert to arc / Remove vertex*. Grips participate in snapping (dragging an endpoint onto another endpoint is the manual "coincident"). This replaces most of LibreCAD's polyline sub-tools in one gesture.
 

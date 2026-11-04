@@ -63,8 +63,18 @@ export interface SelectHost {
   cyclingHit(world: Point, screen: Point): EntityId | null;
   /** What dragging a grip to `target` would commit (the solver moves tied geometry on a constrained sketch). */
   gripPreview(entity: Entity, grip: Grip, target: Point): Entity[];
+  /** T-27: shows (or with null hides) the hover menu of a polyline vertex grip. */
+  setGripMenu(menu: GripMenuTarget | null): void;
   /** Runs a command without the drawing tools' auto-constraint inference (moving is not drawing). */
   executeRaw(command: Command): void;
+}
+
+/** The vertex grip the multifunction menu is open on. */
+export interface GripMenuTarget {
+  entityId: EntityId;
+  /** Vertex index. */
+  index: number;
+  point: Point;
 }
 
 /** A raw pointer event as the gesture hooks see it. */
