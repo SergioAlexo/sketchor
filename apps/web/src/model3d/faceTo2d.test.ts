@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { boundsOf } from "@sketchor/core";
 import { buildModel } from "./buildModel";
-import { faceEdges, outlineOfFace } from "./faceTo2d";
+import { faceEdges, outlineOfFace, outlineOfView } from "./faceTo2d";
 import type { OcctMesh, OcctResult } from "./types";
 
 /**
@@ -76,5 +76,17 @@ describe("outlineOfFace", () => {
     const m = model(box(1, 1, 1));
     expect("error" in outlineOfFace(m, 99)).toBe(true);
     expect("error" in outlineOfFace(m, -1)).toBe(true);
+  });
+});
+
+describe("outlineOfView", () => {
+  it("the top view of a box is its footprint; hiding every part reports why", () => {
+    const m = model(box(80, 30, 5));
+    const r = outlineOfView(m, new Set(), [0, 0, 1], [0, 1, 0], "top");
+    if ("error" in r) throw new Error(r.error);
+    const b = boundsOf(r.entities)!;
+    expect(b.maxX).toBeCloseTo(80, 3);
+    expect(b.maxY).toBeCloseTo(30, 3);
+    expect("error" in outlineOfView(m, new Set([0]), [0, 0, 1], [0, 1, 0], "top")).toBe(true);
   });
 });

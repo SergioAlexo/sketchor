@@ -128,3 +128,4 @@ export * from "./layouts/fields";
 export * from "./layouts/titleBlock";
 export * from "./layouts/plot";
 export * from "./projection/outline";
+export * from "./projection/view";

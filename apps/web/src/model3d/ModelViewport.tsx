@@ -16,11 +16,12 @@ import {
   toBox3,
   type ModelObjects,
   type ViewPreset,
+  viewDirection,
 } from "./modelScene";
 import { useTheme } from "../theme/themeStore";
 import { formatBytes } from "./importError";
 import { measureSelection, partOf, refLabel, type MeasureSegment, type SelRef } from "./measure";
-import { faceOutlineBlocker, outlineOfFace } from "./faceTo2d";
+import { faceOutlineBlocker, outlineOfFace, outlineOfView } from "./faceTo2d";
 import { pickEdge, pickVertex, type Projector } from "./picking";
 import { useOpenLoads } from "./stepImport";
 import type { Model3D } from "./types";
@@ -911,6 +912,33 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
     useApp.getState().syncLayersFromDoc();
     useApp.getState().requestFit();
   };
+  /** F-07: project the visible parts along a view preset (or the current camera) into a new 2D tab. */
+  const [viewMenu, setViewMenu] = useState(false);
+  const viewTo2d = (preset: ViewPreset | "current") => {
+    setViewMenu(false);
+    const s = sceneRef.current;
+    let dir: [number, number, number];
+    let up: [number, number, number];
+    if (preset === "current") {
+      if (!s) return;
+      const d = s.camera.position.clone().sub(s.controls.target).normalize();
+      dir = [d.x, d.y, d.z];
+      up = [s.camera.up.x, s.camera.up.y, s.camera.up.z];
+    } else {
+      const d = viewDirection(preset);
+      dir = [d.x, d.y, d.z];
+      up = preset === "top" ? [0, 1, 0] : preset === "bottom" ? [0, -1, 0] : [0, 0, 1];
+    }
+    const r = outlineOfView(model, hidden, dir, up, preset === "current" ? "current" : preset);
+    if ("error" in r) {
+      window.alert(r.error);
+      return;
+    }
+    openNamedTab(r.name);
+    bus.execute({ type: "batch", commands: r.entities.map((entity) => ({ type: "add-entity" as const, entity })) });
+    useApp.getState().syncLayersFromDoc();
+    useApp.getState().requestFit();
+  };
   const readoutTitle = selection
     .slice(-2)
     .map((r) => refLabel(model, r))
@@ -993,6 +1021,25 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
           onClick={faceTo2d}
           testId="model-face-to-2d"
         />
+        <span style={{ position: "relative", display: "inline-flex" }}>
+          <ToolButton
+            title="Project the visible parts into a new 2D tab (hidden lines removed): top, front, right, iso or the current view"
+            label="View to 2D"
+            icon={ICONS.to2d}
+            active={viewMenu}
+            onClick={() => setViewMenu((v) => !v)}
+            testId="model-view-to-2d"
+          />
+          {viewMenu && (
+            <div className="model-view-menu" style={{ position: "absolute", top: "100%", left: 0, zIndex: 20, display: "flex", flexDirection: "column", background: "var(--panel, #25262b)", border: "1px solid var(--border, #444)", borderRadius: 6, padding: 4 }}>
+              {(["top", "front", "right", "iso", "current"] as const).map((p) => (
+                <button key={p} className="btn ghost sm" onClick={() => viewTo2d(p)} data-testid={`model-view-to-2d-${p}`}>
+                  {p === "current" ? "Current view" : p[0].toUpperCase() + p.slice(1)}
+                </button>
+              ))}
+            </div>
+          )}
+        </span>
         <ToolButton
           title="Show all hidden parts (Shift+H)"
           label={`Show all${hidden.size > 0 ? ` (${hidden.size})` : ""}`}
