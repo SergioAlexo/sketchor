@@ -9,6 +9,7 @@ Status as of 2026-09-11 (`main` @ v0.14.4).
 ### Progress log
 
 | Date | Items | Notes |
+| 2026-11-04 | **T-17** chamfer on curves | Chamfer between lines, arcs and circles (`chamferCurves`, distances measured along the curves from where they meet; circles are not trimmed). Closes the T-17 leftover; ellipse/spline chamfer and constraints are not done. |
 | 2026-11-04 | **T-27** vertex grip menu | Hover a polyline vertex grip: Add vertex / Remove vertex / Convert to arc (or line) via `gripMenu.ts`; drag still stretches. No touch equivalent yet; line/arc grips have no menu. |
 | 2026-11-04 | **T-08** quick edit | The open item from T-08 is done for line, circle and arc: after the tool commits one, a box beside it shows the length/radius (F2 or click to type, Enter applies). Pure logic in `quickEdit.ts`; Sketch mode additionally leaves a D-02b driving dimension. Polyline/rectangle are not offered. |
 | 2026-11-04 | **T-00** done | select, measure, text, mtext, image, straighten and pan moved onto the `tools/` framework (see the fidelity-plan log for the hooks added); `Viewport.tsx` no longer has a tool switch. |
@@ -276,7 +277,7 @@ Needs the **intersection library** first (`packages/core/src/intersect.ts`): pai
 - **Break at point / Break** (AutoCAD): thin wrappers over split.
 - All emit `delete-entity` + `add-entity` in one batch. Preserve `name`? — no: new pieces get new names; the DSL diff treats it as replace.
 
-### T-17 · Fillet / Chamfer — **P0, M** — 🟡 2026-11-02 (fillet: lines, arcs, circles + polyline corners; chamfer between arcs open)
+### T-17 · Fillet / Chamfer — **P0, M** — ✅ 2026-11-04 (fillet: lines, arcs, circles + polyline corners; chamfer: lines, arcs, circles)
 
 Pick two entities (lines, arcs, circles, or two adjacent polyline segments), radius typed or remembered. Core `fillet(e1, e2, r)`: offset both by `r` on the side of the click points, intersect the offsets → center, drop perpendiculars/radial points → tangent points, trim/extend both inputs to the tangent points, add the arc. **Radius 0 = corner join** (extends/trims two lines to their intersection — hugely useful for cleaning DXFs; AutoCAD users do this constantly). Polyline mode: fillet *all* corners of a closed polyline at once (`P` option) — writes bulges into the polyline instead of adding arcs. Chamfer: same flow with two distances or distance+angle. Onshape adds a tangent constraint here; do that in T-46 when the solver exists.
 

@@ -1,6 +1,6 @@
-import type { ArcEntity, Entity } from "./entities";
+import type { ArcEntity, Entity, LineEntity } from "./entities";
 import { dist, type Point } from "./geometry";
-import { entityFromPath, exactPathOf, intersectCurves, pointAt, subCurve, tangentAt, type XCurve } from "./intersect";
+import { curveLength, entityFromPath, exactPathOf, intersectCurves, pointAt, subCurve, tangentAt, type XCurve } from "./intersect";
 
 /**
  * Fillet between any two single-curve entities (C-08): line, arc, circle,
@@ -181,4 +181,71 @@ function cornerJoin(a: Operand, b: Operand): CurveFillet | null {
   const first = trimTo(a, h.t1);
   const second = trimTo(b, h.t2);
   return first && second ? { first, second, arc: null } : null;
+}
+
+/* --------------------------------- chamfer -------------------------------- */
+
+export interface CurveChamfer {
+  first: Entity;
+  second: Entity;
+  /** The chamfer line between the two cut points, id left blank for the caller; null when both distances are 0 (a corner join). */
+  line: LineEntity | null;
+}
+
+/**
+ * Chamfer between two lines/arcs/circles (T-17 leftover). Distances are
+ * measured *along each curve* from where the two meet (the intersection
+ * nearest the picks, a line extended to reach it as for a corner join),
+ * toward the side that was clicked; the curves are cut there and a straight
+ * line joins the cut points. A circle is never trimmed (only the chamfer
+ * line is added), as for fillet. Null when the curves never meet, are not
+ * lines/arcs/circles, or a distance runs past the end of the piece to keep.
+ * Both distances 0 is the corner join.
+ */
+export function chamferCurves(e1: Entity, e2: Entity, d1: number, d2: number, near1: Point, near2: Point): CurveChamfer | null {
+  if (!(d1 >= 0) || !(d2 >= 0) || !Number.isFinite(d1) || !Number.isFinite(d2)) return null;
+  const a = operand(e1, near1);
+  const b = operand(e2, near2);
+  if (!a || !b || e1.id === e2.id) return null;
+  if (!(a.curve.kind === "segment" || a.curve.kind === "arc") || !(b.curve.kind === "segment" || b.curve.kind === "arc")) return null;
+  if (d1 === 0 && d2 === 0) {
+    const j = cornerJoin(a, b);
+    return j ? { first: j.first, second: j.second, line: null } : null;
+  }
+  const hits = intersectCurves(a.curve, b.curve, a.curve.kind === "segment", b.curve.kind === "segment");
+  if (hits.length === 0) return null;
+  const pa = pointAt(a.curve, a.tc);
+  const pb = pointAt(b.curve, b.tc);
+  hits.sort((x, y) => dist(x.point, pa) + dist(x.point, pb) - (dist(y.point, pa) + dist(y.point, pb)));
+  const h = hits[0];
+
+  const foot = (o: Operand, tHit: number, d: number): { tf: number; keepEnd: boolean } | null => {
+    const len = curveLength(o.curve);
+    if (!(len > 1e-12)) return null;
+    let delta = o.tc - tHit;
+    if (o.closed) delta = delta - Math.round(delta); // shortest way round
+    const s = delta >= 0 ? 1 : -1;
+    const tf = tHit + (s * d) / len;
+    if (o.closed) return { tf: ((tf % 1) + 1) % 1, keepEnd: s > 0 };
+    // The piece kept must still be there: past the far end means the distance is too large.
+    if (s > 0 ? tf > 1 + 1e-9 : tf < -1e-9) return null;
+    return { tf, keepEnd: s > 0 };
+  };
+  const f1 = foot(a, h.t1, d1);
+  const f2 = foot(b, h.t2, d2);
+  if (!f1 || !f2) return null;
+  const cut = (o: Operand, f: { tf: number; keepEnd: boolean }): Entity | null => {
+    if (o.closed) return o.entity;
+    const piece = f.keepEnd ? subCurve(o.curve, f.tf, 1) : subCurve(o.curve, 0, f.tf);
+    const made = entityFromPath({ curves: [piece], closed: false }, o.entity, o.entity.id);
+    return made ? ({ ...o.entity, ...made, id: o.entity.id } as Entity) : null;
+  };
+  const first = cut(a, f1);
+  const second = cut(b, f2);
+  if (!first || !second) return null;
+  const p1 = pointAt(a.curve, f1.tf);
+  const p2 = pointAt(b.curve, f2.tf);
+  if (dist(p1, p2) < 1e-9) return null;
+  const line: LineEntity = { id: "", type: "line", ...props(e1), a: p1, b: p2 };
+  return { first, second, line };
 }

@@ -10,6 +10,7 @@ import {
   filletConstraints,
   filletCurveConstraints,
   offsetConstraints,
+  chamferCurves,
   filletCurves,
   filletLines,
   filletPolylineCorner,
@@ -328,7 +329,7 @@ export class FilletTool implements Tool {
 export class ChamferTool implements Tool {
   readonly id = "chamfer" as const;
   distance = 0;
-  private first: { entity: LineEntity; at: Point } | null = null;
+  private first: { entity: Entity; at: Point } | null = null;
   private message: string | null = null;
 
   prompt(): string {
@@ -356,8 +357,8 @@ export class ChamferTool implements Tool {
   pick(ctx: ToolContext, p: Pick): void {
     this.message = null;
     const target = entityAt(ctx, p.world);
-    if (!target || target.type !== "line") {
-      if (target) this.message = "Chamfer works between two lines";
+    if (!target || (target.type !== "line" && target.type !== "arc" && target.type !== "circle")) {
+      if (target) this.message = "Chamfer works between lines, arcs and circles";
       return;
     }
     if (!this.first) {
@@ -369,7 +370,23 @@ export class ChamferTool implements Tool {
       this.message = "Type a chamfer distance first";
       return;
     }
-    const r = chamferLines(this.first.entity, target, this.distance, this.distance, this.first.at, p.world);
+    if (this.first.entity.type !== "line" || target.type !== "line") {
+      // T-17: distances are measured along each curve from where they meet; a circle is not trimmed.
+      const c = chamferCurves(this.first.entity, target, this.distance, this.distance, this.first.at, p.world);
+      if (!c) {
+        this.message = "Can't chamfer these: they don't meet, or the distance is too large for them";
+        this.first = null;
+        return;
+      }
+      const cmds: Command[] = [];
+      if (c.first !== this.first.entity) cmds.push({ type: "update-entity", entity: c.first });
+      if (c.second !== target) cmds.push({ type: "update-entity", entity: c.second });
+      if (c.line) cmds.push({ type: "add-entity", entity: { ...c.line, id: newEntityId() } });
+      ctx.commit(cmds);
+      this.first = null;
+      return;
+    }
+    const r = chamferLines(this.first.entity as LineEntity, target, this.distance, this.distance, this.first.at, p.world);
     if (!r || !r.chamfer) {
       this.message = "Can't chamfer these: parallel lines, or the distance is too large for them";
       this.first = null;
