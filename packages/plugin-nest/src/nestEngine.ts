@@ -1,5 +1,6 @@
 import { jobParamsMm, jobSheets, type EngineId, type NestJob } from "./nestJob";
 import { nestRasterMmAsync, type RasterNestPart, type RasterNestResult } from "./raster/rasterNest";
+import { DEFAULT_SIMPLIFY_TOLERANCE, simplifyParts } from "./simplifyParts";
 import { LEVEL_BUDGET_MS, nestTrueShapeSearch } from "./search";
 import type { StockRow } from "./stock";
 import type { TrueNestPlacement, TrueNestSheet } from "./trueNest";
@@ -121,11 +122,14 @@ export const trueShapeEngine: NestEngine = {
     const effective: StockRow[] = sheets.extra ? [...inventory, { size: { ...sheets.extra }, qty: null }] : inventory;
     const reduced = reduceForClamp(effective, p.clamp);
     const t0 = Date.now();
-    const { result, attempts } = await nestTrueShapeSearch(parts, reduced, {
+    // NF-05: search on simplified outlines, widened so the real clearance still holds, then map back.
+    const simp = simplifyParts(parts);
+    const widen = simp.changed ? DEFAULT_SIMPLIFY_TOLERANCE : 0;
+    const { result, attempts } = await nestTrueShapeSearch(simp.parts, reduced, {
       level: job.searchLevel,
       budgetMs: job.searchLevel === "quick" ? 0 : LEVEL_BUDGET_MS[job.searchLevel],
-      spacing: p.spacing,
-      edgeMargin: p.margin,
+      spacing: p.spacing + 2 * widen,
+      edgeMargin: p.margin + widen,
       gravity: job.gravity,
       minHoleArea: job.minHoleArea,
       isCancelled: hooks.isCancelled,
@@ -134,7 +138,7 @@ export const trueShapeEngine: NestEngine = {
 
     // Put the clamp strip back: wide sheets keep it on the low-y edge, so everything shifts up by it.
     const shiftY = (sh: TrueNestSheet) => (p.clamp > 0 && effective[sh.stockIndex]!.size.width > effective[sh.stockIndex]!.size.height ? p.clamp : 0);
-    const placed: TrueNestPlacement[] = result.placed.map((pl) => {
+    const placed: TrueNestPlacement[] = simp.restorePlacements(result.placed).map((pl) => {
       const dy = shiftY(result.sheets[pl.sheet]!);
       return dy ? { ...pl, translation: { x: pl.translation.x, y: pl.translation.y + dy } } : pl;
     });
