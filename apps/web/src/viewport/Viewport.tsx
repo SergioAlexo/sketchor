@@ -9,6 +9,8 @@ import {
   gripPointRef,
   arcSweep,
   boundsOf,
+  quickEditCommands,
+  quickEditTarget,
   gripsOf,
   type Grip,
   explodeCommands,
@@ -93,6 +95,8 @@ import { parseCommand, type AppCommandId } from "../tools/commandLine";
 import { COMMAND_LINE_ACTIONS } from "../metrics/actions";
 import { track } from "../metrics/metrics";
 import { CommandBar, type CommandEcho } from "../tools/CommandBar";
+import { QuickEditBox } from "../tools/QuickEditBox";
+import { parseLength } from "../tools/typedInput";
 import { useTheme } from "../theme/themeStore";
 import { useMTextUi } from "../mtext/mtextUi";
 import { getActiveLayoutRecord, getSpaceState, inActiveSpace, saveLayoutView, savedLayoutView, setMspace, useSpaceState } from "../layouts/layoutState";
@@ -311,6 +315,13 @@ export function Viewport() {
   const hoverRef = useRef<EntityId | null>(null);
   /** The typed-coordinate box (T-08), open while a framework tool waits for a point and the user has started typing. */
   const [typed, setTyped] = useState<{ text: string; screen: Point } | null>(null);
+  // T-08: the box that retypes the length/radius of what a draw tool just committed.
+  const [quickEdit, setQuickEditState] = useState<{ id: EntityId; screen: Point } | null>(null);
+  const quickEditRef = useRef<{ id: EntityId; screen: Point } | null>(null);
+  const setQuickEdit = (q: { id: EntityId; screen: Point } | null) => {
+    quickEditRef.current = q;
+    setQuickEditState(q);
+  };
   /**
    * The relative zero (T-08, LibreCAD's): the last point any tool placed.
    * `@dx,dy` measures from the tool's own anchor while it has one, and
@@ -461,15 +472,48 @@ export function Viewport() {
     useApp.getState().setHatchTinted(hatchesTinted());
   };
 
+  /** T-08: a line, circle or arc just committed by its own draw tool gets the quick-edit box beside it. */
+  const offerQuickEdit = (commands: Command[]) => {
+    const tool = useApp.getState().tool;
+    if (tool !== "line" && tool !== "circle" && tool !== "arc") return;
+    if (commands.length !== 1 || commands[0].type !== "add-entity") return;
+    const entity = doc.get(commands[0].entity.id);
+    if (!entity || !quickEditTarget(entity)) return;
+    const at = entity.type === "line" ? { x: (entity.a.x + entity.b.x) / 2, y: (entity.a.y + entity.b.y) / 2 } : entity.type === "circle" || entity.type === "arc" ? { x: entity.center.x + entity.radius, y: entity.center.y } : null;
+    if (at) setQuickEdit({ id: entity.id, screen: worldToScreen(viewRef.current, at) });
+  };
+
+  /** Applies a typed quick-edit value: one undo step; in sketch mode it also leaves a driving dimension. */
+  const applyQuickEditText = (text: string): boolean => {
+    const q = quickEditRef.current;
+    const entity = q ? doc.get(q.id) : undefined;
+    const app = useApp.getState();
+    const mm = parseLength(text, app.displayUnit);
+    if (!q || !entity || mm === null) return false;
+    const commands = quickEditCommands(entity, mm, { driving: app.drawingMode === "sketch", layer: app.activeLayer });
+    if (commands.length === 0) return false;
+    bus.execute(commands.length === 1 ? commands[0] : { type: "batch", commands });
+    // The line tool chains from its last end, which just moved: end the chain rather than continue from a stale point.
+    getTool(app.tool)?.cancel(toolCtx);
+    setQuickEdit(null);
+    syncPrompt();
+    redraw();
+    return true;
+  };
+
   /** What a framework tool may touch (see ../tools/tool.ts). Stable for the component's life. */
   const toolCtxRef = useRef<ToolContext | null>(null);
   if (!toolCtxRef.current) {
     toolCtxRef.current = {
       doc,
-      execute: (command) => bus.execute(withAutoConstraints(command, doc)),
+      execute: (command) => {
+        bus.execute(withAutoConstraints(command, doc));
+        offerQuickEdit([command]);
+      },
       commit: (commands) => {
         if (commands.length === 1) bus.execute(withAutoConstraints(commands[0], doc));
         else if (commands.length > 1) bus.execute(withAutoConstraints({ type: "batch", commands }, doc));
+        offerQuickEdit(commands);
       },
       activeLayer: () => useApp.getState().activeLayer,
       redraw: () => redraw(),
@@ -658,6 +702,7 @@ export function Viewport() {
       getTool(prevToolRef.current)?.cancel(toolCtx);
       prevToolRef.current = tool;
       setTyped(null);
+      setQuickEdit(null);
     }
     trackingRayRef.current = null;
     trackRaysRef.current = [];
@@ -933,6 +978,11 @@ export function Viewport() {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
       const app = useApp.getState();
+      if (e.key === "F2" && quickEditRef.current) {
+        e.preventDefault();
+        document.querySelector<HTMLInputElement>('[data-testid="quick-edit"] input')?.focus();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && app.tool === "measure" && app.measurement) {
         e.preventDefault();
         void navigator.clipboard.writeText(measurementText(app.measurement, app.displayUnit, referenceEdgeAngleDeg()));
@@ -1024,6 +1074,7 @@ export function Viewport() {
         // select tool so the next stray click can't add geometry.
         getTool(app.tool)?.cancel(toolCtx);
         setTyped(null);
+        setQuickEdit(null);
         setCycle(null);
         acquiredRef.current = [];
     acquiredLinesRef.current = [];
@@ -1261,6 +1312,7 @@ export function Viewport() {
     const view = viewRef.current;
     const world = screenToWorld(view, screen);
     const app = useApp.getState();
+    if (quickEditRef.current) setQuickEdit(null);
 
     // Middle/right-drag pans from any tool, and explicitly preserves a
     // half-drawn line/polyline/circle/measurement rather than replacing it.
@@ -1806,6 +1858,21 @@ export function Viewport() {
           })}
         </div>
       )}
+      {quickEdit && (() => {
+        const ent = doc.get(quickEdit.id);
+        const target = ent ? quickEditTarget(ent) : null;
+        if (!target) return null;
+        return (
+          <QuickEditBox
+            key={`${quickEdit.id}:${target.value}`}
+            label={target.kind === "length" ? "Length" : "Radius"}
+            initial={formatLength(target.value, useApp.getState().displayUnit)}
+            screen={quickEdit.screen}
+            onCommit={applyQuickEditText}
+            onCancel={() => setQuickEdit(null)}
+          />
+        );
+      })()}
       {typed && (
         <TypedInputBox
           value={typed.text}
