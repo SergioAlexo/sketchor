@@ -98,22 +98,11 @@ import { useMTextUi } from "../mtext/mtextUi";
 import { getActiveLayoutRecord, getSpaceState, inActiveSpace, saveLayoutView, savedLayoutView, setMspace, useSpaceState } from "../layouts/layoutState";
 import { sheetRect, viewportFromModelView, viewportScreenView } from "./sheetRender";
 
-/**
- * The half-finished states a pan can interrupt. Panning or zooming mid-draw
- * must not throw the drawing away — you routinely need to scroll to where the
- * far end of a line goes — so a pan stashes one of these in its `resume` and
- * puts it back on pointer-up. (The drawing tools on the tool framework —
- * see ../tools — keep their own state and need no stashing; only the
- * legacy measure/dim sequences still live here.)
- */
-type DrawInteraction = { kind: "measure"; start: Point } | { kind: "dim"; start: Point };
-
 type Interaction =
   | { kind: "idle" }
-  | { kind: "pan"; lastX: number; lastY: number; resume: DrawInteraction | { kind: "idle" } }
-  /** Two fingers down: pan by the midpoint, zoom by the spread. Like "pan", it keeps a half-drawn entity. */
-  | { kind: "pinch"; resume: DrawInteraction | { kind: "idle" } }
-  | DrawInteraction
+  | { kind: "pan"; lastX: number; lastY: number }
+  /** Two fingers down: pan by the midpoint, zoom by the spread. Framework tools keep their own half-drawn state meanwhile. */
+  | { kind: "pinch" }
   | {
       kind: "move";
       ids: EntityId[];
@@ -155,7 +144,6 @@ type Interaction =
    */
   | { kind: "tool-fence"; startScreen: Point; points: Point[]; click: Pick; snapPoint: Point };
 
-const DRAW_KINDS = ["measure", "dim"] as const;
 
 /** The grip of a selected entity within reach of a screen point, nearest first. */
 function findGrip(selection: EntityId[], screen: Point, view: View, touch: boolean): { entityId: EntityId; grip: Grip } | null {
@@ -172,11 +160,6 @@ function findGrip(selection: EntityId[], screen: Point, view: View, touch: boole
     }
   }
   return best;
-}
-
-/** Narrows to the states worth preserving across a pan (see DrawInteraction). */
-function resumable(i: Interaction): DrawInteraction | { kind: "idle" } {
-  return (DRAW_KINDS as readonly string[]).includes(i.kind) ? (i as DrawInteraction) : { kind: "idle" };
 }
 
 /** Fixed pixel offset above a selected group's bounding box where its rotate handle is drawn/hit-tested. */
@@ -441,7 +424,7 @@ export function Viewport() {
     // During a pan, draw the interaction it suspended — otherwise the rubber
     // band vanishes the moment you scroll to see where the line is going.
     const held = interactionRef.current;
-    const interaction: Interaction = held.kind === "pan" || held.kind === "pinch" ? held.resume : held;
+    const interaction: Interaction = held.kind === "pan" || held.kind === "pinch" ? { kind: "idle" } : held;
     const snap = snapRef.current;
 
     const activeTool = getTool(state.tool);
@@ -543,6 +526,10 @@ export function Viewport() {
         return hit ? resolveSelection(doc, hit, useApp.getState().enteredGroupId) : [];
       },
       hitEntity: (world) => hitTest(viewRef.current, world),
+      closedRegionAt: (world) => regionContainingPoint(closedRegionsRef.current, world),
+      setHoverEntity: (id) => {
+        hoverRef.current = id;
+      },
       editText: (existing, world) => {
         if (existing) openTextEditor(existing);
         else setTextEdit({ screen: worldToScreen(viewRef.current, world), world, value: "", id: null, rotation: 0, height: useApp.getState().textHeight });
@@ -1262,7 +1249,7 @@ export function Viewport() {
       // half-drawn entity is kept, as for a pan.
       pendingTouchRef.current = null;
       if (interactionRef.current.kind !== "pinch") {
-        interactionRef.current = { kind: "pinch", resume: resumable(interactionRef.current) };
+        interactionRef.current = { kind: "pinch" };
         redraw();
       }
       return;
@@ -1310,7 +1297,6 @@ export function Viewport() {
         kind: "pan",
         lastX: screen.x,
         lastY: screen.y,
-        resume: resumable(interactionRef.current),
       };
       return;
     }
@@ -1400,90 +1386,6 @@ export function Viewport() {
       case "stretch":
         // On the tool framework; dispatched above.
         break;
-      case "measure": {
-        const hit = hitTest(view, world);
-        const hitEntity = hit ? doc.get(hit) : null;
-
-        // Ctrl-click a line to pick it as the angle reference edge for
-        // distance measurements (click it again to clear). Independent of
-        // the straighten tool's own reference edge — each is reset when you
-        // switch into that tool.
-        if (e.ctrlKey && hitEntity?.type === "line") {
-          app.setReferenceEdge(app.referenceEdgeId === hitEntity.id ? null : hitEntity.id);
-          interactionRef.current = { kind: "idle" };
-          break;
-        }
-
-        // Alt-click is the explicit "measure this whole entity" gesture —
-        // a plain click always measures point-to-point (see below), snapping
-        // to endpoints/midpoints/centers/intersections/on-line points, so it
-        // isn't shadowed by clicking anywhere near a line. Once a running
-        // total is showing, every further Alt-click adds to it with no
-        // modifier needed — Shift used to be required here, but making
-        // multi-select the default (and dropping it via Esc or a
-        // double-click, see onDoubleClick) reads more like normal selection.
-        if (e.altKey && hitEntity?.type === "arc") {
-          const len = hitEntity.radius * arcSweep(hitEntity.startAngle, hitEntity.endAngle, hitEntity.ccw);
-          const current = app.measurement;
-          if (current?.kind === "length") {
-            if (!current.ids.includes(hitEntity.id)) {
-              app.setMeasurement({ kind: "length", ids: [...current.ids, hitEntity.id], total: current.total + len });
-            }
-          } else {
-            app.setMeasurement({
-              kind: "radius",
-              id: hitEntity.id,
-              center: hitEntity.center,
-              radius: hitEntity.radius,
-              arcLength: len,
-            });
-          }
-          interactionRef.current = { kind: "idle" };
-          break;
-        }
-
-        if (e.altKey && hitEntity?.type === "circle") {
-          app.setMeasurement({ kind: "radius", id: hitEntity.id, center: hitEntity.center, radius: hitEntity.radius });
-          interactionRef.current = { kind: "idle" };
-          break;
-        }
-
-        if (e.altKey && (hitEntity?.type === "line" || hitEntity?.type === "polyline" || hitEntity?.type === "ellipse" || hitEntity?.type === "spline")) {
-          const len =
-            hitEntity.type === "line" ? dist(hitEntity.a, hitEntity.b) : hitEntity.type === "polyline" ? polylineLength(hitEntity) : (entityLength(hitEntity) ?? 0);
-          const current = app.measurement;
-          if (current?.kind === "length") {
-            if (!current.ids.includes(hitEntity.id)) {
-              app.setMeasurement({ kind: "length", ids: [...current.ids, hitEntity.id], total: current.total + len });
-            }
-          } else {
-            app.setMeasurement({ kind: "length", ids: [hitEntity.id], total: len });
-          }
-          interactionRef.current = { kind: "idle" };
-          break;
-        }
-
-        // Nothing under the cursor at all: an enclosing closed area takes
-        // priority over starting a two-point distance drag.
-        if (!hitEntity) {
-          const region = regionContainingPoint(closedRegionsRef.current, world);
-          if (region) {
-            app.setMeasurement({ kind: "area", region });
-            interactionRef.current = { kind: "idle" };
-            break;
-          }
-        }
-
-        if (interaction.kind === "measure") {
-          // second click freezes the measurement
-          app.setMeasurement({ kind: "distance", a: interaction.start, b: snapped });
-          interactionRef.current = { kind: "idle" };
-        } else {
-          interactionRef.current = { kind: "measure", start: snapped };
-          app.setMeasurement({ kind: "distance", a: snapped, b: snapped });
-        }
-        break;
-      }
       case "select": {
         // Alt turns the drag into a freehand selection: a lasso, or a fence
         // while the no-snap modifier is also held. Checked before the hit
@@ -1551,17 +1453,6 @@ export function Viewport() {
         }
         break;
       }
-      case "dim": {
-        if (interaction.kind === "dim") {
-          placeDimension(interaction.start, snapped);
-          interactionRef.current = { kind: "idle" };
-          app.setMeasurement(null);
-        } else {
-          interactionRef.current = { kind: "dim", start: snapped };
-          app.setMeasurement({ kind: "distance", a: snapped, b: snapped });
-        }
-        break;
-      }
     }
     redraw();
   };
@@ -1604,34 +1495,6 @@ export function Viewport() {
       });
     }
     redraw();
-  };
-
-  /** Draws a linear dimension between two points as a grouped batch on the Dimensions layer. */
-  const placeDimension = (a: Point, b: Point) => {
-    if (dist(a, b) < 1e-6) return;
-    const app = useApp.getState();
-    const d = linearDimension(a, b, {
-      offset: Math.max(app.textHeight * 2, dist(a, b) * 0.12),
-      textHeight: app.textHeight,
-      label: formatLength(dist(a, b), app.displayUnit),
-    });
-    const layer = "Dimensions";
-    const ids: EntityId[] = [];
-    const commands: Command[] = [];
-    for (const pts of d.lines) {
-      const id = newEntityId();
-      ids.push(id);
-      commands.push({ type: "add-entity", entity: { id, type: "polyline", layer, points: pts, closed: false } });
-    }
-    const textId = newEntityId();
-    ids.push(textId);
-    commands.push({
-      type: "add-entity",
-      entity: { id: textId, type: "text", layer, at: d.text.at, text: d.text.text, height: d.text.height, rotation: d.text.rotation },
-    });
-    commands.push({ type: "group-entities", groupId: newGroupId(), ids, name: d.text.text });
-    bus.execute({ type: "batch", commands });
-    useApp.getState().syncLayersFromDoc?.();
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -1702,10 +1565,8 @@ export function Viewport() {
     const snap = resolved.snap;
     snapRef.current = snap;
     trackingRayRef.current = resolved.ray;
-    hoverRef.current = app.tool === "measure" ? hitTest(view, world) : null;
-    if (interaction.kind === "measure" || interaction.kind === "dim") {
-      app.setMeasurement({ kind: "distance", a: interaction.start, b: snap.point });
-    }
+    hoverRef.current = null;
+    getTool(app.tool)?.hover?.(toolCtx, { point: snap.point, world, snap, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey || e.metaKey, altKey: e.altKey });
     const shown = app.tool === "select" ? world : snap.point;
     app.setCursor({ x: shown.x, y: shown.y });
     redraw();
@@ -1741,7 +1602,7 @@ export function Viewport() {
       // finger is not promoted to a tool action, it just has to lift too.
       if (interactionRef.current.kind === "pinch") {
         if (touchesRef.current.size === 0) {
-          interactionRef.current = interactionRef.current.resume;
+          interactionRef.current = { kind: "idle" };
           redraw();
         }
         try {
@@ -1820,7 +1681,7 @@ export function Viewport() {
       return;
     }
     if (interaction.kind === "pan") {
-      interactionRef.current = interaction.resume;
+      interactionRef.current = { kind: "idle" };
       redraw();
     } else if (interaction.kind === "move") {
       const moved = dist(screenPos(e), interaction.startScreen) >= (e.pointerType === "touch" ? 10 : 4);
@@ -2062,16 +1923,6 @@ export function Viewport() {
     const world = screenToWorld(viewRef.current, screen);
     const hit = hitTest(viewRef.current, world);
     const app = useApp.getState();
-
-    // In the measure tool, double-click anywhere is "drop what I've got" —
-    // the same job Esc does, but without falling back to the select tool.
-    // Takes priority over the zoom-to-fit fallback below, which a double
-    // click would otherwise trigger since "measure" has no Tool class.
-    if (app.tool === "measure") {
-      app.setMeasurement(null);
-      interactionRef.current = { kind: "idle" };
-      return;
-    }
 
     // Double-clicking a constraint mark removes that constraint — the
     // gesture is unambiguous (a mark is not geometry), and it undoes.

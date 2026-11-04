@@ -17,6 +17,7 @@ import { PanTool } from "./panTool";
 import { StraightenTool } from "./straightenTool";
 import { ImageTool } from "./imageTool";
 import { MTextTool, TextTool } from "./textTools";
+import { MeasureTool } from "./measureTool";
 import type { Tool } from "./tool";
 
 /**
@@ -78,6 +79,7 @@ const TOOLS: Partial<Record<ToolId, Tool>> = {
   tolerance: new ToleranceTool(),
   viewport: new ViewportTool(),
   pan: new PanTool(),
+  measure: new MeasureTool(),
   image: new ImageTool(),
   text: new TextTool(),
   mtext: new MTextTool(),
