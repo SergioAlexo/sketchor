@@ -18,9 +18,7 @@ import type { Snap } from "../viewport/snapping";
  *     never mutates entities.
  *  3. `cancel` must leave the tool idle; Esc calls it before anything else.
  *
- * Tools not yet migrated (select, measure, text, image, fill, straighten,
- * dim, pan) still live as cases inside Viewport.tsx; `getTool` returns
- * null for those and the viewport takes its legacy path.
+ * Every tool runs on this framework.
  */
 
 export interface ToolContext {
@@ -59,6 +57,10 @@ export interface Pick {
 
 export interface Tool {
   id: ToolId;
+  /** The primary button (one finger) pans the view instead of picking (the pan tool). */
+  panDrag?: boolean;
+  /** Digits and `@` do not open the typed-coordinate box (tools that take no point). */
+  noTyped?: boolean;
   /** Status-bar prompt for the current state, e.g. "Specify next point". */
   prompt(ctx: ToolContext): string;
   /** True while a multi-click sequence is in progress (Esc cancels it before leaving the tool). */

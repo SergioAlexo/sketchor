@@ -13,6 +13,7 @@ import { LeaderAddTool, LeaderTool } from "./leaderTool";
 import { ArrayPathTool } from "./arrayPathTool";
 import { ToleranceTool } from "./toleranceTool";
 import { ViewportTool } from "./viewportTool";
+import { PanTool } from "./panTool";
 import type { Tool } from "./tool";
 
 /**
@@ -73,6 +74,7 @@ const TOOLS: Partial<Record<ToolId, Tool>> = {
   leaderadd: new LeaderAddTool(),
   tolerance: new ToleranceTool(),
   viewport: new ViewportTool(),
+  pan: new PanTool(),
 };
 
 export function getTool(id: ToolId): Tool | null {

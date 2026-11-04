@@ -1060,7 +1060,7 @@ export function Viewport() {
         e.preventDefault();
         syncPrompt();
         redraw();
-      } else if (getTool(app.tool) && startsTypedInput(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      } else if (getTool(app.tool) && !getTool(app.tool)?.noTyped && startsTypedInput(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
         // Start of a typed coordinate: open the box with this character in it.
         e.preventDefault();
         const screen = lastScreenRef.current ?? { x: 40, y: 40 };
@@ -1305,7 +1305,7 @@ export function Viewport() {
     // Middle/right-drag pans from any tool, and explicitly preserves a
     // half-drawn line/polyline/circle/measurement rather than replacing it.
     // The pan tool does the same with the primary button (one finger).
-    if (e.button === 1 || e.button === 2 || (e.button === 0 && app.tool === "pan")) {
+    if (e.button === 1 || e.button === 2 || (e.button === 0 && getTool(app.tool)?.panDrag)) {
       interactionRef.current = {
         kind: "pan",
         lastX: screen.x,
@@ -1637,9 +1637,6 @@ export function Viewport() {
         }
         break;
       }
-      case "pan":
-        // Handled above, together with the middle/right-button pan.
-        break;
       case "dim": {
         if (interaction.kind === "dim") {
           placeDimension(interaction.start, snapped);
