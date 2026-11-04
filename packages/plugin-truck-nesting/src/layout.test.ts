@@ -3,6 +3,7 @@ import type { Command, DocumentReadModel } from "@sketchor/plugin-sdk";
 import {
   buildNestLayout,
   clearPreviousLayout,
+  forPaper,
   LOAD_PLAN_GUIDE_LAYER,
   LOAD_PLAN_LAYER,
   readLivePlacements,
@@ -123,6 +124,49 @@ describe("buildNestLayout", () => {
     if (summary?.type === "add-entity" && summary.entity.type === "text") {
       expect(summary.entity.at.x).toBeGreaterThan(trailer.length);
     }
+  });
+});
+
+describe("forPaper pallet outlines", () => {
+  const drawn = (os: Order[] = orders, margins = false) =>
+    buildNestLayout(
+      margins ? nestByOrders({ ...trailer, wallMargin: 120 }, os, { palletMargin: 30 }) : nestByOrders(trailer, os),
+      { dimensions: true },
+    ).flatMap((c) =>
+      c.type === "add-entity" ? [c.entity] : [],
+    );
+  const shapes = (es: readonly ReturnType<typeof drawn>[number][]) => es.filter((e) => e.name === "pallet-shape");
+
+  it("inks every pallet shape (rect and round) dark, keeping fill and geometry", () => {
+    const before = drawn();
+    const after = shapes(forPaper(before));
+    const orig = shapes(before);
+    expect(after).toHaveLength(orig.length);
+    expect(after.some((e) => e.type === "circle")).toBe(true);
+    expect(after.some((e) => e.type === "polyline")).toBe(true);
+    for (const e of after) {
+      const o = orig.find((x) => x.id === e.id)!;
+      expect(o.color).toBe(o.type !== "text" && "fill" in o ? o.fill : undefined); // canvas stroke == fill: no edge
+      expect(e.color).toBe("#111111");
+      expect({ ...e, color: undefined }).toEqual({ ...o, color: undefined }); // fill, geometry, id untouched
+    }
+  });
+
+  it("outlines a dark-filled pallet too", () => {
+    const dark: Order[] = [{ ...orders[0], color: "#101820", pallets: [orders[0].pallets[0]] }];
+    const [shape] = shapes(forPaper(drawn(dark)));
+    expect(shape.color).toBe("#111111");
+    expect("fill" in shape && shape.fill).toBe("#101820");
+  });
+
+  it("does not mutate its input, and still drops guides and the summary", () => {
+    const before = drawn(orders, true);
+    const snapshot = JSON.parse(JSON.stringify(before));
+    const out = forPaper(before);
+    expect(before).toEqual(snapshot);
+    expect(before.some((e) => e.layer === LOAD_PLAN_GUIDE_LAYER)).toBe(true);
+    expect(out.some((e) => e.name === "pallet-guide" || e.layer === LOAD_PLAN_GUIDE_LAYER)).toBe(false);
+    expect(out.some((e) => e.type === "text" && /load plan/i.test(e.text))).toBe(false);
   });
 });
 

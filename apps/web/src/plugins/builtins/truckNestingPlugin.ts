@@ -527,8 +527,10 @@ export function buildPrintHtml(
     .load-plan, .load-plan * { -webkit-print-color-adjust: exact; print-color-adjust: exact; color-adjust: exact; }
     .load-plan h1 { font-size: 16px; margin: 0 0 2px; }
     .load-plan .sub { color: #444; font: 12px system-ui, sans-serif; margin-bottom: 10px; }
-    .load-plan svg { width: 100%; height: auto; max-height: 55vh; margin: 8px 0; }
-    .load-plan h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 6px; }
+    .load-plan svg { width: 100%; height: auto; max-height: 150mm; margin: 8px 0; break-inside: avoid; }
+    .load-plan h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 6px; break-after: avoid; }
+    .load-plan thead { display: table-header-group; }
+    .load-plan tr { break-inside: avoid; }
     .load-plan .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font: 12px system-ui, sans-serif; }
     .load-plan .legend-row { display: flex; align-items: center; gap: 6px; }
     .load-plan .swatch { display: inline-block; width: 11px; height: 11px; border-radius: 2px; border: 1px solid #0002; }
@@ -590,9 +592,10 @@ export function buildPrintPdf(
       pdf,
       [...entities],
       { x: margin, y: y + 6, width: right - margin, height: planHeight },
-      // Page points, not world units: thin enough for a 48-pallet load, still
-      // visible on a laser printer.
-      { strokeColor: ink, strokeWidth: 0.4 },
+      // Page points, not world units: thin enough for a 48-pallet load, heavy
+      // enough that each pallet's outline reads on a laser printer, and about
+      // what the printed sheet's scaled stroke comes to.
+      { strokeColor: ink, strokeWidth: 0.6 },
     );
     y += planHeight + 18;
   }

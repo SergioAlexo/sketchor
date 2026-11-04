@@ -183,6 +183,25 @@ describe("the filed PDF", () => {
     expect(text).toContain("(NOSE)"); // the drawing's own lettering
   });
 
+  it("continues the pallet list onto further pages instead of stopping after the first", () => {
+    // 120 pallets cannot fit under the plan on one landscape page; a writer that
+    // stopped at the page bottom would silently drop the last rows from the paper.
+    const many: Order[] = Array.from({ length: 120 }, (_, i) => ({
+      id: `m${i}`,
+      jobNumber: `JOB-${String(i + 1).padStart(3, "0")}`,
+      city: "Leeds",
+      state: "",
+      color: "#e69f00",
+      pallets: [{ id: `p${i}`, width: 1200, length: 800, shape: "rect" as const }],
+    }));
+    const result = nestByOrders({ ...trailer, length: 200000 }, many);
+    const text = asText(buildPrintPdf(drawn(result), result, [], info));
+    const pages = Number(/\/Type \/Pages \/Count (\d+)/.exec(text)![1]);
+    expect(pages).toBeGreaterThan(1);
+    expect(text).toContain("(JOB-120)");
+    expect(text).toContain("(120)"); // its row number
+  });
+
   it("escapes a job number that would otherwise end the string early", () => {
     const awkward: Order[] = [{ ...orders[0], jobNumber: "PO (rush) \\ 7" }];
     const result = nestByOrders(trailer, awkward);

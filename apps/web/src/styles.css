@@ -1824,6 +1824,28 @@ body.sketchor-printing #sketchor-print-root {
     width: auto;
     padding: 0;
   }
+  /* The screen layout pins the app to one viewport (html/body/#root are
+     height:100% + overflow:hidden; the preview root is a 100vh flex column
+     with a scrolling page). Printed, that clips the sheet to page 1 — so
+     everything goes back to normal block flow and the sheet paginates. */
+  html,
+  body.sketchor-printing,
+  body.sketchor-printing #root,
+  body.sketchor-printing #sketchor-print-root,
+  body.sketchor-printing #sketchor-print-root .print-preview-page,
+  body.sketchor-printing #sketchor-print-root .print-preview-sheet {
+    height: auto;
+    overflow: visible;
+  }
+  body.sketchor-printing #sketchor-print-root,
+  body.sketchor-printing #sketchor-print-root .print-preview-page,
+  body.sketchor-printing #sketchor-print-root .print-preview-sheet {
+    display: block;
+    flex: none;
+  }
+  body.sketchor-printing {
+    background: #fff;
+  }
 }
 
 /* ---------- shortcuts panel ---------- */

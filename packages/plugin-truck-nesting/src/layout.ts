@@ -338,7 +338,13 @@ function palletCommands(p: PlacedItem, itemNumber: number, opts: LayoutOptions):
  * Printed as-is they would be blank paper. This swaps that lettering to black
  * and drops the guides, which is the same bargain every CAD plot style makes
  * — and it is a *rendering* of the drawing, not a second drawing: the
- * geometry, positions and pallet colours are untouched.
+ * geometry, positions and pallet fills are untouched.
+ *
+ * Pallet outlines are re-inked too: on the canvas a pallet's stroke is its own
+ * fill colour (so no edge shows), which on paper would melt neighbouring
+ * pallets of one drop into a single block. A dark outline keeps each pallet
+ * distinct; the fill still carries the order colour. No lineweight is set, so
+ * the exporter's default stroke (which scales with the trailer) applies.
  *
  * Labels sitting on a pallet keep their colour: those are already black or
  * white by how dark that pallet is, which is what works on both media.
@@ -353,6 +359,10 @@ export function forPaper(entities: readonly Entity[]): Entity[] {
     if (e.name === NAME_SUMMARY) continue;
     if (e.type === "text" && (e.name === NAME_DIM || e.name === NAME_END) && isLight(e.color)) {
       out.push({ ...e, color: "#111111" });
+      continue;
+    }
+    if (e.name === NAME_SHAPE) {
+      out.push({ ...e, color: "#111111" }); // outline only; `fill` keeps the order colour
       continue;
     }
     out.push(e);
