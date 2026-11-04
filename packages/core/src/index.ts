@@ -100,6 +100,7 @@ export * from "./blocks/shippedLibrary";
 export * from "./blocks/manage";
 export * from "./layouts/types";
 export * from "./annotative/annotative";
+export * from "./layouts/fromModel";
 export * from "./layouts/ops";
 export * from "./blocks/insertEdit";
 export * from "./blocks/refedit";

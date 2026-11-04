@@ -26,6 +26,7 @@ import { bus, doc, useApp } from "../state/store";
 import { setActiveLayout, setMspace, useSpaceState } from "./layoutState";
 import { PageSetupDialog } from "./PageSetupDialog";
 import { SheetsDialog } from "./SheetsDialog";
+import { LayoutWizard } from "./LayoutWizard";
 import { allLayoutNames, publishLayouts } from "./publish";
 
 /**
@@ -41,6 +42,7 @@ export function LayoutTabs() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [setup, setSetup] = useState<string | null>(null);
   const [sheets, setSheets] = useState(false);
+  const [wizard, setWizard] = useState(false);
 
   // A layout can disappear under the user (delete, undo of its creation): fall back to Model.
   const gone = space.layout !== null && !doc.hasRecord(LAYOUTS_TABLE, space.layout);
@@ -132,6 +134,9 @@ export function LayoutTabs() {
       <button className="layout-tab add" data-testid="layout-tab-add" onClick={add} title="New layout">
         +
       </button>
+      <button className="layout-tab" data-testid="layout-from-model" onClick={() => setWizard(true)} title="Create a layout from the model: paper, title block, scale or fit, one viewport">
+        From model...
+      </button>
       {space.layout === null && (
         <select
           className="layout-select"
@@ -192,6 +197,7 @@ export function LayoutTabs() {
           <button onClick={() => { remove(menu.name); setMenu(null); }}>Delete</button>
         </div>
       )}
+      {wizard && <LayoutWizard onClose={() => setWizard(false)} />}
       {sheets && <SheetsDialog onClose={() => setSheets(false)} />}
       {setup && <PageSetupDialog name={setup} onClose={() => setSetup(null)} />}
     </div>

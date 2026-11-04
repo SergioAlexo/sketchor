@@ -14,8 +14,10 @@ import { LAYOUTS_TABLE, getLayout, printableRectMm, type LayoutRecord } from "./
  */
 
 export const TITLE_BLOCK_NAME = "TITLEBLOCK";
-const W = 180;
-const H = 40;
+export const TITLE_BLOCK_W = 180;
+export const TITLE_BLOCK_H = 40;
+const W = TITLE_BLOCK_W;
+const H = TITLE_BLOCK_H;
 
 const line = (id: string, ax: number, ay: number, bx: number, by: number): Entity => ({ id, type: "line", a: { x: ax, y: ay }, b: { x: bx, y: by } });
 
@@ -54,7 +56,12 @@ export function titleBlockDefinition(): BlockDefinition {
  */
 export function planTitleBlock(doc: SketchDocument, layoutName: string, opts: { block?: string; border?: boolean; inset?: number } = {}): Command[] | null {
   const layout = getLayout(doc, layoutName);
-  if (!layout) return null;
+  return layout ? planTitleBlockOn(doc, layout, opts) : null;
+}
+
+/** {@link planTitleBlock} for a layout record that need not be in the document yet (the layout-from-model wizard builds both in one batch). */
+export function planTitleBlockOn(doc: SketchDocument, layout: LayoutRecord, opts: { block?: string; border?: boolean; inset?: number } = {}): Command[] | null {
+  const layoutName = layout.name;
   const block = opts.block ?? TITLE_BLOCK_NAME;
   const out: Command[] = [];
   if (!doc.hasRecord("blocks", block)) {
