@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { countSimplifiable, simplifyPolylineCommands, type Entity } from "@sketchor/core";
-import { bus, doc, reinterpretImportUnits, useApp } from "../state/store";
+import { countSimplifiable, simplifyPolylineCommands } from "@sketchor/core";
+import { bus, lastImportedEntities, reinterpretImportUnits, useApp } from "../state/store";
 import { getSimplifyOnImport, getSimplifyTolerance, parseSimplifyTolerance, setSimplifyOnImport, setSimplifyTolerance } from "../simplifySettings";
 import { DISPLAY_UNITS, dxfCodeToDisplayUnit, dxfUnitName } from "../units";
 
@@ -30,7 +30,7 @@ export function ImportReportBanner() {
   const [simplified, setSimplified] = useState<string | null>(null);
   const tol = parseSimplifyTolerance(tolText);
   const simplifyAll = (mm: number): number => {
-    const commands = simplifyPolylineCommands(doc.all(), mm);
+    const commands = simplifyPolylineCommands(lastImportedEntities(), mm);
     if (commands.length > 0) bus.execute({ type: "batch", commands });
     return commands.length / 2;
   };
@@ -41,7 +41,7 @@ export function ImportReportBanner() {
     const n = simplifyAll(mm);
     if (n > 0) setSimplified(`Simplified ${n} polyline${n === 1 ? "" : "s"} at ${mm} mm (Ctrl+Z to undo)`);
   }, [report]);
-  const candidates = useMemo(() => (report && !simplified ? countSimplifiable(doc.all() as Entity[], tol ?? getSimplifyTolerance()) : 0), [report, simplified, tol]);
+  const candidates = useMemo(() => (report && !simplified ? countSimplifiable(lastImportedEntities(), tol ?? getSimplifyTolerance()) : 0), [report, simplified, tol]);
 
   if (report) {
     const { parsed, skipped } = report;

@@ -199,6 +199,13 @@ export function applySketchCode(text: string): ParseIssue[] {
 }
 
 /** Shared by every import path: replaces (or adds to) the drawing's entities as one undoable step. */
+/** P-03b: ids of the entities the latest import added (not the geometry that was already there). */
+let lastImportedIds: string[] = [];
+/** The entities the latest import added that still exist - what import-time Simplify may touch. */
+export function lastImportedEntities(): Entity[] {
+  return lastImportedIds.map((id) => doc.get(id)).filter((e): e is Entity => !!e);
+}
+
 function applyImportedEntities(entities: Entity[], replace: boolean, blocks: BlockDefinition[] = [], textStyles: TextStyle[] = [], extras: { groups?: Group[]; constraints?: Constraint[]; params?: TableRecord[]; foreign?: TableRecord[]; dimStyles?: TableRecord[]; layouts?: TableRecord[]; paperEntities?: Entity[]; sheetSet?: Record<string, string>; annotation?: { scale?: string; scales?: string[]; allVisible?: boolean } } = {}): void {
   const commands: Command[] = [];
   if (!replace) {
@@ -226,6 +233,7 @@ function applyImportedEntities(entities: Entity[], replace: boolean, blocks: Blo
   // B-07: the file's block definitions come before the inserts that name them; an existing block of the same name is never overwritten by an add-import.
   for (const b of blocks) if (replace || !doc.hasRecord("blocks", b.name)) commands.push({ type: "put-table-record", table: "blocks", record: b });
   for (const entity of entities) commands.push({ type: "add-entity", entity });
+  lastImportedIds = [...entities, ...(extras.paperEntities ?? [])].map((e) => e.id);
   // L-07: the file's layouts, then what is drawn on them (each entity names its layout in `space`); the sheet set's shared attributes.
   for (const record of extras.layouts ?? []) commands.push({ type: "put-table-record", table: "layouts", record });
   for (const entity of extras.paperEntities ?? []) commands.push({ type: "add-entity", entity });
