@@ -54,6 +54,8 @@ candidate-based placement scales roughly cubically with how many instances end u
 sharing a sheet (~9s at 600 on a dev machine) — raising the cap further needs an
 algorithmic change (spatial indexing), not just a bigger number.
 
+N-54 (save/reopen job file) is already done in the Sheet Nesting plugin (RN-42, ticked 2026-11-04).
+
 Remaining: N-42/43 deferrals above (other post profiles, a canvas toolpath
 preview with dashed rapids), and a real algorithmic improvement if jobs need more
 than ~600 instances sharing one sheet.

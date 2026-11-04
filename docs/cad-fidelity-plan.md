@@ -298,7 +298,7 @@ These keep their original IDs; the full spec for each is in the named doc. Tick 
 - [ ] N-51 Common-line cutting
 - [ ] N-52 Remnant library (save offcuts as stock)
 - [ ] N-53 Micro-joints / tabs
-- [ ] N-54 Save and reopen a nest job file
+- [x] N-54 Save and reopen a nest job file - already landed in the Sheet Nesting plugin as RN-42 (`.sketchor-nest` via `serializeJobFile`/`parseJobFile`, Save job / Open job buttons; job + added files + custom sheets); ticked 2026-11-04. Sheet Metal Nest (`nestPlugin.ts`) has no job file; Sheet Nesting is the nest plugin that supersedes it
 - [ ] N-55 Part priority / due dates
 
 *Large STEP + up axis — `docs/large-step-and-up-axis-plan.md`*
