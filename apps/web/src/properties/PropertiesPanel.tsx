@@ -3,8 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { dynamicSpecOf, paramFields, resetParams, withParamValue } from "@sketchor/core";
 import type { BlockDefinition, BlockTreeNode, Command, Entity, HatchEntity, InsertEntity, PolylineEntity, SplineEntity } from "@sketchor/core";
 import { GRADIENT_NAMES, blockTree, editableAttributes, isMirroredInsert, withAttributeValues, withInsertArray, withInsertScale, explodeHatchCommands, recreateBoundaryCommands, setHatchDrawOrder, entityArea, entityLength, arcPointAt, arcSweep, bulgeToArc, BUILTIN_LINETYPES, dist, ellipseSweep, nurbsDomain, nurbsPointAt, findClosedRegions, isFullEllipse, layerOf, polylineLength, addSplinePoint, polylineToSpline, rebuildSpline, refitSpline, removeSplinePoint, splineToControlPoints, splineToPolyline } from "@sketchor/core";
-import { canBeAnnotative, currentAnnotationScale, isAnnotative, withAnnotative, withScaleAdded, withScaleRemoved } from "@sketchor/core";
+import { canBeAnnotative, isAnnotative, withAnnotative, withScaleAdded, withScaleRemoved } from "@sketchor/core";
 import { bus, doc, useApp } from "../state/store";
+import { workingAnnotationScale } from "../layouts/annotationScale";
 import { settingsFromHatch } from "../tools/hatchTool";
 import { parseLength } from "../tools/typedInput";
 import { factorFromMm, formatArea, formatLength, type DisplayUnit } from "../units";
@@ -515,7 +516,7 @@ function InsertGeometry({ entity, unit }: { entity: InsertEntity; unit: DisplayU
 function AnnotativeSection({ entities, applyAll }: { entities: Entity[]; applyAll: (patch: (e: Entity) => Entity) => void }) {
   const able = entities.filter(canBeAnnotative);
   if (able.length === 0) return null;
-  const current = currentAnnotationScale(doc.settings);
+  const current = workingAnnotationScale();
   const on = able.filter(isAnnotative).length;
   const lists = new Set(able.filter(isAnnotative).map((e) => (e.annoScales?.length ? e.annoScales.join(", ") : "all")));
   const only = (fn: (e: Entity) => Entity | null) => applyAll((e) => (canBeAnnotative(e) ? (fn(e) ?? e) : e));

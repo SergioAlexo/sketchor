@@ -3,6 +3,7 @@ import {
   LAYOUTS_TABLE,
   STANDARD_SCALES,
   annotationScaleList,
+  viewportAnnotationScale,
   currentAnnotationScale,
   setAnnotationScaleCommands,
   boundsOf,
@@ -274,6 +275,29 @@ function ViewportControls({ layout }: { layout: string }) {
             ))}
             <option value="custom">Custom...</option>
           </select>
+          <select
+            className="layout-select"
+            value={vp.annotationScale ?? ""}
+            data-testid="layout-vp-annoscale"
+            title="Annotation scale of the viewport: annotative objects are drawn at this scale (default: the viewport's own scale)"
+            onChange={(e) => {
+              const { annotationScale: _a, ...rest } = vp;
+              bus.execute({ type: "update-entity", entity: e.target.value ? { ...rest, annotationScale: e.target.value } : rest });
+            }}
+          >
+            <option value="">Annotation: {viewportAnnotationScale({ scale: vp.scale })} (view)</option>
+            {annotationScaleList(doc.settings).map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </select>
+          <button
+            className={`layout-tab ${doc.settings.annoAllVisible ? "active" : ""}`}
+            data-testid="layout-anno-all"
+            title="Show annotative objects that do not support the viewport's scale (ANNOALLVISIBLE)"
+            onClick={() => bus.execute({ type: "set-settings", patch: { annoAllVisible: doc.settings.annoAllVisible ? null : true } as never })}
+          >
+            All annotative
+          </button>
           <button className={`layout-tab ${vp.locked ? "active" : ""}`} data-testid="layout-vp-lock" title="Lock the viewport's pan/zoom" onClick={() => update({ locked: !vp.locked })}>
             {vp.locked ? "Locked" : "Lock"}
           </button>

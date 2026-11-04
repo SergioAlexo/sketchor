@@ -97,3 +97,30 @@ describe("layout plot", () => {
     expect((latin1(plotLayoutsToPdf(doc, ["Nope", "Plan"])!).match(/\/Type \/Page /g) ?? []).length).toBe(1);
   });
 });
+
+describe("L-05 annotative objects in a plotted viewport", () => {
+  const sizes = (pdf: Uint8Array) => [...latin1(pdf).matchAll(/\/F\d+ ([\d.]+) Tf/g)].map((m) => Number(m[1]));
+  const note = (o: object) => ({ id: "n1", type: "text", at: { x: 50, y: 0 }, text: "Hi", height: 3, rotation: 0, ...o }) as Entity;
+
+  it("an annotative note keeps its paper height; plain text shrinks with the view", () => {
+    const { doc, bus } = setup();
+    bus.execute({ type: "add-entity", entity: note({ annotative: true }) });
+    const annotative = sizes(plotLayoutsToPdf(doc, ["Plan"])!);
+    bus.execute({ type: "update-entity", entity: note({}) });
+    const plain = sizes(plotLayoutsToPdf(doc, ["Plan"])!);
+    expect(annotative.length).toBeGreaterThan(0);
+    // Viewport is 1:2: plain 3 mm model text prints 1.5 mm, the annotative one prints its 3 mm.
+    expect(annotative[0] / plain[0]).toBeCloseTo(2, 3);
+  });
+
+  it("leaves out text that does not support the viewport's scale unless all are shown", () => {
+    const { doc, bus } = setup();
+    bus.execute({ type: "add-entity", entity: note({ annotative: true, annoScales: ["1:50"] }) });
+    expect(sizes(plotLayoutsToPdf(doc, ["Plan"])!)).toHaveLength(0);
+    bus.execute({ type: "set-settings", patch: { annoAllVisible: true } });
+    expect(sizes(plotLayoutsToPdf(doc, ["Plan"])!)).toHaveLength(1);
+    bus.execute({ type: "set-settings", patch: { annoAllVisible: null as unknown as undefined } });
+    bus.execute({ type: "update-entity", entity: note({ annotative: true, annoScales: ["1:2"] }) });
+    expect(sizes(plotLayoutsToPdf(doc, ["Plan"])!)).toHaveLength(1);
+  });
+});
