@@ -24,6 +24,9 @@ const LIMITS: Record<string, [large: number, huge: number]> = {
   stp: [60e6, 250e6],
   iges: [60e6, 250e6],
   igs: [60e6, 250e6],
+  "3dm": [50e6, 200e6],
+  brep: [60e6, 250e6],
+  brp: [60e6, 250e6],
 };
 
 const DEFAULT_LIMITS: [number, number] = [50e6, 200e6];

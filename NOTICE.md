@@ -29,6 +29,15 @@ the realistic alternatives are this GPL library or a paid commercial SDK)
 but it should be revisited with actual legal input before a wide release,
 not treated as settled by this note.
 
+## Rhino 3dm import - MIT
+
+Sketchor reads `.3dm` files with [`rhino3dm`](https://github.com/mcneel/rhino3dm)
+(Robert McNeel & Associates, **MIT**; a WebAssembly build of openNURBS). It is
+a regular npm dependency of `apps/web`, loaded only inside the model worker
+when a `.3dm` is opened (`apps/web/src/model3d/rhino3dm.ts`), and the 2.5 MB
+wasm is a separate lazily fetched asset. OpenCascade's native `.brep` format
+is read by the vendored occt-import-js described below.
+
 ## STEP / IGES import — LGPL-2.1
 
 Sketchor reads `.step`/`.stp` and `.iges`/`.igs` 3D models with

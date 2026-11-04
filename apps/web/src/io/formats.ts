@@ -33,6 +33,10 @@ export const FORMATS: readonly FormatInfo[] = [
   { ext: ["pdf"], kind: "2d", label: "PDF drawing", mime: "application/pdf", writable: false, association: false, nativeThumbnail: false },
   { ext: ["step", "stp"], kind: "3d", label: "STEP model", mime: "model/step", writable: false, association: true, nativeThumbnail: true },
   { ext: ["iges", "igs"], kind: "3d", label: "IGES model", mime: "model/iges", writable: false, association: true, nativeThumbnail: true },
+  // OpenCascade BREP (F-06): read by the vendored occt-import-js (ReadBrepFile); no OS association or Explorer thumbnail yet.
+  { ext: ["brep", "brp"], kind: "3d", label: "BREP model", mime: "model/vnd.occt.brep", writable: false, association: false, nativeThumbnail: false },
+  // Rhino 3dm (F-06): rhino3dm wasm (MIT) in the model worker; Brep render meshes, meshes and extrusions only.
+  { ext: ["3dm"], kind: "3d", label: "Rhino 3dm model", mime: "model/vnd.3dm", writable: false, association: false, nativeThumbnail: false },
   // Mesh formats (F-05): read in the model worker; OS association and Explorer thumbnails are not wired yet.
   { ext: ["stl"], kind: "3d", label: "STL mesh", mime: "model/stl", writable: false, association: false, nativeThumbnail: false },
   { ext: ["obj"], kind: "3d", label: "OBJ mesh", mime: "model/obj", writable: false, association: false, nativeThumbnail: false },

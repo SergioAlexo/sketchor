@@ -4,6 +4,7 @@ import { parseAnyMesh, segmentMesh } from "@sketchor/core";
 import { buildModel } from "./buildModel";
 import { describeImportError } from "./importError";
 import { getCachedModel, putCachedModel } from "./modelCache";
+import { rhinoToOcct } from "./rhino3dm";
 import { tessellationFor } from "./tessellation";
 import { detectUpAxisFromBytes } from "./upAxis";
 import { modelArrays } from "./types";
@@ -42,6 +43,8 @@ export type ParseResponse =
 interface OcctModule {
   ReadStepFile(content: Uint8Array, params: Record<string, unknown> | null): OcctResult;
   ReadIgesFile(content: Uint8Array, params: Record<string, unknown> | null): OcctResult;
+  /** OpenCascade native BREP (F-06); the vendored wasm exports it, the npm typings do not list it. */
+  ReadBrepFile(content: Uint8Array, params: Record<string, unknown> | null): OcctResult;
 }
 
 /** A file's bytes, once OCCT has copied them into the wasm heap, become dead weight for the rest of `handle()` — see the `finally` below. */
@@ -80,8 +83,9 @@ async function handle(req: ParseRequest): Promise<void> {
   }
 
   post({ id: req.id, phase: "reading" });
-  if (req.format !== "step" && req.format !== "iges") {
-    await handleMesh(req, t0);
+  if (req.format !== "step" && req.format !== "iges" && req.format !== "brep") {
+    if (req.format === "3dm") await handle3dm(req, t0);
+    else await handleMesh(req, t0);
     return;
   }
   const lib = await occt();
@@ -92,7 +96,8 @@ async function handle(req: ParseRequest): Promise<void> {
   let bytes: Uint8Array | null = new Uint8Array(req.buffer);
   let result: OcctResult;
   try {
-    result = req.format === "iges" ? lib.ReadIgesFile(bytes, params) : lib.ReadStepFile(bytes, params);
+    result =
+      req.format === "iges" ? lib.ReadIgesFile(bytes, params) : req.format === "brep" ? lib.ReadBrepFile(bytes, params) : lib.ReadStepFile(bytes, params);
   } catch (err) {
     const raw = (err as Error)?.message ?? String(err);
     post({ id: req.id, ok: false, error: describeImportError(raw, req.name, byteLength) });
@@ -108,7 +113,7 @@ async function handle(req: ParseRequest): Promise<void> {
     req.buffer = EMPTY_BUFFER;
   }
   if (!result?.success) {
-    post({ id: req.id, ok: false, error: "not a readable STEP/IGES file (unsupported schema or corrupt data)" });
+    post({ id: req.id, ok: false, error: "not a readable STEP/IGES/BREP file (unsupported schema or corrupt data)" });
     return;
   }
   const model = buildModel(result, req.name, req.hash, req.format);
@@ -133,7 +138,7 @@ async function handleMesh(req: ParseRequest, t0: number): Promise<void> {
   const byteLength = req.buffer.byteLength;
   let parsed;
   try {
-    parsed = await parseAnyMesh(req.format as Exclude<ModelFormat, "step" | "iges">, new Uint8Array(req.buffer), req.name.replace(/\.[^.]*$/, "") || "Part");
+    parsed = await parseAnyMesh(req.format as Exclude<ModelFormat, "step" | "iges" | "brep" | "3dm">, new Uint8Array(req.buffer), req.name.replace(/\.[^.]*$/, "") || "Part");
   } catch (err) {
     post({ id: req.id, ok: false, error: describeImportError((err as Error)?.message ?? String(err), req.name, byteLength) });
     return;
@@ -152,6 +157,49 @@ async function handleMesh(req: ParseRequest, t0: number): Promise<void> {
     return;
   }
   model.detectedUp = req.format === "gltf" || req.format === "glb" ? "y" : "z"; // glTF is Y-up by spec
+  try {
+    await putCachedModel(model);
+  } catch (err) {
+    console.warn("model cache write failed; showing the model uncached", err);
+  }
+  post({ id: req.id, ok: true, model, fromCache: false, ms: performance.now() - t0 }, transferables(model));
+}
+
+/** F-06: Rhino 3dm via rhino3dm (MIT wasm, fetched only when a .3dm is opened). */
+let rhinoPromise: Promise<unknown> | null = null;
+function rhino(): Promise<unknown> {
+  if (!rhinoPromise) {
+    rhinoPromise = (async () => {
+      const [{ default: factory }, { default: url }] = await Promise.all([
+        import("rhino3dm/rhino3dm.module.min.js"),
+        import("rhino3dm/rhino3dm.wasm?url"),
+      ]);
+      const resolved = new URL(url, self.location.href).href;
+      return factory({ locateFile: () => resolved });
+    })();
+  }
+  return rhinoPromise;
+}
+
+async function handle3dm(req: ParseRequest, t0: number): Promise<void> {
+  const byteLength = req.buffer.byteLength;
+  let imported;
+  try {
+    const rh = await rhino();
+    imported = rhinoToOcct(rh, new Uint8Array(req.buffer), req.name);
+  } catch (err) {
+    post({ id: req.id, ok: false, error: describeImportError((err as Error)?.message ?? String(err), req.name, byteLength) });
+    return;
+  } finally {
+    req.buffer = EMPTY_BUFFER;
+  }
+  const model = buildModel(imported.result, req.name, req.hash, req.format);
+  if (model.parts.length === 0) {
+    const why = imported.warnings.length ? ` (${imported.warnings.join("; ")})` : "";
+    post({ id: req.id, ok: false, error: `the file contains no meshes or Breps with render meshes to show${why}` });
+    return;
+  }
+  model.detectedUp = "z"; // Rhino is Z-up
   try {
     await putCachedModel(model);
   } catch (err) {

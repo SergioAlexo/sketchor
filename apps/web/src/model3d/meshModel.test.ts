@@ -19,6 +19,9 @@ describe("mesh -> Model3D", () => {
     expect(modelFormatOf("a.STL")).toBe("stl");
     expect(modelFormatOf("a.obj")).toBe("obj");
     expect(modelFormatOf("a.ply")).toBe("ply");
+    expect(modelFormatOf("Part.BREP")).toBe("brep");
+    expect(modelFormatOf("a.brp")).toBe("brep");
+    expect(modelFormatOf("Rhino.3DM")).toBe("3dm");
   });
   it("a box mesh gets 6 faces, 12 edges, correct volume", () => {
     const parsed = parseMesh("obj", new TextEncoder().encode(OBJ), "box");

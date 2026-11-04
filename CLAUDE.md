@@ -437,6 +437,23 @@ connected triangle regions under a 20° dihedral, each with its own vertices, in
 the occt-import-js result shape — so `buildModel`/`topology.ts` are unchanged.
 Mesh files carry no unit (mm assumed; glTF is metres, 3MF has a `unit`).
 
+**BREP and 3DM (F-06).** `.brep`/`.brp` go through the same occt worker with
+`lib.ReadBrepFile` (exported by our vendored wasm; the npm typings omit it).
+`.3dm` is read by `rhino3dm` (MIT, `model3d/rhino3dm.ts` `rhinoToOcct`,
+lazy-imported in the worker; wasm via `?url`): Brep faces use Rhino's stored
+render meshes (one `brep_faces` range per face; a Brep saved without render
+meshes is skipped with a warning because rhino3dm has no mesher), meshes and
+extrusions go through `segmentMesh`, units scale to mm. Curves/points/blocks/
+SubD are counted and not drawn.
+
+**2D from 3D (F-07).** `packages/core/src/projection/outline.ts` is the pure
+part: `planeBasis` (right-handed, `u x v = n`), `projectEdge` (lines, exact
+circles/arcs with sweep from the chain, else polylines) and `flatFaceOutline`
+(joins pieces, shifts to the origin, longest straight edge along +X).
+`model3d/faceTo2d.ts` feeds it a picked planar face's edges from the topology
+tables; the model toolbar's "To 2D" opens the result with `openNamedTab` + one
+`batch` of `add-entity`. Not built: view-plane silhouette/hidden-line projection.
+
 Debug: `window.sketchor.openModel(name, arrayBuffer)` / `getModel()`.
 
 ## Printing and autosave (`apps/web/src/print/`, `io/autosaveFolder.ts`)

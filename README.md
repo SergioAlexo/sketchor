@@ -225,6 +225,14 @@ in the browser and in Tauri's WebView2, with a download / file-input fallback
 elsewhere. Opening a file that's already open in a tab switches to that tab
 (and reloads it) instead of opening a duplicate.
 
+- **BREP / 3DM** - OpenCascade `.brep`/`.brp` (same wasm as STEP) and Rhino
+  `.3dm` (rhino3dm, MIT - see `/NOTICE.md`). A 3dm shows its Breps through
+  the render meshes Rhino saved (each Brep face stays one pickable face),
+  plus meshes and extrusions; curves, points, blocks and SubD are not drawn yet.
+- **2D from 3D** - select a flat face in a model tab and press *To 2D*: its
+  outline (lines, arcs, circles at true size, at the origin) opens in a new
+  2D tab, ready to save as DXF for the laser.
+
 ### 3D models (STEP / IGES)
 
 Opening a `.step`/`.stp` (or `.iges`/`.igs`) file gives a 3D viewer tab
