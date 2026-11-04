@@ -9,7 +9,7 @@ import { layerProp, type Pick, type Tool, type ToolContext } from "./tool";
  */
 export class ImageTool implements Tool {
   id = "image" as const;
-  noTyped = true;
+  plain = true;
   prompt() {
     return "";
   }

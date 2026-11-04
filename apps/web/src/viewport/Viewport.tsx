@@ -84,7 +84,7 @@ import { setImageDecodeCallback } from "./imageCache";
 import { findSnap, snapMovingSelection, snapRotation, SNAP_PX, type Snap } from "./snapping";
 import { acquireLine, acquirePoint, parallelTrack, trackAlignment, trackingAngles, type TrackLine } from "./objectTracking";
 import { fitToBounds, gridStep, screenToWorld, worldToScreen, zoomAt, type View } from "./view";
-import { getTool, type Pick, type ToolContext } from "../tools";
+import { getTool, type Pick, type PointerGesture, type ToolContext } from "../tools";
 import { copySelectionToClipboard, pasteFromClipboard } from "../io/clipboard";
 import { applyTracking, trackingIncrement, useTracking } from "../tools/tracking";
 import { useSnapSettings } from "../tools/snapSettings";
@@ -103,40 +103,6 @@ type Interaction =
   | { kind: "pan"; lastX: number; lastY: number }
   /** Two fingers down: pan by the midpoint, zoom by the spread. Framework tools keep their own half-drawn state meanwhile. */
   | { kind: "pinch" }
-  | {
-      kind: "move";
-      ids: EntityId[];
-      startWorld: Point;
-      startScreen: Point;
-      dx: number;
-      dy: number;
-      /** Every vertex of the selection at grab time; a snapped move aligns whichever one lands closest to a target. */
-      baseVertices: Point[];
-      /**
-       * If this pointerdown grabbed an already-multi-selected item, the ids to
-       * collapse the selection down to on pointerup *if it turns out to be a
-       * plain click* (no drag) — a drag instead moves every currently selected
-       * id together. `null` when no collapsing is needed (fresh click, or the
-       * click already matched the whole selection).
-       */
-      collapseTo: EntityId[] | null;
-    }
-  | { kind: "rotate-group"; ids: EntityId[]; pivot: Point; startAngle: number; rotation: number }
-  /** Dragging one grip of a selected entity (T-27); `preview` is the entity with the grip at the cursor. */
-  /**
-   * `preview` is what the drag would commit: just the dragged entity
-   * normally, or every entity the solver moved when the sketch is
-   * constrained (roadmap T-40's drag-solve).
-   */
-  | { kind: "grip"; entityId: EntityId; grip: Grip; startScreen: Point; preview: Entity[] }
-  | { kind: "box-select"; startScreen: Point; startWorld: Point; currentWorld: Point; additive: boolean }
-  /**
-   * Alt-drag: a freehand path instead of a rectangle. Released as a **lasso**
-   * (the loop closes; left-to-right takes only what is fully inside, like a
-   * box) or, with the fence modifier held, as a **fence** — an open stroke
-   * that takes everything it crosses.
-   */
-  | { kind: "free-select"; startScreen: Point; points: Point[]; additive: boolean; fence: boolean }
   /**
    * A press with a fence-capable framework tool (trim, T-16): released after
    * a drag it is the tool's fence stroke, released near where it started it
@@ -441,7 +407,8 @@ export function Viewport() {
     const groupBounds = groupId
       ? boundsOf(state.selection.map((id) => doc.get(id)).filter((e): e is Entity => !!e))
       : null;
-    const rotating = interaction.kind === "rotate-group" ? interaction : null;
+    const overlay = activeTool?.overlay?.();
+    const rotating = overlay?.rotating ?? null;
     const groupPivot = rotating
       ? rotating.pivot
       : groupBounds
@@ -456,14 +423,14 @@ export function Viewport() {
       backdrop: blockEditBackdrop(),
       preview,
       snap: state.tool === "select" ? null : snap,
-      trackingRay: activeTool ? trackingRayRef.current : null,
-      trackRays: activeTool ? trackRaysRef.current : [],
-      relativeZero: activeTool ? relativeZeroRef.current : null,
+      trackingRay: activeTool && !activeTool.plain ? trackingRayRef.current : null,
+      trackRays: activeTool && !activeTool.plain ? trackRaysRef.current : [],
+      relativeZero: activeTool && !activeTool.plain ? relativeZeroRef.current : null,
       constraintGlyphs: constraintGlyphs(),
       dofStates: state.showDofColours ? entityDofStates(doc.solverConstraints(), bus.lastSolve) : undefined,
-      acquiredPoints: activeTool ? acquiredRef.current : [],
+      acquiredPoints: activeTool && !activeTool.plain ? acquiredRef.current : [],
       moveOffset:
-        interaction.kind === "move" ? { dx: interaction.dx, dy: interaction.dy } : null,
+        overlay?.moveOffset ?? null,
       measurement: state.measurement,
       pinnedMeasurements: state.pinnedMeasurements,
       hiddenLayers: hiddenLayerSet(),
@@ -479,29 +446,17 @@ export function Viewport() {
       duplicateMarkers: state.duplicateIssues.map((i) => i.location),
       crossingMarkers: state.crossingIssues.map((i) => i.location),
       groupHandle: groupBounds && groupPivot ? { bounds: groupBounds, pivot: groupPivot } : null,
-      gripPreview: interaction.kind === "grip" ? interaction.preview : [],
+      gripPreview: overlay?.gripPreview ?? [],
       freeEndpointIds: state.showConnectivityHint ? freeEndpointEntityIds(doc) : null,
       closedRegions: state.showClosedRegions ? closedRegionsRef.current.map((r) => r.points) : [],
       fmtLength: (n: number) => formatLength(n, state.displayUnit),
       fmtArea: (n: number) => formatArea(n, state.displayUnit),
       freeSelect:
-        interaction.kind === "free-select"
-          ? {
-              points: interaction.points,
-              kind: interaction.fence ? ("fence" as const) : ("lasso" as const),
-              mode: freeSelectMode(interaction.points),
-            }
-          : interaction.kind === "tool-fence" && interaction.points.length > 1
-            ? { points: interaction.points, kind: "fence" as const, mode: "crossing" as BoxSelectMode }
-            : null,
-      boxSelect:
-        interaction.kind === "box-select"
-          ? {
-              start: interaction.startWorld,
-              end: interaction.currentWorld,
-              mode: (interaction.currentWorld.x >= interaction.startWorld.x ? "window" : "crossing") as BoxSelectMode,
-            }
-          : null,
+        overlay?.freeSelect ??
+        (interaction.kind === "tool-fence" && interaction.points.length > 1
+          ? { points: interaction.points, kind: "fence" as const, mode: "crossing" as BoxSelectMode }
+          : null),
+      boxSelect: overlay?.boxSelect ?? null,
     });
     useApp.getState().setHatchTinted(hatchesTinted());
   };
@@ -526,6 +481,13 @@ export function Viewport() {
         return hit ? resolveSelection(doc, hit, useApp.getState().enteredGroupId) : [];
       },
       hitEntity: (world) => hitTest(viewRef.current, world),
+      select: {
+        view: () => viewRef.current,
+        glyphAt: (screen) => glyphAt(screen),
+        cyclingHit: (world, screen) => cyclingHit(viewRef.current, world, screen),
+        gripPreview: (entity, grip, target) => gripPreviewFor(entity, grip, target),
+        executeRaw: (command) => bus.execute(command),
+      },
       closedRegionAt: (world) => regionContainingPoint(closedRegionsRef.current, world),
       setHoverEntity: (id) => {
         hoverRef.current = id;
@@ -576,7 +538,7 @@ export function Viewport() {
     // T-21: hovering a straight piece acquires it for a parallel snap.
     if (tracking.otrack && raw.kind === "on-line" && raw.refLine) acquiredLinesRef.current = acquireLine(acquiredLinesRef.current, raw.refLine);
     trackRaysRef.current = [];
-    if (!t) return { snap: raw, ray: null };
+    if (!t || t.plain) return { snap: raw, ray: null };
     const increment = trackingIncrement(tracking, shiftKey);
     const tracked = applyTracking(t.anchor(), world, raw, increment);
     if (tracked.ray) {
@@ -1047,7 +1009,7 @@ export function Viewport() {
         e.preventDefault();
         syncPrompt();
         redraw();
-      } else if (getTool(app.tool) && !getTool(app.tool)?.noTyped && startsTypedInput(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      } else if (getTool(app.tool) && !getTool(app.tool)?.plain && startsTypedInput(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
         // Start of a typed coordinate: open the box with this character in it.
         e.preventDefault();
         const screen = lastScreenRef.current ?? { x: 40, y: 40 };
@@ -1071,7 +1033,7 @@ export function Viewport() {
         app.setEnteredGroup(null);
         app.setTool("select");
         redraw();
-      } else if (matchesBinding(e, "edit.toggleConstruction") && interactionRef.current.kind === "idle") {
+      } else if (matchesBinding(e, "edit.toggleConstruction") && interactionRef.current.kind === "idle" && !getTool(app.tool)?.gestureActive?.()) {
         e.preventDefault();
         toggleConstruction();
       } else if (matchesBinding(e, "tool.select")) {
@@ -1230,6 +1192,16 @@ export function Viewport() {
     return ids[index] ?? null;
   };
 
+  const gestureFrom = (e: React.PointerEvent, screen: Point, world: Point): PointerGesture => ({
+    screen,
+    world,
+    pointerType: e.pointerType,
+    shiftKey: e.shiftKey,
+    ctrlKey: e.ctrlKey,
+    metaKey: e.metaKey,
+    altKey: e.altKey,
+  });
+
   const onPointerDown = (e: React.PointerEvent) => {
     try {
       canvasRef.current!.setPointerCapture(e.pointerId);
@@ -1249,6 +1221,7 @@ export function Viewport() {
       // half-drawn entity is kept, as for a pan.
       pendingTouchRef.current = null;
       if (interactionRef.current.kind !== "pinch") {
+        getTool(useApp.getState().tool)?.abortGesture?.();
         interactionRef.current = { kind: "pinch" };
         redraw();
       }
@@ -1293,6 +1266,7 @@ export function Viewport() {
     // half-drawn line/polyline/circle/measurement rather than replacing it.
     // The pan tool does the same with the primary button (one finger).
     if (e.button === 1 || e.button === 2 || (e.button === 0 && getTool(app.tool)?.panDrag)) {
+      getTool(app.tool)?.abortGesture?.();
       interactionRef.current = {
         kind: "pan",
         lastX: screen.x,
@@ -1302,40 +1276,12 @@ export function Viewport() {
     }
     if (e.button !== 0) return;
 
-    if (app.tool === "select") {
-      // A constraint mark is on top of everything: it is small, and the
-      // geometry under it is reachable a pixel away.
-      const glyph = glyphAt(screen);
-      if (glyph) {
-        const constraint = doc.constraints().find((c) => c.id === glyph);
-        app.setHighlightedConstraint(glyph);
-        if (constraint) app.setSelection(constraintEntityIds(constraint).filter((id) => !!doc.get(id)));
-        interactionRef.current = { kind: "idle" };
-        redraw();
-        return;
-      }
-      app.setHighlightedConstraint(null);
-      // A grip of a selected entity under the cursor beats everything else.
-      const gripHit = findGrip(app.selection, screen, view, e.pointerType === "touch");
-      if (gripHit) {
-        interactionRef.current = { kind: "grip", entityId: gripHit.entityId, grip: gripHit.grip, startScreen: screen, preview: [] };
-        redraw();
-        return;
-      }
-      const groupId = wholeGroupSelected(doc, app.selection);
-      const bb = groupId
-        ? boundsOf(app.selection.map((id) => doc.get(id)).filter((ent): ent is Entity => !!ent))
-        : null;
-      if (bb && dist(screen, groupHandleScreenPos(view, bb)) <= GROUP_HANDLE_HIT_PX) {
-        const pivot = { x: (bb.minX + bb.maxX) / 2, y: (bb.minY + bb.maxY) / 2 };
-        const startAngle = Math.atan2(world.y - pivot.y, world.x - pivot.x);
-        interactionRef.current = { kind: "rotate-group", ids: app.selection, pivot, startAngle, rotation: 0 };
-        redraw();
-        return;
-      }
-    }
-
     const fwTool = getTool(app.tool);
+    if (fwTool?.press) {
+      fwTool.press(toolCtx, gestureFrom(e, screen, world));
+      redraw();
+      return;
+    }
     if (fwTool) {
       const { snap } = resolvePick(world, e.shiftKey);
       if (fwTool.fence && !e.shiftKey) {
@@ -1343,117 +1289,13 @@ export function Viewport() {
         return;
       }
       fwTool.pick(toolCtx, pickFrom(e, world, snap));
-      relativeZeroRef.current = snap.point;
+      if (!fwTool.plain) relativeZeroRef.current = snap.point;
       setTyped(null);
       syncPrompt();
       redraw();
       return;
     }
 
-    const snapped = findSnap(doc, view, world, { settings: useSnapSettings.getState().settings }).point;
-    const interaction = interactionRef.current;
-
-    switch (app.tool) {
-      case "line":
-      case "polyline":
-      case "circle":
-      case "arc":
-      case "ellipse":
-      case "spline":
-      case "polygon":
-      case "slot":
-      case "rectangle":
-      case "point":
-      case "move":
-      case "copy":
-      case "rotate":
-      case "scale":
-      case "mirror":
-      case "trim":
-      case "split":
-      case "fillet":
-      case "chamfer":
-      case "offset":
-      case "zoom":
-      case "block":
-      case "blockbase":
-      case "insert":
-      case "attdef":
-      case "divide":
-      case "align":
-      case "lengthen":
-      case "match":
-      case "stretch":
-        // On the tool framework; dispatched above.
-        break;
-      case "select": {
-        // Alt turns the drag into a freehand selection: a lasso, or a fence
-        // while the no-snap modifier is also held. Checked before the hit
-        // test, so a lasso can start over geometry in a crowded drawing.
-        if (e.altKey) {
-          interactionRef.current = {
-            kind: "free-select",
-            startScreen: screen,
-            points: [world],
-            additive: matchesModifier(e, "mouse.addToSelection"),
-            fence: matchesModifier(e, "mouse.freeMove"),
-          };
-          break;
-        }
-        const hit = cyclingHit(view, world, screen);
-        if (hit) {
-          // Clicking any member of a group selects the whole group, unless it's currently "entered".
-          const resolved = resolveSelection(doc, hit, app.enteredGroupId);
-          let ids: EntityId[];
-          let collapseTo: EntityId[] | null = null;
-          if (matchesModifier(e, "mouse.addToSelection")) {
-            const allSelected = resolved.every((id) => app.selection.includes(id));
-            ids = allSelected
-              ? app.selection.filter((id) => !resolved.includes(id))
-              : [...new Set([...app.selection, ...resolved])];
-          } else {
-            const alreadyExact =
-              app.selection.length === resolved.length && resolved.every((id) => app.selection.includes(id));
-            const isSubsetOfBigger = app.selection.length > resolved.length && resolved.every((id) => app.selection.includes(id));
-            if (isSubsetOfBigger) {
-              // Grabbed one member of a bigger multi-selection: keep the whole
-              // selection so a drag moves everything together; only collapse
-              // to just this item on pointerup if it turns out to be a plain
-              // click with no drag.
-              ids = app.selection;
-              collapseTo = resolved;
-            } else {
-              ids = alreadyExact ? app.selection : resolved;
-            }
-          }
-          app.setSelection(ids);
-          if (resolved.every((id) => ids.includes(id))) {
-            interactionRef.current = {
-              kind: "move",
-              ids,
-              startWorld: world,
-              startScreen: screen,
-              collapseTo,
-              dx: 0,
-              dy: 0,
-              baseVertices: selectionVertices(ids),
-            };
-          }
-        } else {
-          // Nothing under the cursor: could be a plain click (clears the
-          // selection on release) or the start of a window/crossing
-          // drag-select — onPointerUp decides based on how far it moved.
-          interactionRef.current = {
-            kind: "box-select",
-            startScreen: screen,
-            startWorld: world,
-            currentWorld: world,
-            additive: matchesModifier(e, "mouse.addToSelection"),
-          };
-        }
-        break;
-      }
-    }
     redraw();
   };
 
@@ -1524,40 +1366,13 @@ export function Viewport() {
       view.ox += screen.x - interaction.lastX;
       view.oy += screen.y - interaction.lastY;
       interactionRef.current = { ...interaction, lastX: screen.x, lastY: screen.y };
-    } else if (interaction.kind === "move") {
-      const rawDx = world.x - interaction.startWorld.x;
-      const rawDy = world.y - interaction.startWorld.y;
-      // Snap the moved geometry itself, not the cursor: each axis is nudged so
-      // some dragged vertex lands on some anchor's x / y. Hold Ctrl (or Alt) to
-      // move completely free.
-      const { dx, dy } = noSnap(e)
-        ? { dx: rawDx, dy: rawDy }
-        : snapMovingSelection(doc, view, interaction.baseVertices, rawDx, rawDy, interaction.ids);
-      interactionRef.current = { ...interaction, dx, dy };
-    } else if (interaction.kind === "rotate-group") {
-      const angle = Math.atan2(world.y - interaction.pivot.y, world.x - interaction.pivot.x);
-      // Snap to 45° steps so a turned pallet still lines up; Ctrl frees it.
-      const rotation = snapRotation(angle - interaction.startAngle, noSnap(e));
-      interactionRef.current = { ...interaction, rotation };
-    } else if (interaction.kind === "grip") {
-      const entity = doc.get(interaction.entityId);
-      if (entity) {
-        // Snap to everything but the entity being edited; ortho/polar from the grip's other end for a line.
-        const target = noSnap(e) ? world : findSnap(doc, view, world, { exclude: [entity.id], settings: useSnapSettings.getState().settings }).point;
-        interactionRef.current = { ...interaction, preview: gripPreviewFor(entity, interaction.grip, target) };
-      }
     } else if (interaction.kind === "tool-fence") {
       const last = interaction.points[interaction.points.length - 1];
       if (dist(last, world) > 2 / view.scale) interaction.points.push(world);
       interactionRef.current = { ...interaction };
-    } else if (interaction.kind === "free-select") {
-      // One point per move event is more than the shape needs; thin as we go
-      // so a long lasso stays a few dozen edges rather than a few hundred.
-      const last = interaction.points[interaction.points.length - 1];
-      if (dist(last, world) > 2 / view.scale) interaction.points.push(world);
-      interactionRef.current = { ...interaction };
-    } else if (interaction.kind === "box-select") {
-      interactionRef.current = { ...interaction, currentWorld: world };
+    } else {
+      const gt = getTool(app.tool);
+      if (gt?.gestureActive?.()) gt.dragMove?.(toolCtx, gestureFrom(e, screen, world));
     }
 
     lastScreenRef.current = screen;
@@ -1636,42 +1451,10 @@ export function Viewport() {
       }
       return;
     }
-    if (interaction.kind === "free-select") {
-      const app = useApp.getState();
-      const path = simplifyPath(interaction.points, 2 / viewRef.current.scale);
-      const fence = interaction.fence || matchesModifier(e, "mouse.freeMove");
-      const picked = fence
-        ? entitiesCrossedByFence(selectableEntities(), path)
-        : entitiesInPolygon(selectableEntities(), path, freeSelectMode(path));
-      app.setSelection(interaction.additive ? [...new Set([...app.selection, ...picked])] : picked);
-      interactionRef.current = { kind: "idle" };
-      redraw();
-      try {
-        canvasRef.current!.releasePointerCapture(e.pointerId);
-      } catch {
-        // see setPointerCapture note
-      }
-      return;
-    }
-    if (interaction.kind === "box-select") {
-      const screen = screenPos(e);
-      const app = useApp.getState();
-      if (dist(screen, interaction.startScreen) < (e.pointerType === "touch" ? 10 : 4)) {
-        // Barely moved: treat as a plain click on empty canvas.
-        if (!interaction.additive) app.setSelection([]);
-      } else {
-        const { startWorld: s, currentWorld: c } = interaction;
-        const box = {
-          minX: Math.min(s.x, c.x),
-          maxX: Math.max(s.x, c.x),
-          minY: Math.min(s.y, c.y),
-          maxY: Math.max(s.y, c.y),
-        };
-        const mode: BoxSelectMode = c.x >= s.x ? "window" : "crossing";
-        const picked = entitiesInBox(selectableEntities(), box, mode);
-        app.setSelection(interaction.additive ? [...new Set([...app.selection, ...picked])] : picked);
-      }
-      interactionRef.current = { kind: "idle" };
+    const upTool = getTool(useApp.getState().tool);
+    if (upTool?.gestureActive?.()) {
+      const upScreen = screenPos(e);
+      upTool.release?.(toolCtx, gestureFrom(e, upScreen, screenToWorld(viewRef.current, upScreen)));
       redraw();
       try {
         canvasRef.current!.releasePointerCapture(e.pointerId);
@@ -1681,46 +1464,6 @@ export function Viewport() {
       return;
     }
     if (interaction.kind === "pan") {
-      interactionRef.current = { kind: "idle" };
-      redraw();
-    } else if (interaction.kind === "move") {
-      const moved = dist(screenPos(e), interaction.startScreen) >= (e.pointerType === "touch" ? 10 : 4);
-      if (moved && (interaction.dx !== 0 || interaction.dy !== 0)) {
-        bus.execute({
-          type: "move-entities",
-          ids: interaction.ids,
-          dx: interaction.dx,
-          dy: interaction.dy,
-        });
-      } else if (!moved && interaction.collapseTo) {
-        // A plain click (no drag) on one member of a bigger selection: now
-        // collapse down to just that item, as a click normally would.
-        useApp.getState().setSelection(interaction.collapseTo);
-      }
-      interactionRef.current = { kind: "idle" };
-      redraw();
-    } else if (interaction.kind === "rotate-group") {
-      if (Math.abs(interaction.rotation) > 1e-9) {
-        bus.execute({
-          type: "transform-entities",
-          ids: interaction.ids,
-          pivot: interaction.pivot,
-          rotation: interaction.rotation,
-          dx: 0,
-          dy: 0,
-          scale: 1,
-        });
-      }
-      interactionRef.current = { kind: "idle" };
-      redraw();
-    } else if (interaction.kind === "grip") {
-      const moved = dist(screenPos(e), interaction.startScreen) >= (e.pointerType === "touch" ? 10 : 3);
-      const previews = interaction.preview;
-      if (moved && previews.length === 1) bus.execute({ type: "update-entity", entity: previews[0] });
-      else if (moved && previews.length > 1) {
-        // A drag-solve moved several entities: one batch, one undo step.
-        bus.execute({ type: "batch", commands: previews.map((entity) => ({ type: "update-entity", entity })) });
-      }
       interactionRef.current = { kind: "idle" };
       redraw();
     }

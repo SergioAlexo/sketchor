@@ -15,7 +15,7 @@ import type { Pick, Tool, ToolContext } from "./tool";
  */
 export class MeasureTool implements Tool {
   id = "measure" as const;
-  noTyped = true;
+  plain = true;
   private start: Point | null = null;
 
   prompt() {

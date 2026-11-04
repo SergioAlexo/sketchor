@@ -10,7 +10,7 @@ import type { Pick, Tool, ToolContext } from "./tool";
  */
 export class StraightenTool implements Tool {
   id = "straighten" as const;
-  noTyped = true;
+  plain = true;
   prompt() {
     return "";
   }

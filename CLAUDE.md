@@ -499,10 +499,7 @@ Drawing tools are state machines on the framework in `tools/tool.ts`
 instance each in `tools/index.ts`; `Viewport.tsx` decodes input (object
 snap → ortho/polar tracking → typed coordinates → touch deferral) and hands
 the tool finished `Pick`s, draws `preview()` dashed, and shows `prompt()`
-in the status bar. Tools not yet migrated (select, measure, text, image,
-fill, straighten, dim, pan) still run as `case`s in `Viewport.tsx`'s
-pointer handlers — `getTool()` returns null for those. Migrating one means
-moving its case into a class and deleting its `interaction` kind.
+in the status bar. **Every tool is on the framework** (T-00 done). `plain` tools (select, pan, measure, text, image, straighten) place no point: no tracking, relative zero or typed box. The select tool is the only *gesture* tool: its press starts a drag handled by `press/dragMove/release` (`tools/selectTool.ts`; grips, rotate handle, lasso, box, move with collapse-on-click), `overlay()` tells the renderer what to draw, and `ctx.select` is its window onto the viewport (hit cycling, constraint marks, solver-aware grip preview, un-inferred `executeRaw`). `Viewport.tsx` keeps only the pan/pinch/tool-fence interaction kinds.
 
 ## The constraint solver (`packages/core/src/solver/`, roadmap T-40)
 

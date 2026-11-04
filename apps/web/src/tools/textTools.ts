@@ -4,7 +4,7 @@ import type { Pick, Tool, ToolContext } from "./tool";
 
 /** Text and multiline text (roadmap T-00 migration): click an existing one to edit it, or empty space to start a new one there. */
 class EditTextTool implements Tool {
-  noTyped = true;
+  plain = true;
   constructor(
     readonly id: "text" | "mtext",
     private readonly kind: "text" | "mtext",

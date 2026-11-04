@@ -9,7 +9,7 @@ import type { Tool } from "./tool";
 export class PanTool implements Tool {
   id = "pan" as const;
   panDrag = true;
-  noTyped = true;
+  plain = true;
   prompt() {
     return "";
   }

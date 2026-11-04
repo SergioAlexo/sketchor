@@ -1,7 +1,8 @@
-import type { ClosedRegion, Command, Entity, EntityId, Point, SketchDocument, TextEntity } from "@sketchor/core";
+import type { BoxSelectMode, ClosedRegion, Command, Entity, EntityId, Grip, Point, SketchDocument, TextEntity } from "@sketchor/core";
 import type { ToolId } from "../state/store";
 import type { DisplayUnit } from "../units";
 import type { Snap } from "../viewport/snapping";
+import type { View } from "../viewport/view";
 
 /**
  * The tool framework (roadmap T-00). A tool is a small state machine —
@@ -45,10 +46,45 @@ export interface ToolContext {
   closedRegionAt(world: Point): ClosedRegion | null;
   /** Marks the entity the pointer is over, for the renderer's hover highlight (measure). */
   setHoverEntity(id: EntityId | null): void;
+  /** The select tool's window onto the viewport (hit cycling, constraint marks, solver-aware grip drags). */
+  select: SelectHost;
   /** The tab's display unit, for tools that interpret a typed number themselves. */
   displayUnit(): DisplayUnit;
   /** Frames a world-space box (the zoom-window tool). */
   zoomTo(minX: number, minY: number, maxX: number, maxY: number): void;
+}
+
+/** What the select tool needs from the viewport; see ToolContext.select. */
+export interface SelectHost {
+  view(): View;
+  /** The constraint whose mark is under a screen point, if any. */
+  glyphAt(screen: Point): string | null;
+  /** The entity under the cursor; clicking the same spot again steps through the stack (selection cycling). */
+  cyclingHit(world: Point, screen: Point): EntityId | null;
+  /** What dragging a grip to `target` would commit (the solver moves tied geometry on a constrained sketch). */
+  gripPreview(entity: Entity, grip: Grip, target: Point): Entity[];
+  /** Runs a command without the drawing tools' auto-constraint inference (moving is not drawing). */
+  executeRaw(command: Command): void;
+}
+
+/** A raw pointer event as the gesture hooks see it. */
+export interface PointerGesture {
+  screen: Point;
+  world: Point;
+  pointerType: string;
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+}
+
+/** What a gesture tool wants drawn while its drag is in progress. */
+export interface ToolOverlay {
+  moveOffset: { dx: number; dy: number } | null;
+  rotating: { ids: EntityId[]; pivot: Point; rotation: number } | null;
+  gripPreview: Entity[];
+  freeSelect: { points: Point[]; kind: "lasso" | "fence"; mode: BoxSelectMode } | null;
+  boxSelect: { start: Point; end: Point; mode: BoxSelectMode } | null;
 }
 
 /** One resolved pick: where the user clicked/tapped/typed, after snapping and tracking. */
@@ -67,8 +103,8 @@ export interface Tool {
   id: ToolId;
   /** The primary button (one finger) pans the view instead of picking (the pan tool). */
   panDrag?: boolean;
-  /** Digits and `@` do not open the typed-coordinate box (tools that take no point). */
-  noTyped?: boolean;
+  /** A tool with no point to place (select, pan, measure, text...): no tracking, relative zero or typed-coordinate box, as before the framework. */
+  plain?: boolean;
   /** Status-bar prompt for the current state, e.g. "Specify next point". */
   prompt(ctx: ToolContext): string;
   /** True while a multi-click sequence is in progress (Esc cancels it before leaving the tool). */
@@ -89,6 +125,18 @@ export interface Tool {
   fence?(ctx: ToolContext, path: Point[]): void;
   /** Pointer moved over the canvas (not mid-gesture): the cursor after snapping/tracking. For live readouts. */
   hover?(ctx: ToolContext, pick: Pick): void;
+  /**
+   * Gesture tools (select): a primary press starts a drag handled here
+   * instead of `pick`; the viewport routes moves and the release while
+   * `gestureActive()`, and `abortGesture()` drops it (a pinch or a pan
+   * button took over). `overlay()` says what to draw meanwhile.
+   */
+  press?(ctx: ToolContext, e: PointerGesture): void;
+  dragMove?(ctx: ToolContext, e: PointerGesture): void;
+  release?(ctx: ToolContext, e: PointerGesture): void;
+  gestureActive?(): boolean;
+  abortGesture?(): void;
+  overlay?(): ToolOverlay;
   /** Keys while the tool is active (not typed coordinates). Return true when consumed. */
   key?(ctx: ToolContext, e: KeyboardEvent): boolean;
   /**

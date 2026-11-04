@@ -18,12 +18,12 @@ import { StraightenTool } from "./straightenTool";
 import { ImageTool } from "./imageTool";
 import { MTextTool, TextTool } from "./textTools";
 import { MeasureTool } from "./measureTool";
+import { SelectTool } from "./selectTool";
 import type { Tool } from "./tool";
 
 /**
- * The tools that run on the framework, one instance each (their in-progress
- * state must survive re-renders and tab switches, as the old interaction
- * ref did). Tools missing here still run on Viewport.tsx's legacy switch.
+ * Every tool, one instance each (their in-progress state must survive
+ * re-renders and tab switches, as the old interaction ref did).
  */
 const TOOLS: Partial<Record<ToolId, Tool>> = {
   line: new LineTool(),
@@ -79,6 +79,7 @@ const TOOLS: Partial<Record<ToolId, Tool>> = {
   tolerance: new ToleranceTool(),
   viewport: new ViewportTool(),
   pan: new PanTool(),
+  select: new SelectTool(),
   measure: new MeasureTool(),
   image: new ImageTool(),
   text: new TextTool(),
