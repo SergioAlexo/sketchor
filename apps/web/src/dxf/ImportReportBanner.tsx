@@ -1,4 +1,7 @@
-import { reinterpretImportUnits, useApp } from "../state/store";
+import { useEffect, useMemo, useState } from "react";
+import { countSimplifiable, simplifyPolylineCommands, type Entity } from "@sketchor/core";
+import { bus, doc, reinterpretImportUnits, useApp } from "../state/store";
+import { getSimplifyOnImport, getSimplifyTolerance, parseSimplifyTolerance, setSimplifyOnImport, setSimplifyTolerance } from "../simplifySettings";
 import { DISPLAY_UNITS, dxfCodeToDisplayUnit, dxfUnitName } from "../units";
 
 /**
@@ -21,6 +24,25 @@ export function ImportReportBanner() {
   const warnings = useApp((s) => s.fileWarnings);
   const dismissWarnings = useApp((s) => s.setFileWarnings);
 
+  // P-03b: offer (or, when the preference is on, just do) Simplify on a fresh import.
+  const [tolText, setTolText] = useState(() => String(getSimplifyTolerance()));
+  const [auto, setAuto] = useState(getSimplifyOnImport);
+  const [simplified, setSimplified] = useState<string | null>(null);
+  const tol = parseSimplifyTolerance(tolText);
+  const simplifyAll = (mm: number): number => {
+    const commands = simplifyPolylineCommands(doc.all(), mm);
+    if (commands.length > 0) bus.execute({ type: "batch", commands });
+    return commands.length / 2;
+  };
+  useEffect(() => {
+    setSimplified(null);
+    if (!report || !getSimplifyOnImport()) return;
+    const mm = getSimplifyTolerance();
+    const n = simplifyAll(mm);
+    if (n > 0) setSimplified(`Simplified ${n} polyline${n === 1 ? "" : "s"} at ${mm} mm (Ctrl+Z to undo)`);
+  }, [report]);
+  const candidates = useMemo(() => (report && !simplified ? countSimplifiable(doc.all() as Entity[], tol ?? getSimplifyTolerance()) : 0), [report, simplified, tol]);
+
   if (report) {
     const { parsed, skipped } = report;
     const guessed = units !== null && (units.source === "inferred" || units.source === "none" || units.source === "conflict" || units.source === "svg-assumed");
@@ -39,6 +61,51 @@ export function ImportReportBanner() {
           {units && <> · {unitText(units.source, units.code)}</>}
           {warnings.length > 0 && <> · {warnings.join("; ")}</>}
         </span>
+        {simplified && (
+          <span className="import-banner-units" data-testid="import-simplified">
+            {simplified}
+          </span>
+        )}
+        {!simplified && (candidates > 0 || auto) && (
+          <span className="import-banner-units" data-testid="import-simplify">
+            {candidates} dense polyline{candidates === 1 ? "" : "s"} can be simplified to
+            <input
+              value={tolText}
+              onChange={(e) => {
+                setTolText(e.target.value);
+                const t = parseSimplifyTolerance(e.target.value);
+                if (t !== null) setSimplifyTolerance(t);
+              }}
+              style={{ width: 44, margin: "0 4px" }}
+              aria-label="Simplify tolerance in mm"
+              aria-invalid={tol === null}
+            />
+            mm
+            <button
+              className="btn ghost"
+              disabled={tol === null || candidates === 0}
+              onClick={() => {
+                if (tol === null) return;
+                const n = simplifyAll(tol);
+                setSimplified(`Simplified ${n} polyline${n === 1 ? "" : "s"} at ${tol} mm (Ctrl+Z to undo)`);
+              }}
+              title="Fewer points, real arcs (same as Shift+P)"
+            >
+              Simplify
+            </button>
+            <label title="Simplify polylines automatically whenever a file is opened">
+              <input
+                type="checkbox"
+                checked={auto}
+                onChange={(e) => {
+                  setAuto(e.target.checked);
+                  setSimplifyOnImport(e.target.checked);
+                }}
+              />{" "}
+              always on import
+            </label>
+          </span>
+        )}
         {guessed && (
           <span className="import-banner-units" data-testid="import-units">
             Read as:

@@ -137,6 +137,7 @@ that need handling regardless:
   the command exists and can be run right after import instead, but
   isn't yet offered inline in the import report the way the plan
   describes.
+- **P-03b DONE (2026-11-04).** Tolerance is now a setting (`simplifySettings.ts`: default 0.1 mm, `simplify 0.5` on the command line sets it, remembered per viewer) and the import banner offers Simplify with an editable tolerance plus an "always on import" preference (`countSimplifiable` in core counts what would shrink). Both run as ordinary batch commands (one undo step).
 - **P-04 DXF export writes what came in.** A spline exports as `SPLINE`,
   not a 72-vertex `LWPOLYLINE`. Round-trip test: import → export → import
   gives the same control points; vertex/entity counts match the source.

@@ -334,3 +334,18 @@ export function simplifyPolylineCommands(entities: readonly Entity[], tolerance:
   }
   return commands;
 }
+
+/**
+ * How many polylines in `entities` would actually lose points at `tolerance`
+ * (mm) - what the import banner offers to simplify (P-03b). Polylines under
+ * `minPoints` vertices are skipped without being fitted, so counting a large
+ * import stays cheap.
+ */
+export function countSimplifiable(entities: Iterable<Entity>, tolerance: number, minPoints = 8): number {
+  let n = 0;
+  for (const e of entities) {
+    if (e.type !== "polyline" || e.points.length < minPoints) continue;
+    if (simplifyPolylineEntity(e, tolerance) !== e) n++;
+  }
+  return n;
+}

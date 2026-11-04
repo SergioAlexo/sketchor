@@ -285,7 +285,7 @@ These keep their original IDs; the full spec for each is in the named doc. Tick 
 
 *Polyline + nest fixes — `docs/polyline-and-nest-fixes-plan.md`*
 - [ ] NF-03b Canvas markers for open contour ends (needs an additive host-API capability for plugin overlays, e.g. `ui.highlight`; bump `HOST_API_VERSION` minor)
-- [ ] P-03b Import-time "Simplify polylines" option + tolerance setting for the Simplify command (Shift+P is fixed at 0.1 mm today)
+- [x] P-03b Import-time "Simplify polylines" option + tolerance setting for the Simplify command - import banner offers "N dense polylines can be simplified to [tol] mm" + an "always on import" preference; `simplify 0.5` on the command line sets the remembered tolerance (`apps/web/src/simplifySettings.ts`, localStorage); Shift+P uses it. Verified live 2026-11-04
 - [x] NF-05 Nest on simplified geometry (true-shape engine: `plugin-nest/src/simplifyParts.ts`, Douglas-Peucker at 0.05 mm, spacing widened by 2x and margin by 1x the tolerance, placements mapped back to the originals; the raster engine does not use outline vertices)
 - [x] NF-06 Add whole files as parts (one part per file — decided) - already landed with the Sheet Nesting plugin ("+ Add files", RN-11; test "Add files: a DXF with a hole"); ticked 2026-11-04
 - [x] NF-07 Nest result opens in a new tab (decided) - already landed as RN-40 (`app.openDocumentTab`, host API 0.10.0); ticked 2026-11-04

@@ -3,6 +3,7 @@ import type { CircleEntity, LineEntity, PolylineEntity } from "./entities";
 import { polylineSegments } from "./entities";
 import { bulgeToArc, dist, type Point } from "./geometry";
 import {
+  countSimplifiable,
   fitArcRuns,
   fitCircle,
   flattenPolylineToPoints,
@@ -254,5 +255,19 @@ describe("simplifyPolylineCommands", () => {
   it("returns no commands when nothing in the selection can be simplified", () => {
     const line: LineEntity = { id: "l", type: "line", a: { x: 0, y: 0 }, b: { x: 1, y: 1 } };
     expect(simplifyPolylineCommands([line], 0.1)).toEqual([]);
+  });
+});
+
+describe("countSimplifiable (P-03b import banner)", () => {
+  const dense: PolylineEntity = { id: "d", type: "polyline", points: tessellateCircle({ x: 0, y: 0 }, 10, 72), closed: true };
+  it("counts only dense polylines that shrink, and a looser tolerance never counts fewer", () => {
+    const small: PolylineEntity = { id: "s", type: "polyline", points: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 }], closed: true };
+    const line: LineEntity = { id: "l", type: "line", a: { x: 0, y: 0 }, b: { x: 1, y: 1 } };
+    expect(countSimplifiable([dense, small, line], 0.1)).toBe(1);
+    expect(countSimplifiable([dense], 1)).toBeGreaterThanOrEqual(countSimplifiable([dense], 0.001));
+  });
+  it("is zero for an empty list or a polyline under the point threshold", () => {
+    expect(countSimplifiable([], 0.1)).toBe(0);
+    expect(countSimplifiable([dense], 0.1, 1000)).toBe(0);
   });
 });
