@@ -341,6 +341,8 @@ export interface ImporterContext {
  * — additive. 0.10.0 added `app.openDocumentTab(name, commands)`, which opens a
  * new tab holding a plugin-built drawing (the nest result) — additive. 0.11.0
  * added the data-only `contributes.blocks` contribution point (B-24: `.dxf` /
- * `.sketchor` block libraries listed in the Blocks panel) — additive.
+ * `.sketchor` block libraries listed in the Blocks panel) — additive. 0.12.0
+ * added the data-only `contributes.layoutTemplates` contribution point (L-09:
+ * `.dxf` / `.sketchor` sheet templates offered by "Layout from model") — additive.
  */
-export const HOST_API_VERSION = "0.11.0";
+export const HOST_API_VERSION = "0.12.0";

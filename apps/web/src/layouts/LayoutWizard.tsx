@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
-import { PAPER_SIZE_NAMES, STANDARD_SCALES, paperSpec, planLayoutFromModel, scaleLabel } from "@sketchor/core";
+import { useMemo, useRef, useState } from "react";
+import { PAPER_SIZE_NAMES, STANDARD_SCALES, paperSpec, planFromTemplate, planLayoutFromModel, scaleLabel } from "@sketchor/core";
 import { bus, doc, useApp } from "../state/store";
 import { setActiveLayout } from "./layoutState";
+import { installTemplatePack, loadContributedTemplates } from "./templateStore";
 
 /**
  * L-08: "Layout from model". Pick the paper, whether to add a border + title block, a scale (or fit) and what to
@@ -16,6 +17,20 @@ export function LayoutWizard({ onClose }: { onClose: () => void }) {
   const [scale, setScale] = useState("fit");
   const [useSelection, setUseSelection] = useState(selection.length > 0);
   const [name, setName] = useState("");
+  // L-09: sheet templates contributed by plugins; "" = a plain sheet built from the options below.
+  const [packVersion, setPackVersion] = useState(0);
+  const templates = useMemo(() => loadContributedTemplates(), [packVersion]);
+  const [templateIdx, setTemplateIdx] = useState("");
+  const [note, setNote] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const template = templateIdx === "" ? undefined : templates[Number(templateIdx)];
+  const installPack = async (f: File) => {
+    const r = installTemplatePack(await f.text());
+    if (r.ok) {
+      setPackVersion((v) => v + 1);
+      setNote(`Installed ${r.count} template${r.count === 1 ? "" : "s"} from ${r.id}${r.warnings.length ? `, ${r.warnings.length} warning(s)` : ""}`);
+    } else setNote(r.reason);
+  };
 
   const options = useMemo(
     () => ({
@@ -27,7 +42,13 @@ export function LayoutWizard({ onClose }: { onClose: () => void }) {
     }),
     [name, size, orientation, titleBlock, scale, useSelection, selection],
   );
-  const plan = useMemo(() => planLayoutFromModel(doc, options), [options]);
+  const plan = useMemo(() => {
+    if (template) {
+      const t = planFromTemplate(doc, template, { ...(name.trim() ? { name } : {}), ...(useSelection && selection.length > 0 ? { ids: selection } : {}) });
+      return t ? { layoutName: t.layoutNames[0], commands: t.commands, scale: 0, fits: true, warnings: t.warnings } : null;
+    }
+    return planLayoutFromModel(doc, options);
+  }, [options, template, name, useSelection, selection]);
 
   const create = () => {
     if (!plan) return;
@@ -47,6 +68,22 @@ export function LayoutWizard({ onClose }: { onClose: () => void }) {
       </div>
       <div className="fill-row">
         <label>
+          Template{" "}
+          <select value={templateIdx} data-testid="wizard-template" onChange={(e) => setTemplateIdx(e.target.value)}>
+            <option value="">Plain sheet</option>
+            {templates.map((t, i) => (
+              <option key={`${t.file}:${i}`} value={i}>{t.title}</option>
+            ))}
+          </select>
+        </label>
+        <button className="btn ghost sm" data-testid="wizard-install-template" onClick={() => fileRef.current?.click()}>
+          Install pack...
+        </button>
+        <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void installPack(f); }} />
+      </div>
+      {note && <div className="fill-row" style={{ opacity: 0.8 }}>{note}</div>}
+      <div className="fill-row" hidden={!!template}>
+        <label>
           Paper{" "}
           <select value={size} data-testid="wizard-paper" onChange={(e) => setSize(e.target.value)}>
             {PAPER_SIZE_NAMES.filter((n) => n !== "Custom").map((n) => (
@@ -59,7 +96,7 @@ export function LayoutWizard({ onClose }: { onClose: () => void }) {
           <option value="portrait">Portrait</option>
         </select>
       </div>
-      <div className="fill-row">
+      <div className="fill-row" hidden={!!template}>
         <label>
           Scale{" "}
           <select value={scale} data-testid="wizard-scale" onChange={(e) => setScale(e.target.value)}>
@@ -81,7 +118,13 @@ export function LayoutWizard({ onClose }: { onClose: () => void }) {
         </div>
       )}
       <div className="fill-row" data-testid="wizard-summary" style={{ opacity: 0.8 }}>
-        {plan ? `Viewport at ${scaleLabel(plan.scale)}${plan.fits ? "" : " (model does not fit)"}` : "Nothing to frame, or the sheet is too small."}
+        {template
+          ? plan
+            ? `Template "${template.title}": ${template.layouts.length} layout${template.layouts.length === 1 ? "" : "s"}, viewports fitted to the drawing`
+            : "This template has no layout."
+          : plan
+            ? `Viewport at ${scaleLabel(plan.scale)}${plan.fits ? "" : " (model does not fit)"}`
+            : "Nothing to frame, or the sheet is too small."}
       </div>
       {plan?.warnings.map((w) => (
         <div key={w} className="fill-row" style={{ opacity: 0.8 }}>

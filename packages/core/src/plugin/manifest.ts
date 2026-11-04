@@ -47,6 +47,15 @@ export interface PluginContributions {
   hatchPatterns?: HatchPatternContribution[];
   /** Block libraries (B-24): data-only `.dxf` / `.sketchor` files whose blocks join the "Sketchor library" panel. */
   blocks?: BlockContribution[];
+  /** Sheet templates (L-09): data-only `.dxf` / `.sketchor` files holding a layout (title block, viewports) offered by "Layout from model". */
+  layoutTemplates?: LayoutTemplateContribution[];
+}
+
+export interface LayoutTemplateContribution {
+  /** Bundle-relative path of a `.dxf` or `.sketchor` file with at least one layout, e.g. "sheets/a3-company.sketchor". */
+  file: string;
+  /** Name shown in the template list. */
+  title: string;
 }
 
 export interface BlockContribution {
@@ -127,7 +136,7 @@ export function validateManifest(value: unknown): ManifestValidation {
   const themeOnly = isThemeOnly(obj as unknown as PluginManifest);
   if (themeOnly) {
     if (obj.main !== undefined) errors.push('a theme-only plugin must not declare "main"');
-  } else if (!isPatternOnly(obj as unknown as PluginManifest) && !isBlocksOnly(obj as unknown as PluginManifest)) {
+  } else if (!isPatternOnly(obj as unknown as PluginManifest) && !isBlocksOnly(obj as unknown as PluginManifest) && !isLayoutTemplatesOnly(obj as unknown as PluginManifest)) {
     requireString(obj, "main", errors);
   }
   optionalString(obj, "description", errors);
@@ -159,6 +168,7 @@ export function validateManifest(value: unknown): ManifestValidation {
     if (isRecord(contributes) && contributes.themes !== undefined) validateThemeContributions(contributes.themes, errors);
     if (isRecord(contributes) && contributes.hatchPatterns !== undefined) validateHatchPatternContributions(contributes.hatchPatterns, errors);
     if (isRecord(contributes) && contributes.blocks !== undefined) validateBlockContributions(contributes.blocks, errors);
+    if (isRecord(contributes) && contributes.layoutTemplates !== undefined) validateLayoutTemplateContributions(contributes.layoutTemplates, errors);
   }
 
   if (errors.length > 0) return { ok: false, errors };
@@ -243,6 +253,21 @@ function validateBlockContributions(v: unknown, errors: string[]): void {
   });
 }
 
+function validateLayoutTemplateContributions(v: unknown, errors: string[]): void {
+  if (!Array.isArray(v)) {
+    errors.push('"contributes.layoutTemplates" must be an array');
+    return;
+  }
+  v.forEach((t, i) => {
+    const at = `contributes.layoutTemplates[${i}]`;
+    if (!isRecord(t)) return void errors.push(`"${at}" must be an object`);
+    if (typeof t.file !== "string" || !isSafeBundlePath(t.file, "block")) {
+      errors.push(`"${at}.file" must be a relative .dxf or .sketchor path inside the bundle (no "..", no leading "/")`);
+    }
+    if (typeof t.title !== "string" || !t.title.trim() || t.title.length > 60) errors.push(`"${at}.title" must be a non-empty string of at most 60 characters`);
+  });
+}
+
 /** A bundle-relative `.json` (or `.pat`; `.dxf`/`.sketchor` for "block") path that cannot climb out of the bundle. */
 export function isSafeBundlePath(p: string, ext: "json" | "pat" | "block" = "json"): boolean {
   return (
@@ -273,6 +298,14 @@ export function isBlocksOnly(m: Pick<PluginManifest, "contributes" | "main" | "u
   if (!c || !Array.isArray(c.blocks) || c.blocks.length === 0) return false;
   if (m.main !== undefined || m.ui !== undefined || (m.permissions?.length ?? 0) > 0) return false;
   return Object.entries(c).every(([k, v]) => k === "blocks" || (Array.isArray(v) && v.length === 0));
+}
+
+/** L-09: a plugin that contributes sheet templates and nothing that runs. Data (parsed, never executed), so it installs unsigned like a theme. */
+export function isLayoutTemplatesOnly(m: Pick<PluginManifest, "contributes" | "main" | "ui" | "permissions">): boolean {
+  const c = m.contributes;
+  if (!c || !Array.isArray(c.layoutTemplates) || c.layoutTemplates.length === 0) return false;
+  if (m.main !== undefined || m.ui !== undefined || (m.permissions?.length ?? 0) > 0) return false;
+  return Object.entries(c).every(([k, v]) => k === "layoutTemplates" || (Array.isArray(v) && v.length === 0));
 }
 
 /** H-06: a plugin that contributes hatch patterns and nothing that runs. Data, so it installs unsigned like a theme. */

@@ -71,6 +71,6 @@ describe("blocks-only plugin bundles", () => {
     expect(v.ok && isBlocksOnly(v.manifest)).toBe(true);
     expect(isBlockBundle({ manifest: "{}", blocks: {} })).toBe(true);
     expect(isBlockBundle({ manifest: "{}", blocks: {}, code: "x" })).toBe(false);
-    expect(HOST_API_VERSION).toBe("0.11.0");
+    expect(HOST_API_VERSION).toBe("0.12.0");
   });
 });
