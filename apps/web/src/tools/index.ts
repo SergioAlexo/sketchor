@@ -15,6 +15,8 @@ import { ToleranceTool } from "./toleranceTool";
 import { ViewportTool } from "./viewportTool";
 import { PanTool } from "./panTool";
 import { StraightenTool } from "./straightenTool";
+import { ImageTool } from "./imageTool";
+import { MTextTool, TextTool } from "./textTools";
 import type { Tool } from "./tool";
 
 /**
@@ -76,6 +78,9 @@ const TOOLS: Partial<Record<ToolId, Tool>> = {
   tolerance: new ToleranceTool(),
   viewport: new ViewportTool(),
   pan: new PanTool(),
+  image: new ImageTool(),
+  text: new TextTool(),
+  mtext: new MTextTool(),
   straighten: new StraightenTool(),
 };
 

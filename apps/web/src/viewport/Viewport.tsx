@@ -237,11 +237,6 @@ function toggleConstruction(): void {
   bus.execute(commands.length === 1 ? commands[0] : { type: "batch", commands });
 }
 
-/** New geometry carries the active layer (omitted when it's the default). */
-function activeLayerProp(active: string): { layer?: string } {
-  return active && active !== "0" ? { layer: active } : {};
-}
-
 /** Snap kinds that mean the cursor is on a real feature point — trackable, and never overridden. */
 const FEATURE_SNAP_KINDS = new Set<Snap["kind"]>([
   "origin",
@@ -548,6 +543,10 @@ export function Viewport() {
         return hit ? resolveSelection(doc, hit, useApp.getState().enteredGroupId) : [];
       },
       hitEntity: (world) => hitTest(viewRef.current, world),
+      editText: (existing, world) => {
+        if (existing) openTextEditor(existing);
+        else setTextEdit({ screen: worldToScreen(viewRef.current, world), world, value: "", id: null, rotation: 0, height: useApp.getState().textHeight });
+      },
       displayUnit: () => useApp.getState().displayUnit,
       zoomTo: (minX, minY, maxX, maxY) => {
         const canvas = canvasRef.current;
@@ -1401,50 +1400,6 @@ export function Viewport() {
       case "stretch":
         // On the tool framework; dispatched above.
         break;
-      case "image": {
-        // A file picker, not a two-click draw — insert at the point clicked
-        // once a file is actually chosen, then drop back to the select tool
-        // so the new image can be moved/resized right away.
-        const insertAt = snapped;
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = "image/*";
-        input.onchange = () => {
-          const file = input.files?.[0];
-          if (!file) return;
-          const reader = new FileReader();
-          reader.onload = () => {
-            const dataUrl = String(reader.result);
-            const probe = new Image();
-            probe.onload = () => {
-              const maxDim = 200; // mm — a sensible default footprint, independent of source pixel size
-              const naturalW = probe.naturalWidth || 100;
-              const naturalH = probe.naturalHeight || 100;
-              const fit = Math.min(1, maxDim / Math.max(naturalW, naturalH));
-              bus.execute({
-                type: "add-entity",
-                entity: {
-                  id: newEntityId(),
-                  type: "image",
-                  name: nextEntityName(doc, "image"),
-                  ...activeLayerProp(app.activeLayer),
-                  insert: insertAt,
-                  width: naturalW * fit,
-                  height: naturalH * fit,
-                  rotation: 0,
-                  dataUrl,
-                },
-              });
-              useApp.getState().setTool("select");
-              redraw();
-            };
-            probe.src = dataUrl;
-          };
-          reader.readAsDataURL(file);
-        };
-        input.click();
-        break;
-      }
       case "measure": {
         const hit = hitTest(view, world);
         const hitEntity = hit ? doc.get(hit) : null;
@@ -1593,25 +1548,6 @@ export function Viewport() {
             currentWorld: world,
             additive: matchesModifier(e, "mouse.addToSelection"),
           };
-        }
-        break;
-      }
-      case "mtext": {
-        // D-04: edit the multiline text under the cursor, or start one where you clicked.
-        const hit = hitTest(view, world);
-        const existing = hit ? doc.get(hit) : null;
-        if (existing && existing.type === "mtext") useMTextUi.getState().openEdit(existing);
-        else useMTextUi.getState().openNew(world, app.textHeight);
-        break;
-      }
-      case "text": {
-        // Edit the text under the cursor, or start a fresh one where you clicked.
-        const hit = hitTest(view, world);
-        const existing = hit ? doc.get(hit) : null;
-        if (existing && existing.type === "text") {
-          openTextEditor(existing);
-        } else {
-          setTextEdit({ screen, world, value: "", id: null, rotation: 0, height: app.textHeight });
         }
         break;
       }

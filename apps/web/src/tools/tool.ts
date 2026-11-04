@@ -1,4 +1,4 @@
-import type { Command, Entity, EntityId, Point, SketchDocument } from "@sketchor/core";
+import type { Command, Entity, EntityId, Point, SketchDocument, TextEntity } from "@sketchor/core";
 import type { ToolId } from "../state/store";
 import type { DisplayUnit } from "../units";
 import type { Snap } from "../viewport/snapping";
@@ -39,6 +39,8 @@ export interface ToolContext {
   hitTest(world: Point): EntityId[];
   /** The single entity under a world point, exactly as the hit test finds it (no group expansion), or null. */
   hitEntity(world: Point): EntityId | null;
+  /** Opens the floating text editor on an existing text entity, or for a new one at a world point. */
+  editText(existing: TextEntity | null, world: Point): void;
   /** The tab's display unit, for tools that interpret a typed number themselves. */
   displayUnit(): DisplayUnit;
   /** Frames a world-space box (the zoom-window tool). */
