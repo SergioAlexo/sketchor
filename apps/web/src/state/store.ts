@@ -199,7 +199,7 @@ export function applySketchCode(text: string): ParseIssue[] {
 }
 
 /** Shared by every import path: replaces (or adds to) the drawing's entities as one undoable step. */
-function applyImportedEntities(entities: Entity[], replace: boolean, blocks: BlockDefinition[] = [], textStyles: TextStyle[] = [], extras: { groups?: Group[]; constraints?: Constraint[]; params?: TableRecord[]; foreign?: TableRecord[]; dimStyles?: TableRecord[]; layouts?: TableRecord[]; paperEntities?: Entity[]; sheetSet?: Record<string, string> } = {}): void {
+function applyImportedEntities(entities: Entity[], replace: boolean, blocks: BlockDefinition[] = [], textStyles: TextStyle[] = [], extras: { groups?: Group[]; constraints?: Constraint[]; params?: TableRecord[]; foreign?: TableRecord[]; dimStyles?: TableRecord[]; layouts?: TableRecord[]; paperEntities?: Entity[]; sheetSet?: Record<string, string>; annotation?: { scale?: string; scales?: string[]; allVisible?: boolean } } = {}): void {
   const commands: Command[] = [];
   if (!replace) {
     // Ids restored from SKETCHOR XDATA may already exist here: an add-import gets fresh ids, and the id-keyed extras are dropped.
@@ -230,6 +230,10 @@ function applyImportedEntities(entities: Entity[], replace: boolean, blocks: Blo
   for (const record of extras.layouts ?? []) commands.push({ type: "put-table-record", table: "layouts", record });
   for (const entity of extras.paperEntities ?? []) commands.push({ type: "add-entity", entity });
   if (extras.sheetSet) commands.push({ type: "set-settings", patch: { sheetSet: extras.sheetSet } });
+  if (extras.annotation) {
+    const a = extras.annotation;
+    commands.push({ type: "set-settings", patch: { ...(a.scale ? { annotationScale: a.scale } : {}), ...(a.scales ? { annotationScales: a.scales } : {}), ...(a.allVisible !== undefined ? { annoAllVisible: a.allVisible } : {}) } });
+  }
   // X-05/X-08: groups (parents before children), the `params` table and constraints a Sketchor-written DXF carries.
   for (const record of extras.params ?? []) commands.push({ type: "put-table-record", table: "params", record });
   for (const record of extras.foreign ?? []) commands.push({ type: "put-table-record", table: "foreign", record });
@@ -304,7 +308,7 @@ export function importDxfText(text: string, replace = true): { count: number; wa
 /** {@link importDxfText} for an already-parsed file. */
 function importParsedDxf(result: DxfParseResult, replace: boolean): { count: number; warnings: string[] } {
   const { entities, warnings, report, insUnits, unitSource } = result;
-  applyImportedEntities(entities, replace, result.blocks, result.textStyles, { groups: result.groups, constraints: result.constraints, params: result.params, foreign: result.foreign, dimStyles: result.dimStyles, layouts: result.layouts, paperEntities: result.paperEntities, ...(result.sheetSet ? { sheetSet: result.sheetSet } : {}) });
+  applyImportedEntities(entities, replace, result.blocks, result.textStyles, { groups: result.groups, constraints: result.constraints, params: result.params, foreign: result.foreign, dimStyles: result.dimStyles, layouts: result.layouts, paperEntities: result.paperEntities, ...(result.sheetSet ? { sheetSet: result.sheetSet } : {}), ...(result.annotation ? { annotation: result.annotation } : {}) });
   useApp.getState().setImportReport(report);
   useApp.getState().setFileWarnings(warnings.filter((w) => !w.startsWith("unsupported entity")));
   useApp.getState().setImportUnits({ code: insUnits, source: unitSource });

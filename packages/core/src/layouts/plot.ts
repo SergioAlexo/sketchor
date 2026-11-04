@@ -8,6 +8,7 @@ import { insertContents } from "../kinds/insert";
 import { kindBounds } from "../kinds/registry";
 import { PdfBuilder, type PdfPageSize, type PdfPoint } from "../pdf";
 import { getLayout, modelEntities, paperSizeMm, layoutEntities, type LayoutRecord, type PlotStyle } from "./types";
+import { annotatedFor, viewportAnnotationScale } from "../annotative/annotative";
 import { viewportOutline, viewportShowsLayer } from "./viewport";
 
 /**
@@ -91,10 +92,14 @@ export function drawLayoutPage(pdf: PdfBuilder, doc: SketchDocument, layout: Lay
     const mMaxX = (bb.maxX - vp.center.x) / s + vp.viewCenter.x;
     const mMinY = (bb.minY - vp.center.y) / s + vp.viewCenter.y;
     const mMaxY = (bb.maxY - vp.center.y) / s + vp.viewCenter.y;
-    const shown = model.filter((e) => {
-      if (!viewportShowsLayer(vp, layerOf(e))) return false;
+    // L-05: annotative objects are drawn at the window's annotation scale; unsupported ones are left out.
+    const annoScale = viewportAnnotationScale(vp);
+    const shown = model.flatMap((raw) => {
+      if (!viewportShowsLayer(vp, layerOf(raw))) return [];
+      const e = annotatedFor(raw, annoScale, { allVisible: doc.settings.annoAllVisible === true });
+      if (!e) return [];
       const b = kindBounds(e);
-      return !b || !(b.maxX < mMinX || b.minX > mMaxX || b.maxY < mMinY || b.minY > mMaxY);
+      return !b || !(b.maxX < mMinX || b.minX > mMaxX || b.maxY < mMinY || b.minY > mMaxY) ? [e] : [];
     });
     const colorOf = (layer: string) => vp.layerOverrides?.[layer]?.color;
     const entities = prepare(doc, shown, style, colorOf).map((e) => {

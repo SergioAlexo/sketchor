@@ -315,6 +315,8 @@ export interface DxfWriteOptions2018 {
   layouts?: readonly { layout: LayoutRecord; entities: readonly Entity[] }[];
   /** L-04: the sheet set's shared attributes (`settings.sheetSet`), carried in the SKETCHOR record. */
   sheetSet?: Record<string, string>;
+  /** D-08: the drawing's annotation scale settings, carried in the SKETCHOR record (the entity flags are read off the entities). */
+  annotation?: { scale?: string; scales?: string[]; allVisible?: boolean };
 }
 
 /**
@@ -548,6 +550,12 @@ export function entitiesToDxf2018(entitiesIn: Entity[], options: DxfWriteOptions
       }
     }
     if (Object.keys(vps).length) docData.viewports = vps;
+  }
+  {
+    const anno: Record<string, string[]> = {};
+    for (const e of entitiesIn) if ("annotative" in e && e.annotative) anno[e.id] = e.annoScales ? [...e.annoScales] : [];
+    if (Object.keys(anno).length) docData.annotative = anno;
+    if (options.annotation && Object.keys(options.annotation).length) docData.annotation = { ...options.annotation };
   }
   if (options.sheetSet && Object.keys(options.sheetSet).length) docData.sheetSet = { ...options.sheetSet };
   const objects = objectsSection(plan, groupsPart, Object.keys(docData).length > 1 ? docData : null, mleader, layoutPlans, insUnits === 1);

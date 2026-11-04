@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import {
   LAYOUTS_TABLE,
   STANDARD_SCALES,
+  annotationScaleList,
+  currentAnnotationScale,
+  setAnnotationScaleCommands,
   boundsOf,
   layoutEntities,
   layoutList,
@@ -128,6 +131,22 @@ export function LayoutTabs() {
       <button className="layout-tab add" data-testid="layout-tab-add" onClick={add} title="New layout">
         +
       </button>
+      {space.layout === null && (
+        <select
+          className="layout-select"
+          data-testid="annotation-scale"
+          title="Annotation scale: annotative text, dimensions and hatches are drawn at this scale in model space"
+          value={currentAnnotationScale(doc.settings)}
+          onChange={(e) => {
+            const cmds = setAnnotationScaleCommands(doc, e.target.value);
+            if (cmds.length) bus.execute({ type: "batch", commands: cmds });
+          }}
+        >
+          {[...new Set([currentAnnotationScale(doc.settings), ...annotationScaleList(doc.settings)])].map((s) => (
+            <option key={s}>{s}</option>
+          ))}
+        </select>
+      )}
       {space.layout && (
         <button
           className="layout-tab"
@@ -207,8 +226,8 @@ function ViewportControls({ layout }: { layout: string }) {
   const rec = layoutList(doc).find((l) => l.name === layout);
   const update = (patch: { scale?: number; locked?: boolean }) => {
     if (!vp) return;
-    const { locked: _l, ...rest } = vp;
-    const next = { ...rest, ...(patch.scale !== undefined ? { scale: patch.scale } : {}), ...((patch.locked ?? vp.locked) ? { locked: true } : {}) };
+    const { locked: _l, annotationScale: _a, ...rest } = vp;
+    const next = { ...rest, ...(patch.scale !== undefined ? { scale: patch.scale } : {}), ...((patch.locked ?? vp.locked) ? { locked: true } : {}), ...(patch.scale === undefined && vp.annotationScale ? { annotationScale: vp.annotationScale } : {}) };
     bus.execute({ type: "update-entity", entity: next });
   };
   const preset = (n: number) => {

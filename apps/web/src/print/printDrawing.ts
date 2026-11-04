@@ -1,4 +1,4 @@
-import { type BlockDefinition, entitiesToSvgDocument, flattenInserts, modelEntities } from "@sketchor/core";
+import { type BlockDefinition, entitiesToSvgDocument, flattenInserts, modelEntities, annotatedFor, currentAnnotationScale } from "@sketchor/core";
 import { doc, hiddenLayerSet, useApp } from "../state/store";
 import { activeSaveTarget } from "../io/drawingFile";
 import { escapeHtml, printHtml } from "./printHtml";
@@ -15,7 +15,12 @@ export function printDrawing(): void {
   const blocks = doc.records("blocks") as BlockDefinition[];
   const bodyHidden = blocks.some((b) => b.entities.some((e) => e.layer !== undefined && e.layer !== "0" && hidden.has(e.layer)));
   const keep = blocks.length > 0 && !bodyHidden;
-  const model = modelEntities(doc);
+  // D-08: the printed model shows annotative objects at the current annotation scale.
+  const scale = currentAnnotationScale(doc.settings);
+  const model = modelEntities(doc).flatMap((e) => {
+    const a = annotatedFor(e, scale, { allVisible: doc.settings.annoAllVisible !== false });
+    return a ? [a] : [];
+  });
   const all = keep ? model : flattenInserts(doc, model);
   const entities = all.filter((e) => !hidden.has(e.layer ?? "0"));
   if (entities.length === 0) return;

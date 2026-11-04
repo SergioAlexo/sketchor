@@ -289,7 +289,17 @@ export interface PolylineEntity {
  * world units, `rotation` radians CCW about `at`. Editable in place with the
  * text tool.
  */
-export interface TextEntity {
+/**
+ * D-08: an annotative entity is authored at its paper size and drawn at that size times the annotation
+ * scale of the view it is seen in (text height, dimension scale, hatch pattern scale, block insert scale).
+ * `annoScales` lists the scale names it supports; absent/empty = every scale.
+ */
+export interface AnnotativeFields {
+  annotative?: boolean;
+  annoScales?: string[];
+}
+
+export interface TextEntity extends AnnotativeFields {
   id: EntityId;
   type: "text";
   name?: string;
@@ -414,7 +424,7 @@ export type HatchPaint =
  * A hatched region (H-01): boundary loops plus a paint. Named `paint`, not
  * `fill`, because generic code reads `entity.fill` as a colour string on closed shapes.
  */
-export interface HatchEntity {
+export interface HatchEntity extends AnnotativeFields {
   id: EntityId;
   type: "hatch";
   /** Human-readable handle used in the sketch code view (e.g. "H1"). */
@@ -458,7 +468,7 @@ export interface InsertArray {
  * translate(insert) · rotate · scale · translate(-basePoint), so editing the
  * definition updates every instance. Selected, moved and deleted as one entity.
  */
-export interface InsertEntity {
+export interface InsertEntity extends AnnotativeFields {
   id: EntityId;
   type: "insert";
   /** Human-readable handle used in the sketch code view (e.g. "I1"). */
@@ -550,7 +560,7 @@ export type DimKind = "linear" | "aligned" | "angular2l" | "angular3p" | "radial
  * A driving dimension IS the solver constraint (`dimensions/driving.ts`):
  * `value` is its target (mm, or radians for angles) and the geometry follows.
  */
-export interface DimensionEntity {
+export interface DimensionEntity extends AnnotativeFields {
   id: EntityId;
   type: "dimension";
   name?: string;
@@ -615,7 +625,7 @@ export interface DimensionEntity {
  * (0 = never wrap); `attachment` is DXF's 1-9 (1 top-left .. 9 bottom-right) and
  * says which corner/edge of the box `at` is.
  */
-export interface MTextEntity {
+export interface MTextEntity extends AnnotativeFields {
   id: EntityId;
   type: "mtext";
   name?: string;

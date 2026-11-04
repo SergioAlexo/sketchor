@@ -985,6 +985,11 @@ export function diffToCommands(doc: SketchDocument, parsed: ParsedEntity[]): Com
         if (existing.linetype !== undefined) updated.linetype = existing.linetype;
         if (existing.lineweight !== undefined) updated.lineweight = existing.lineweight;
         if (existing.construction !== undefined) updated.construction = existing.construction;
+        // D-08: the annotative flag and its scale list have no code word.
+        if ("annotative" in existing && existing.annotative && "annotative" in updated) {
+          (updated as { annotative?: boolean }).annotative = true;
+          if (existing.annoScales) (updated as { annoScales?: string[] }).annoScales = existing.annoScales;
+        }
         { const sp = spaceOf(existing); if (sp) (updated as { space?: string }).space = sp; } // L-01: sketch code has no word for the sheet an entity is on
         if (existing.type === "line" && existing.infinite && updated.type === "line") updated.infinite = true;
         if (existing.type === "dimension" && updated.type === "dimension") {

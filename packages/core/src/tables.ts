@@ -68,6 +68,10 @@ export interface DocSettings {
   ltscale?: number;
   /** Current annotation scale, e.g. `"1:50"` (D-08). */
   annotationScale?: string;
+  /** The drawing's annotation scale list (D-08); absent = the built-in list. */
+  annotationScales?: string[];
+  /** AutoCAD ANNOALLVISIBLE: show annotative objects that do not support the view's scale. Absent = shown in model space, hidden in viewports. */
+  annoAllVisible?: boolean;
   [key: string]: unknown;
 }
 

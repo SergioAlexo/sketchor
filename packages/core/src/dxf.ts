@@ -649,6 +649,8 @@ export interface DxfParseResult {
   paperEntities: Entity[];
   /** L-04: the sheet set's shared attributes from a Sketchor-written file. */
   sheetSet?: Record<string, string>;
+  /** D-08: annotation scale settings from a Sketchor-written file (entity flags are already set on the entities). */
+  annotation?: { scale?: string; scales?: string[]; allVisible?: boolean };
 }
 
 /** Font file name (group 3) → a `TextStyle.font` value: `.shx` → `shx:<name>`, `.ttf`/`.otf` → `ttf:<family>`, anything else the stroke font. */
@@ -1366,6 +1368,15 @@ export function parseDxf(text: string, options: DxfParseOptions = {}): DxfParseR
     if (i >= 0) dimStyles[i] = exact;
     else dimStyles.push(exact);
   }
+  // D-08: annotative flags by entity id.
+  if (sketchor.data?.annotative) {
+    for (const e of entities) {
+      const scales = sketchor.data.annotative[e.id];
+      if (!scales || !("annotative" in e || e.type === "text" || e.type === "mtext" || e.type === "hatch" || e.type === "insert" || e.type === "dimension")) continue;
+      (e as { annotative?: boolean }).annotative = true;
+      if (scales.length) (e as { annoScales?: string[] }).annoScales = [...scales];
+    }
+  }
   // L-07: a Sketchor-written file restores each layout record and viewport exactly (plot style, attributes, overrides, mm-precise numbers).
   for (const exact of sketchor.data?.layouts ?? []) {
     const i = paper.layouts.findIndex((l) => l.name === exact.name);
@@ -1394,6 +1405,7 @@ export function parseDxf(text: string, options: DxfParseOptions = {}): DxfParseR
     layouts: paper.layouts,
     paperEntities: paper.entities,
     ...(sketchor.data?.sheetSet ? { sheetSet: sketchor.data.sheetSet } : {}),
+    ...(sketchor.data?.annotation ? { annotation: sketchor.data.annotation } : {}),
   };
 }
 

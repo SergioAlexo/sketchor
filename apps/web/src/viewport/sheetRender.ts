@@ -53,8 +53,10 @@ export function paperViewFromModelView(model: View, vp: ViewportEntity): View {
  */
 export function viewportFromModelView(paper: View, model: View, vp: ViewportEntity): ViewportEntity {
   const scale = Math.min(1000, Math.max(1e-6, model.scale / paper.scale));
+  // A zoom changes the window's scale, so an explicit annotation scale no longer describes it: annotative objects follow the new ratio.
+  const { annotationScale: _a, ...keep } = vp;
   return {
-    ...vp,
+    ...keep,
     scale,
     viewCenter: {
       x: (vp.center.x - (model.ox - paper.ox) / paper.scale) / scale,

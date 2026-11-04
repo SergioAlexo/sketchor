@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { dynamicSpecOf, paramFields, resetParams, withParamValue } from "@sketchor/core";
 import type { BlockDefinition, BlockTreeNode, Command, Entity, HatchEntity, InsertEntity, PolylineEntity, SplineEntity } from "@sketchor/core";
 import { GRADIENT_NAMES, blockTree, editableAttributes, isMirroredInsert, withAttributeValues, withInsertArray, withInsertScale, explodeHatchCommands, recreateBoundaryCommands, setHatchDrawOrder, entityArea, entityLength, arcPointAt, arcSweep, bulgeToArc, BUILTIN_LINETYPES, dist, ellipseSweep, nurbsDomain, nurbsPointAt, findClosedRegions, isFullEllipse, layerOf, polylineLength, addSplinePoint, polylineToSpline, rebuildSpline, refitSpline, removeSplinePoint, splineToControlPoints, splineToPolyline } from "@sketchor/core";
+import { canBeAnnotative, currentAnnotationScale, isAnnotative, withAnnotative, withScaleAdded, withScaleRemoved } from "@sketchor/core";
 import { bus, doc, useApp } from "../state/store";
 import { settingsFromHatch } from "../tools/hatchTool";
 import { parseLength } from "../tools/typedInput";
@@ -134,6 +135,7 @@ export function PropertiesPanel({ onClose }: { onClose: () => void }) {
             </Row>
           </Section>
           <CustomBlockParams entities={entities} applyAll={applyAll} />
+          <AnnotativeSection entities={entities} applyAll={applyAll} />
           {entities.length === 1 && <Geometry entity={entities[0]} unit={unit} />}
         </div>
       )}
@@ -502,6 +504,49 @@ function InsertGeometry({ entity, unit }: { entity: InsertEntity; unit: DisplayU
           {renderTree(tree)}
         </div>
       )}
+    </Section>
+  );
+}
+
+/**
+ * D-08/L-05: the "Annotative" section: a flag on text, mtext, dimensions, leaders, hatches and block inserts, the scales the
+ * object supports, and "Add current scale" (the model-space annotation scale). Applies to the whole selection.
+ */
+function AnnotativeSection({ entities, applyAll }: { entities: Entity[]; applyAll: (patch: (e: Entity) => Entity) => void }) {
+  const able = entities.filter(canBeAnnotative);
+  if (able.length === 0) return null;
+  const current = currentAnnotationScale(doc.settings);
+  const on = able.filter(isAnnotative).length;
+  const lists = new Set(able.filter(isAnnotative).map((e) => (e.annoScales?.length ? e.annoScales.join(", ") : "all")));
+  const only = (fn: (e: Entity) => Entity | null) => applyAll((e) => (canBeAnnotative(e) ? (fn(e) ?? e) : e));
+  return (
+    <Section title="Annotative">
+      <div data-testid="prop-annotative">
+        <Row label="Annotative">
+          <input
+            type="checkbox"
+            data-testid="prop-annotative-flag"
+            checked={on === able.length}
+            ref={(el) => {
+              if (el) el.indeterminate = on > 0 && on < able.length;
+            }}
+            onChange={(e) => only((en) => withAnnotative(en, e.target.checked, current))}
+          />
+        </Row>
+        {on > 0 && (
+          <>
+            <ReadRow label="Scales" value={lists.size === 1 ? [...lists][0] : "mixed"} />
+            <div className="propspanel-row propspanel-actions">
+              <button className="btn ghost sm" data-testid="prop-annotative-add" title={`Also show the selection at ${current}`} onClick={() => only((en) => withScaleAdded(en, current))}>
+                Add {current}
+              </button>
+              <button className="btn ghost sm" data-testid="prop-annotative-remove" title={`Stop showing the selection at ${current}`} onClick={() => only((en) => withScaleRemoved(en, current))}>
+                Remove {current}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </Section>
   );
 }

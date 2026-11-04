@@ -24,6 +24,9 @@ import {
   type ViewportEntity,
   viewportOutline,
   viewportShowsLayer,
+  annotatedFor,
+  currentAnnotationScale,
+  viewportAnnotationScale,
 } from "@sketchor/core";
 import { drawSheet, viewportScreenView } from "./sheetRender";
 import type { MeasureResult } from "../state/store";
@@ -170,6 +173,7 @@ export function render(
   textStyleLookup = (name) => doc.getRecord("textStyles", name);
   const ltscale = doc.settings.ltscale ?? 1;
   const layoutName = ui.layout?.name ?? null;
+  const modelScale = currentAnnotationScale(doc.settings);
   if (ui.layout) {
     for (const vp of doc.all()) {
       if (vp.type !== "viewport" || vp.space !== layoutName) continue;
@@ -188,10 +192,13 @@ export function render(
     const isReference = entity.id === ui.referenceEdgeId;
     const isFreeEndpoint = !!ui.freeEndpointIds?.has(entity.id);
     const isHovered = !selected && !isReference && entity.id === ui.hoverId;
+    // D-08: model space draws annotative objects at the current annotation scale (unsupported ones too unless ANNOALLVISIBLE is off).
+    const scaledEntity = layoutName === null && modelScale ? annotatedFor(entity, modelScale, { allVisible: doc.settings.annoAllVisible !== false }) : entity;
+    if (!scaledEntity) continue;
     const shown =
       selected && ui.moveOffset
-        ? translated(entity, ui.moveOffset.dx, ui.moveOffset.dy)
-        : entity;
+        ? translated(scaledEntity, ui.moveOffset.dx, ui.moveOffset.dy)
+        : scaledEntity;
     const color = isReference
       ? COLORS.reference
       : selected
@@ -289,14 +296,18 @@ function drawViewportContents(ctx: CanvasRenderingContext2D, paper: View, doc: S
   const maxX = (a.x + vp.width * paper.scale - mv.ox) / mv.scale;
   const maxY = (mv.oy - a.y) / mv.scale;
   const minY = (mv.oy - (a.y + vp.height * paper.scale)) / mv.scale;
-  for (const e of doc.all()) {
-    if (spaceOf(e)) continue;
-    const layer = layerOf(e);
+  // L-05: annotative objects take the window's own annotation scale; unsupported ones are hidden (unless ANNOALLVISIBLE is on).
+  const annoScale = viewportAnnotationScale(vp);
+  for (const raw of doc.all()) {
+    if (spaceOf(raw)) continue;
+    const layer = layerOf(raw);
     if (ui.hiddenLayers.has(layer) || !viewportShowsLayer(vp, layer)) continue;
+    const e = annotatedFor(raw, annoScale, { allVisible: doc.settings.annoAllVisible === true });
+    if (!e) continue;
     const bb = kindBounds(e);
     if (bb && (bb.maxX < minX || bb.minX > maxX || bb.maxY < minY || bb.minY > maxY)) continue;
     const over = vp.layerOverrides?.[layer];
-    const selected = active && ui.selection.has(e.id);
+    const selected = active && ui.selection.has(raw.id);
     const color = selected ? COLORS.selected : (over?.color ?? e.color ?? COLORS.entity);
     if (ui.lockedLayers.has(layer)) ctx.globalAlpha = 0.45;
     if (e.fill) drawHatch(ctx, mv, e, e.fill);

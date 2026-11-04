@@ -46,6 +46,9 @@ export interface SketchorDocData {
   layouts?: TableRecord[];
   /** L-07: each viewport's own fields (mm, exact), by entity id. */
   viewports?: Record<string, Record<string, unknown>>;
+  /** D-08: annotative flag + supported scales by entity id (`[]` = every scale), and the drawing's annotation scale settings. */
+  annotative?: Record<string, string[]>;
+  annotation?: { scale?: string; scales?: string[]; allVisible?: boolean };
   /** L-04: the sheet set's shared title-block attributes. */
   sheetSet?: Record<string, string>;
 }
