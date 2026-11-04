@@ -230,28 +230,65 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
     for (const w of plan.warnings) warnings.push(`${label}: ${w}`);
     if (plan.tabs.length === 0) return;
     const per = plan.perimeter;
+    // One [a, b] interval per tab, unrolled so a tab wrapping the loop start has b > per.
+    const byTab = new Map<number, typeof plan.tabs>();
+    for (const t of plan.tabs) byTab.set(t.tab, [...(byTab.get(t.tab) ?? []), t]);
+    const iv = [...byTab.values()].map((r) => {
+      if (r.length === 1) return { a: r[0].start, b: r[0].end };
+      const hi = r[0].end >= per - EPS ? r[0] : r[1];
+      const lo = hi === r[0] ? r[1] : r[0];
+      return { a: hi.start, b: lo.end + per };
+    }).sort((x, y) => x.a - y.a);
+    const n = iv.length;
+    // Start the cut at the end of the tab nearest the original start (the lead-in's chosen edge).
+    const circ = (x: number) => Math.min(((x % per) + per) % per, per - (((x % per) + per) % per));
+    let k = 0;
+    for (let i = 1; i < n; i++) if (circ(iv[i].b) < circ(iv[k].b)) k = i;
+    const doubled = [...f.loop, ...f.loop];
     const runs: Curve[][] = [];
-    let cursor = 0;
-    for (const t of plan.tabs) {
-      if (t.start - cursor > EPS) runs.push(sliceLoop(f.loop, cursor, t.start));
-      cursor = Math.max(cursor, t.end);
+    for (let j = 0; j < n; j++) {
+      const cur = iv[(k + j) % n];
+      const nxt = iv[(k + j + 1) % n];
+      const lo = ((cur.b % per) + per) % per;
+      const len = (((nxt.a - cur.b) % per) + per) % per || (n === 1 ? per - (cur.b - cur.a) : 0);
+      if (len > EPS) runs.push(sliceLoop(doubled, lo, lo + len));
     }
-    if (per - cursor > EPS) runs.push(sliceLoop(f.loop, cursor, per));
-    if (runs.length === 0) return;
-    f.runs = runs;
+    if (runs.length === 0 || runs.some((r) => r.length === 0)) return;
     const first = curveStart(runs[0][0]);
+    let pierce = f.pierce;
     if (distance(first, f.leadIn) > 1e-6) {
-      // A tab covers the loop start: re-aim the lead-in at the first cut point, same side as before.
+      // Re-aim the lead-in at the new start: same side of the path and same length as before.
       const t0 = tangentAt(f.loop[0], 0);
       const out = { x: f.pierce.x - f.leadIn.x, y: f.pierce.y - f.leadIn.y };
       const side = Math.sign(t0.x * out.y - t0.y * out.x) || 1;
       const t1 = tangentAt(runs[0][0], 0);
-      const n = { x: -t1.y * side, y: t1.x * side };
-      const nl = Math.hypot(n.x, n.y) || 1;
+      const nv = { x: -t1.y * side, y: t1.x * side };
+      const nlen = Math.hypot(nv.x, nv.y) || 1;
       const len = Math.hypot(out.x, out.y);
-      f.leadIn = first;
-      f.pierce = { x: first.x + (n.x / nl) * len, y: first.y + (n.y / nl) * len };
+      pierce = { x: first.x + (nv.x / nlen) * len, y: first.y + (nv.y / nlen) * len };
     }
+    // The lead-in line must not touch a tab (or it would cut the bridge): sample every uncut span.
+    const segDist = (p: Point) => {
+      const dx = first.x - pierce.x, dy = first.y - pierce.y;
+      const l2 = dx * dx + dy * dy;
+      const t = l2 > 0 ? Math.max(0, Math.min(1, ((p.x - pierce.x) * dx + (p.y - pierce.y) * dy) / l2)) : 0;
+      return Math.hypot(p.x - (pierce.x + t * dx), p.y - (pierce.y + t * dy));
+    };
+    for (const x of iv) {
+      const lo = ((x.a % per) + per) % per;
+      for (const c of sliceLoop(doubled, lo, lo + (x.b - x.a))) {
+        for (let i = 0; i <= 8; i++) {
+          const pt = pointAt(c, i / 8);
+          if (distance(pt, first) > 1e-6 && segDist(pt) < 1e-3) {
+            warnings.push(`${label}: lead-in would cut into a tab; tabs skipped on this contour`);
+            return;
+          }
+        }
+      }
+    }
+    f.runs = runs;
+    f.leadIn = first;
+    f.pierce = pierce;
   };
 
   interface Built {

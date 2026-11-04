@@ -54,7 +54,7 @@ candidate-based placement scales roughly cubically with how many instances end u
 sharing a sheet (~9s at 600 on a dev machine) — raising the cap further needs an
 algorithmic change (spatial indexing), not just a bigger number.
 
-**N-53** (micro-joints/tabs) planner: `packages/plugin-gcode/src/tabs.ts` is pure (`planTabs` + `splitLoopAtTabs` split a closed contour into cut runs and uncut bridges). Wired (`buildCutPlan` `tabs` option -> `CutFeature.runs` -> `writeGcode`; count/width fields in both nest panels).
+**N-53** (micro-joints/tabs) planner: `packages/plugin-gcode/src/tabs.ts` is pure (`planTabs` + `splitLoopAtTabs` split a closed contour into cut runs and uncut bridges). Wired (`buildCutPlan` `tabs` option -> `CutFeature.runs` -> `writeGcode`; count/width fields in both nest panels; a tabbed contour starts at a tab edge, N tabs = N pierces).
 
 N-54 (save/reopen job file) is already done in the Sheet Nesting plugin (RN-42, ticked 2026-11-04).
 

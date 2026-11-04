@@ -47,14 +47,13 @@ function length(paths: Poly[]): number {
   return total;
 }
 
-/** Each path's end to the next path's start must be a straight jump of `gap` mm (no cut move across it). The closing pair may instead meet (0) when no tab covers the loop start. */
+/** Each path's end to the next path's start must be a straight jump of `gap` mm (no cut move across it). */
 function expectGaps(paths: Poly[], gap: number) {
   for (let i = 0; i < paths.length; i++) {
     const a = paths[i].pts[paths[i].pts.length - 1];
     const b = paths[(i + 1) % paths.length].pts[0];
     const d = Math.hypot(a.x - b.x, a.y - b.y);
-    if (i === paths.length - 1) expect([0, gap].some((x) => Math.abs(d - x) < 1e-3)).toBe(true);
-    else expect(d).toBeCloseTo(gap, 3);
+    expect(d).toBeCloseTo(gap, 3);
   }
 }
 
@@ -70,18 +69,19 @@ describe("N-53: tabs in the cut plan and G-code", () => {
     expect(plan.warnings).toEqual([]);
     const gcode = writeGcode(plan.features, WRITE);
     const paths = cutPaths(gcode);
-    expect(paths.length).toBe(5); // no tab covers the loop start, so the first and last runs meet there
+    expect(paths.length).toBe(4); // N tabs, N runs: the cut starts at a tab edge
     expect(length(paths)).toBeCloseTo(320 - 4 * 5, 3);
     expectGaps(paths, 5);
     const lines = gcode.split("\n");
     const tabRapids = lines.filter((l, i) => l.startsWith("G0 ") && lines[i - 1] === GENERIC_LASER_PROFILE.laserOffCode && lines[i + 1] === GENERIC_LASER_PROFILE.laserOnCode && lines[i + 2].startsWith("G4"));
-    expect(tabRapids.length).toBe(4);
+    expect(tabRapids.length).toBe(3);
+    expect(lines.filter((l) => l === GENERIC_LASER_PROFILE.laserOnCode).length).toBe(4); // pierces == tabs
   });
 
   it("full circle: arcs add up to the circumference minus the tabs", () => {
     const plan = buildCutPlan([part([disc(20)])], { ...noLead, tabs: { count: 3, width: 4 } });
     const paths = cutPaths(writeGcode(plan.features, WRITE));
-    expect(paths.length).toBe(4);
+    expect(paths.length).toBe(3);
     expectGaps(paths, 2 * 20 * Math.sin(4 / 40)); // chord of a 4 mm arc
     expect(length(paths)).toBeCloseTo(2 * Math.PI * 20 - 3 * 4, 2);
   });
@@ -106,8 +106,19 @@ describe("N-53: tabs in the cut plan and G-code", () => {
 
   it("lead-in stays on the first run only", () => {
     const plan = buildCutPlan([part(rect(100, 60))], { leadInLength: 3, tabs: { count: 2, width: 5 } });
-    const paths = cutPaths(writeGcode(plan.features, WRITE));
-    expect(paths.length).toBe(3);
+    const gcode = writeGcode(plan.features, WRITE);
+    const paths = cutPaths(gcode);
+    expect(paths.length).toBe(2);
     expect(length(paths)).toBeCloseTo(320 - 10 + 3, 3);
+    expect(gcode.split("\n").filter((l) => / F\d/.test(l)).length).toBe(1); // one lead-in
+  });
+  it("hole and outer both tabbed: no warnings, one pierce per tab, hole lead-in on the scrap side", () => {
+    const placement: GcodePlacement = { id: "p", number: 1, outerEntities: rect(100, 60), holeEntities: [{ id: "h", type: "circle", center: { x: 50, y: 30 }, radius: 10 }] };
+    const plan = buildCutPlan([placement], { tabs: { count: 3, width: 4 } });
+    expect(plan.warnings).toEqual([]);
+    const hole = plan.features[0];
+    expect(Math.hypot(hole.pierce.x - 50, hole.pierce.y - 30)).toBeLessThan(10); // inside the hole = scrap
+    const gcode = writeGcode(plan.features, WRITE);
+    expect(gcode.split("\n").filter((l) => l === GENERIC_LASER_PROFILE.laserOnCode).length).toBe(6);
   });
 });
