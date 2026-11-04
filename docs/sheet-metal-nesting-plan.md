@@ -56,6 +56,8 @@ algorithmic change (spatial indexing), not just a bigger number.
 
 N-54 (save/reopen job file) is already done in the Sheet Nesting plugin (RN-42, ticked 2026-11-04).
 
+**N-52** lives in the Sheet Nesting plugin (it owns the Stock on hand model): `packages/plugin-nest/src/remnants.ts` finds the largest rectangle clear of every placed part bounding box per sheet (min side 100 mm, min area 25000 mm2), and "Save offcuts as stock" adds them as qty-1 `Remnant W x H` rows (material/thickness carried, identical ones merged) and takes the inventory sheets the job used out of the list.
+
 Remaining: N-42/43 deferrals above (other post profiles, a canvas toolpath
 preview with dashed rapids), and a real algorithmic improvement if jobs need more
 than ~600 instances sharing one sheet.

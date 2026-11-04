@@ -26,3 +26,4 @@ export * from "./cnc";
 export * from "./nestJob";
 export * from "./nestEngine";
 export * from "./sheetNesting";
+export * from "./remnants";

@@ -51,6 +51,9 @@ import {
   sheetDxfFileName,
   stackedSheetsDxfEntities,
   stockUsage,
+  findRemnants,
+  applyRemnantsToStock,
+  type Remnant,
   thicknessesFor,
   checkNestOverlaps,
   type CncInfo,
@@ -290,6 +293,9 @@ const plugin: PluginModule = {
     let lastView: ResultView | null = null;
     /** Effective stock rows (with material / thickness) of the last result, for the G-code feed-rate lookup. */
     let lastStock: StockRow[] = [];
+    /** N-52: offcuts of the last result and the inventory rows it consumed, until saved (or the next run). */
+    let lastRemnants: { rem: Remnant; material?: string; thickness?: number }[] = [];
+    let lastUsed: number[] = [];
     let cancelRequested = false;
     let running = false;
     let fileCounter = files.size;
@@ -730,6 +736,16 @@ const plugin: PluginModule = {
       });
       const usage = stockUsage(result, source);
       lastStock = result.stock;
+      lastRemnants = findRemnants(result, (id) => recByKey.get(id)?.outer, { clearance: 2 }).map((rem) => {
+        const row = result.stock[result.sheets[rem.sheet]!.stockIndex];
+        return { rem, material: row?.material, thickness: row?.thickness };
+      });
+      lastUsed = [];
+      if (source === "stock" && runs.length === 1) {
+        result.sheets.forEach((sh, i) => {
+          if (!result.purchased[i]) lastUsed[sh.stockIndex] = (lastUsed[sh.stockIndex] ?? 0) + 1;
+        });
+      }
 
       lastNest = {
         sheets: result.sheets,
@@ -770,6 +786,7 @@ const plugin: PluginModule = {
         kpis: { ...kpis, cutLength: fmt(kpis.cutLengthMm) },
         stock: usage.map((u) => ({ name: u.name, size: `${fmt(u.width)} × ${fmt(u.height)}`, used: u.used, purchased: u.purchased, available: u.available })),
         unplaced,
+        remnants: lastRemnants.map((r) => ({ sheet: r.rem.sheet + 1, size: `${fmt(r.rem.width)} × ${fmt(r.rem.height)}` })),
         notes: result.notes,
         unsupported,
         stopped,
@@ -1159,6 +1176,20 @@ const plugin: PluginModule = {
         const issues = checkNestOverlaps(model);
         post({ type: "check-result", issues });
         notify(issues.length > 0 ? `${issues.length} sheet(s) have overlapping parts.` : "No overlaps found.", issues.length > 0);
+        return;
+      }
+
+      if (type === "save-remnants") {
+        if (lastRemnants.length === 0) return fail("No usable offcuts in the last result.");
+        const n = lastRemnants.length;
+        job = { ...job, stock: applyRemnantsToStock(job.stock, lastRemnants.map((r) => ({ width: r.rem.width, height: r.rem.height, material: r.material, thickness: r.thickness })), lastUsed) };
+        lastRemnants = [];
+        lastUsed = [];
+        if (lastView) lastView = { ...lastView, remnants: [] };
+        persistJob();
+        await pushView();
+        if (lastView) post({ type: "result", ...lastView });
+        notify(job.sheetSource === "stock" ? `Saved ${n} offcut(s) to Stock on hand.` : `Saved ${n} offcut(s) to the stock list - switch Sheet to "Stock on hand" to cut from them.`);
         return;
       }
 
