@@ -37,6 +37,8 @@ export interface ToolContext {
   setSelection(ids: EntityId[]): void;
   /** What a click at a world point would select: the entity under it, expanded to its whole group ([] for nothing). */
   hitTest(world: Point): EntityId[];
+  /** The single entity under a world point, exactly as the hit test finds it (no group expansion), or null. */
+  hitEntity(world: Point): EntityId | null;
   /** The tab's display unit, for tools that interpret a typed number themselves. */
   displayUnit(): DisplayUnit;
   /** Frames a world-space box (the zoom-window tool). */

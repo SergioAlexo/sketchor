@@ -14,6 +14,7 @@ import { ArrayPathTool } from "./arrayPathTool";
 import { ToleranceTool } from "./toleranceTool";
 import { ViewportTool } from "./viewportTool";
 import { PanTool } from "./panTool";
+import { StraightenTool } from "./straightenTool";
 import type { Tool } from "./tool";
 
 /**
@@ -75,6 +76,7 @@ const TOOLS: Partial<Record<ToolId, Tool>> = {
   tolerance: new ToleranceTool(),
   viewport: new ViewportTool(),
   pan: new PanTool(),
+  straighten: new StraightenTool(),
 };
 
 export function getTool(id: ToolId): Tool | null {

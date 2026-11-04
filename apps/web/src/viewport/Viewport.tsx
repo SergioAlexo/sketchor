@@ -547,6 +547,7 @@ export function Viewport() {
         const hit = hitTest(viewRef.current, world);
         return hit ? resolveSelection(doc, hit, useApp.getState().enteredGroupId) : [];
       },
+      hitEntity: (world) => hitTest(viewRef.current, world),
       displayUnit: () => useApp.getState().displayUnit,
       zoomTo: (minX, minY, maxX, maxY) => {
         const canvas = canvasRef.current;
@@ -1592,29 +1593,6 @@ export function Viewport() {
             currentWorld: world,
             additive: matchesModifier(e, "mouse.addToSelection"),
           };
-        }
-        break;
-      }
-      case "straighten": {
-        // A line, or one straight (non-bulged) segment of a polyline, already
-        // in the selection can become the reference edge.
-        const hit = hitTest(view, world);
-        const entity = hit ? doc.get(hit) : null;
-        if (hit && entity?.type === "line" && app.selection.includes(hit)) {
-          app.setReferenceEdge(hit);
-        } else if (hit && entity?.type === "polyline" && app.selection.includes(hit)) {
-          const segs = polylineSegments(entity);
-          let best = -1;
-          let bestDist = Infinity;
-          segs.forEach((s, i) => {
-            if (s.bulge !== 0) return; // straighten needs a straight edge
-            const d = distToSegment(world, s.a, s.b);
-            if (d < bestDist) {
-              bestDist = d;
-              best = i;
-            }
-          });
-          if (best >= 0) app.setReferenceEdge(hit, best);
         }
         break;
       }
