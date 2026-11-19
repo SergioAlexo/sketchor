@@ -18,6 +18,8 @@ export default defineConfig({
   build: {
     target: "es2022",
     outDir: "dist",
+    // public/ only holds local demo models for the dev page; never ship them.
+    copyPublicDir: false,
     lib: {
       entry: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
       formats: ["es"],
