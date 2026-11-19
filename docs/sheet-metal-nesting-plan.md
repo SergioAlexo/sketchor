@@ -11,6 +11,27 @@ PDF/print report (cover summary, one page per sheet with a numbered part table,
 parts ordered-vs-placed) read the exact same entities as the drawing — no
 separate re-derivation.
 
+**N-47 — critical fix: part extraction only found circles/closed polylines on a real DXF** (`packages/plugin-nest/src/partExtraction.ts`).
+Root cause: `extractParts`'s default join/close tolerance was `1e-6` mm —
+"exact" in the sense of a document's own internal geometry, but a DXF is
+ASCII text with a fixed number of decimal digits, so an outline's own
+corners routinely round-trip a few hundred-thousandths of a millimetre
+apart even when the authoring program drew them exactly coincident
+(confirmed on a real customer part: an arc endpoint computed as `2.308032`
+came back as `2.308031`). At `1e-6` that gap never joins, so a part's
+outline — almost always lines/arcs chained together — silently vanished
+into `openChains` with nothing in the UI loud enough to explain why, while
+already-closed entities (circles, closed polylines — i.e. holes) came
+through fine. Reported as "uploading a DXF only imports the circles, not
+the whole part." Fix: raised the default to `DEFAULT_JOIN_TOLERANCE = 0.02`
+mm — ~10x the worst rounding gap seen, still far under the "few hundredths
+to a few tenths of a millimetre" that NF-03's own docs call a real open
+gap, so a genuinely unclosed contour is still reported. The user-facing
+"Join tolerance" setting (NF-03) is unchanged — it still raises the
+tolerance further for a sloppier file; it just no longer has to be touched
+for an ordinary DXF to import as one part. Regression test:
+`partExtraction.test.ts` → "N-47: DXF round-off doesn't lose the outline".
+
 **N-40/41/44** (`packages/plugin-gcode/src/toolpath.ts`, `write.ts`) — a real
 toolpath builder and G-code writer, wired to a per-sheet "Export G-code" button.
 Ordering: a part's holes are cut before its outer profile, a part nested inside

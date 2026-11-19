@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CircleEntity, Entity, LineEntity, PolylineEntity } from "@sketchor/core";
+import type { ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity } from "@sketchor/core";
 import { extractParts, extractPartsWithDiagnostics } from "./partExtraction";
 
 /**
@@ -232,13 +232,21 @@ describe("extractPartsWithDiagnostics contour rules (RN-10)", () => {
     expect(kept.openChains.length).toBeGreaterThan(0);
   });
 
+  it("closes a tiny (DXF-round-off-scale) gap automatically, with no close tolerance set", () => {
+    // N-47: a gap this small (well under DEFAULT_JOIN_TOLERANCE) is what a
+    // DXF's own ASCII rounding produces, not a real open contour — it must
+    // not need an explicit setting to close.
+    const entities: Entity[] = [line("a", 0, 0, 10, 0), line("b", 10.0005, 0, 10, 10), line("c", 10, 10, 0, 10), line("d", 0, 10, 0, 0)];
+    expect(extractParts(entities, allIds(entities))).toHaveLength(1);
+  });
+
   it("closes a small gap only with a close tolerance, and reports it", () => {
-    const entities: Entity[] = [line("a", 0, 0, 10, 0), line("b", 10.005, 0, 10, 10), line("c", 10, 10, 0, 10), line("d", 0, 10, 0, 0)];
+    const entities: Entity[] = [line("a", 0, 0, 10, 0), line("b", 10.05, 0, 10, 10), line("c", 10, 10, 0, 10), line("d", 0, 10, 0, 0)];
     expect(extractParts(entities, allIds(entities))).toHaveLength(0);
-    const r = extractPartsWithDiagnostics(entities, allIds(entities), { closeTolerance: 0.01 });
+    const r = extractPartsWithDiagnostics(entities, allIds(entities), { closeTolerance: 0.1 });
     expect(r.parts).toHaveLength(1);
     const gap = r.notes.find((n) => n.kind === "gap-closed");
-    expect(gap && gap.kind === "gap-closed" && gap.maxGap).toBeCloseTo(0.005, 3);
+    expect(gap && gap.kind === "gap-closed" && gap.maxGap).toBeCloseTo(0.05, 3);
   });
 
   it("flags several separate outer contours only for single-part selections", () => {
@@ -252,5 +260,52 @@ describe("extractPartsWithDiagnostics contour rules (RN-10)", () => {
     expect(extractPartsWithDiagnostics([], new Set()).parts).toEqual([]);
     const h = [line("x", 0, 0, 1, 1, { layer: "centerline" })];
     expect(extractPartsWithDiagnostics(h, allIds(h)).parts).toEqual([]);
+  });
+});
+
+/**
+ * N-47: a real DXF round-trips coordinates through a fixed number of ASCII
+ * decimal digits, so a corner an exporting program drew exactly coincident
+ * routinely comes back a few hundred-thousandths of a millimetre off (seen
+ * on a real customer part: an arc endpoint computed as 2.308032 round-tripped
+ * as 2.308031). Before DEFAULT_JOIN_TOLERANCE was raised, every such outline
+ * failed to close, and only entities that are closed by construction
+ * (circles, closed polylines) survived — "importing a part only brings in
+ * the holes, not the outline" — because those are exactly the only shapes a
+ * tolerance-less join can't break.
+ */
+describe("N-47: DXF round-off doesn't lose the outline", () => {
+  const line = (id: string, ax: number, ay: number, bx: number, by: number): LineEntity => ({ id, type: "line", a: { x: ax, y: ay }, b: { x: bx, y: by } });
+  const arc = (id: string, cx: number, cy: number, r: number, startAngle: number, endAngle: number): ArcEntity => ({
+    id,
+    type: "arc",
+    center: { x: cx, y: cy },
+    radius: r,
+    startAngle,
+    endAngle,
+    ccw: true,
+  });
+
+  it("a rounded-rectangle outline with a sub-tolerance rounding gap still becomes one part with its hole", () => {
+    const deg = (d: number) => (d * Math.PI) / 180;
+    const entities: Entity[] = [
+      line("bottom", 2, 0, 18, 0),
+      arc("br", 18, 2, 2, deg(-90), deg(0)),
+      line("right", 20, 2, 20, 8),
+      arc("tr", 18, 8, 2, deg(0), deg(90)),
+      // "top" ends 0.0001 short of (2, 10) — the scale of noise a DXF's own
+      // ASCII rounding introduces, not a real open contour.
+      line("top", 18, 10, 2.0001, 10),
+      arc("tl", 2, 8, 2, deg(90), deg(180)),
+      line("left", 0, 8, 0, 2),
+      arc("bl", 2, 2, 2, deg(180), deg(270)),
+      { id: "hole", type: "circle", center: { x: 10, y: 5 }, radius: 1 } as CircleEntity,
+    ];
+    const { parts, openChains } = extractPartsWithDiagnostics(entities, allIds(entities));
+    expect(openChains).toHaveLength(0);
+    expect(parts).toHaveLength(1);
+    expect(parts[0].holes).toHaveLength(1);
+    expect(parts[0].outerSourceIds.slice().sort()).toEqual(["bl", "bottom", "br", "left", "right", "tl", "top", "tr"]);
+    expect(parts[0].holeSourceIds).toEqual([["hole"]]);
   });
 });
