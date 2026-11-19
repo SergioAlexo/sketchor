@@ -16,10 +16,61 @@ export function anyMeshFormatOf(name: string): AnyMeshFormat {
   return e === "3mf" || e === "gltf" || e === "glb" ? e : meshFormatOf(name);
 }
 
-export async function parseAnyMesh(format: NonNullable<AnyMeshFormat>, bytes: Uint8Array, name = "Part"): Promise<MeshParseResult> {
+/**
+ * One decoded KHR_draco_mesh_compression primitive: triangle indices plus the
+ * attributes it was asked for, as float arrays (the decoder dequantizes).
+ */
+export interface DracoDecoded {
+  indices: Uint32Array;
+  attributes: Record<string, { array: Float32Array; itemSize: number }>;
+}
+
+/**
+ * Decodes one Draco buffer. `attributes` maps glTF attribute names
+ * (`POSITION`, `COLOR_0`, …) to Draco unique ids, as the extension lists them.
+ * Injected so this module stays pure: the wasm decoder lives with the
+ * renderer (`@sketchor/embed/three/draco`) and is only loaded for files that
+ * need it. May throw; the reader turns that into a warning.
+ */
+export type DracoDecode = (data: Uint8Array, attributes: Record<string, number>) => DracoDecoded;
+
+export interface MeshParseOptions {
+  draco?: DracoDecode;
+}
+
+export async function parseAnyMesh(format: NonNullable<AnyMeshFormat>, bytes: Uint8Array, name = "Part", opts: MeshParseOptions = {}): Promise<MeshParseResult> {
   if (format === "3mf") return nonEmpty(await parse3mf(bytes, name));
-  if (format === "gltf" || format === "glb") return nonEmpty(parseGltf(bytes, name));
+  if (format === "gltf" || format === "glb") return nonEmpty(parseGltf(bytes, name, opts));
   return parseMesh(format, bytes, name);
+}
+
+/**
+ * Whether a glTF/GLB uses Draco compression — cheap (reads only the JSON
+ * chunk), so callers can fetch the decoder only for files that need it.
+ */
+export function gltfUsesDraco(bytes: Uint8Array): boolean {
+  const text = gltfJsonText(bytes);
+  if (text === null) return false;
+  try {
+    const j = JSON.parse(text) as { extensionsUsed?: string[]; extensionsRequired?: string[] };
+    return [...(j.extensionsUsed ?? []), ...(j.extensionsRequired ?? [])].includes("KHR_draco_mesh_compression");
+  } catch {
+    return false;
+  }
+}
+
+/** The JSON document of a .gltf, or a GLB's JSON chunk; null if neither. */
+function gltfJsonText(bytes: Uint8Array): string | null {
+  if (bytes.length >= 20) {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (dv.getUint32(0, true) === 0x46546c67) {
+      const len = dv.getUint32(12, true);
+      if (dv.getUint32(16, true) !== 0x4e4f534a || 20 + len > bytes.length) return null;
+      return new TextDecoder().decode(bytes.subarray(20, 20 + len));
+    }
+  }
+  const head = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 64))).trimStart();
+  return head.startsWith("{") ? new TextDecoder().decode(bytes) : null;
 }
 
 function nonEmpty(r: MeshParseResult): MeshParseResult {
@@ -62,7 +113,16 @@ interface GLTF {
   buffers?: { uri?: string; byteLength: number }[];
   bufferViews?: GView[];
   accessors?: GAccessor[];
-  meshes?: { name?: string; primitives: { attributes: Record<string, number>; indices?: number; mode?: number; material?: number }[] }[];
+  meshes?: {
+    name?: string;
+    primitives: {
+      attributes: Record<string, number>;
+      indices?: number;
+      mode?: number;
+      material?: number;
+      extensions?: { KHR_draco_mesh_compression?: { bufferView: number; attributes?: Record<string, number> } };
+    }[];
+  }[];
   materials?: { pbrMetallicRoughness?: { baseColorFactor?: number[] } }[];
   nodes?: GNode[];
   scenes?: { nodes?: number[] }[];
@@ -101,7 +161,7 @@ function nodeMatrix(n: GNode): M {
   ];
 }
 
-export function parseGltf(bytes: Uint8Array, name = "Part"): MeshParseResult {
+export function parseGltf(bytes: Uint8Array, name = "Part", opts: MeshParseOptions = {}): MeshParseResult {
   const warnings: string[] = [];
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let json: GLTF;
@@ -126,7 +186,7 @@ export function parseGltf(bytes: Uint8Array, name = "Part"): MeshParseResult {
   // this check the file reads as "no triangles", which sends the user hunting
   // for a problem with the model instead of the export setting.
   const required = json.extensionsRequired ?? [];
-  if (required.includes("KHR_draco_mesh_compression")) throw new Error("this glTF uses Draco mesh compression, which isn't supported yet — export it without Draco");
+  if (required.includes("KHR_draco_mesh_compression") && !opts.draco) throw new Error("this glTF uses Draco mesh compression, and no Draco decoder is available here");
   const meshopt = required.find((e) => /meshopt_compression$/.test(e));
   if (meshopt) throw new Error(`this glTF uses meshopt compression (${meshopt}), which isn't supported yet — export it without compression`);
   const buffers: (Uint8Array | null)[] = (json.buffers ?? []).map((b, i) => {
@@ -159,6 +219,50 @@ export function parseGltf(bytes: Uint8Array, name = "Part"): MeshParseResult {
 
   // glTF is metres, Y up; the viewer works in millimetres.
   const unit = scaleM(1000);
+  type Prim = NonNullable<NonNullable<GLTF["meshes"]>[number]["primitives"]>[number];
+  type Geo = { positions: Float32Array; count: number; indices: Uint32Array | null; color: { data: ArrayLike<number>; n: number } | null };
+
+  const accessorGeometry = (prim: Prim): Geo | null => {
+    const pos = readAccessor(prim.attributes?.POSITION);
+    if (!pos || pos.n !== 3) return null;
+    const idx = readAccessor(prim.indices);
+    const col = readAccessor(prim.attributes?.COLOR_0);
+    return { positions: Float32Array.from(pos.data), count: pos.count, indices: idx ? Uint32Array.from(idx.data) : null, color: col ? { data: col.data, n: col.n } : null };
+  };
+
+  // KHR_draco_mesh_compression: the primitive's geometry is one compressed
+  // bufferView; its accessors carry only counts/types, no data.
+  const dracoGeometry = (ext: { bufferView: number; attributes?: Record<string, number> }): Geo | null => {
+    if (!opts.draco) {
+      warnings.push("Draco-compressed geometry was skipped: no Draco decoder is available here");
+      return null;
+    }
+    const view = json.bufferViews?.[ext.bufferView];
+    const buf = view ? buffers[view.buffer] : null;
+    const start = view?.byteOffset ?? 0;
+    if (!view || !buf || start + view.byteLength > buf.length) {
+      warnings.push("a Draco-compressed primitive points outside its buffer; it was skipped");
+      return null;
+    }
+    let dec: DracoDecoded;
+    try {
+      dec = opts.draco(buf.subarray(start, start + view.byteLength), ext.attributes ?? {});
+    } catch (err) {
+      warnings.push(`a Draco-compressed primitive could not be decoded (${(err as Error)?.message ?? err}); it was skipped`);
+      return null;
+    }
+    const pos = dec.attributes.POSITION;
+    if (!pos || pos.itemSize !== 3 || pos.array.length % 3 !== 0) return null;
+    const count = pos.array.length / 3;
+    if (count > 5e7 || dec.indices.length > 15e7) {
+      warnings.push("a Draco-compressed primitive is too large to show; it was skipped");
+      return null;
+    }
+    const finite = pos.array.every(Number.isFinite) ? pos.array : pos.array.map((v) => (Number.isFinite(v) ? v : 0));
+    const col = dec.attributes.COLOR_0;
+    return { positions: finite, count, indices: dec.indices, color: col && col.itemSize >= 3 ? { data: col.array, n: col.itemSize } : null };
+  };
+
   const parts: MeshPart[] = [];
   const meshParts = (mi: number, m: M, nodeName: string): void => {
     const mesh = json.meshes?.[mi];
@@ -168,23 +272,24 @@ export function parseGltf(bytes: Uint8Array, name = "Part"): MeshParseResult {
         warnings.push("only triangle-list primitives are supported; others were skipped");
         return;
       }
-      const pos = readAccessor(prim.attributes?.POSITION);
-      if (!pos || pos.n !== 3) return;
-      const idxAcc = readAccessor(prim.indices);
-      const indices = idxAcc ? Uint32Array.from(idxAcc.data) : Uint32Array.from({ length: pos.count }, (_, i) => i);
+      const draco = prim.extensions?.KHR_draco_mesh_compression;
+      const geo = draco ? dracoGeometry(draco) : accessorGeometry(prim);
+      if (!geo) return;
+      const { count } = geo;
+      const indices = geo.indices ?? Uint32Array.from({ length: count }, (_, i) => i);
       const tri = indices.length - (indices.length % 3);
       const clean = new Uint32Array(tri);
-      for (let i = 0; i < tri; i++) clean[i] = indices[i] < pos.count ? indices[i] : 0;
-      const part: MeshPart = { name: mesh.name || nodeName || `${name} ${parts.length + 1}`, positions: applyM(m, Float32Array.from(pos.data)), indices: clean.subarray(0, tri) };
-      const col = readAccessor(prim.attributes?.COLOR_0);
+      for (let i = 0; i < tri; i++) clean[i] = indices[i] < count ? indices[i] : 0;
+      const part: MeshPart = { name: mesh.name || nodeName || `${name} ${parts.length + 1}`, positions: applyM(m, geo.positions), indices: clean.subarray(0, tri) };
+      const col = geo.color;
       const base = prim.material !== undefined ? json.materials?.[prim.material]?.pbrMetallicRoughness?.baseColorFactor : undefined;
       if (col && col.n >= 3) {
-        const c = new Uint8Array(pos.count * 3);
-        for (let i = 0; i < pos.count; i++) for (let k = 0; k < 3; k++) c[i * 3 + k] = Math.max(0, Math.min(255, Math.round((col.data[i * col.n + k] ?? 0.8) * 255)));
+        const c = new Uint8Array(count * 3);
+        for (let i = 0; i < count; i++) for (let k = 0; k < 3; k++) c[i * 3 + k] = Math.max(0, Math.min(255, Math.round((col.data[i * col.n + k] ?? 0.8) * 255)));
         part.colors = c;
       } else if (base && base.length >= 3) {
-        const c = new Uint8Array(pos.count * 3);
-        for (let i = 0; i < pos.count; i++) for (let k = 0; k < 3; k++) c[i * 3 + k] = Math.max(0, Math.min(255, Math.round(base[k] * 255)));
+        const c = new Uint8Array(count * 3);
+        for (let i = 0; i < count; i++) for (let k = 0; k < 3; k++) c[i * 3 + k] = Math.max(0, Math.min(255, Math.round(base[k] * 255)));
         part.colors = c;
       }
       void pi;

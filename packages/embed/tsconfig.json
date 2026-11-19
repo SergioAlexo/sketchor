@@ -6,10 +6,21 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "paths": {
-      "@sketchor/core": ["../core/src/index.ts"]
-    }
+      "@sketchor/core": [
+        "../core/src/index.ts"
+      ]
+    },
+    "types": [
+      "vite/client"
+    ]
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

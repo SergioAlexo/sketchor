@@ -9,7 +9,7 @@
  */
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { parseAnyMesh } from "../../core/src/mesh/parse2";
+import { gltfUsesDraco, parseAnyMesh } from "../../core/src/mesh/parse2";
 import { segmentMesh } from "../../core/src/mesh/segment";
 import { buildModel } from "./three/buildModel";
 import { buildLights, buildModelObjects, framePerspective, STAGE_BACKGROUND, type ModelObjects } from "./three/modelScene";
@@ -19,7 +19,9 @@ import { atRest, spring, stepSpring, TURNTABLE_RAD_PER_S, type Spring } from "./
 import type { PreviewFormat } from "./load";
 
 export async function parseModel(bytes: Uint8Array, name: string, format: PreviewFormat, up: UpAxis | "auto"): Promise<Model3D> {
-  const parsed = await parseAnyMesh(format, bytes, name.replace(/\.[^.]*$/, "") || "Part");
+  // Draco-compressed glTF: fetch the decoder (its own lazy chunk) only for files that need it.
+  const draco = (format === "glb" || format === "gltf") && gltfUsesDraco(bytes) ? await (await import("./three/draco")).loadDracoDecoder() : undefined;
+  const parsed = await parseAnyMesh(format, bytes, name.replace(/\.[^.]*$/, "") || "Part", { draco });
   const meshes = parsed.parts.map((p) => segmentMesh(p));
   const result: OcctResult = {
     success: true,

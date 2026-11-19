@@ -1,6 +1,6 @@
 import occtimportjs from "../../vendor/occt-import-js/occt-import-js.mjs";
 import wasmUrl from "../../vendor/occt-import-js/occt-import-js.wasm?url";
-import { parseAnyMesh, segmentMesh } from "@sketchor/core";
+import { gltfUsesDraco, parseAnyMesh, segmentMesh } from "@sketchor/core";
 import { buildModel } from "./buildModel";
 import { describeImportError } from "./importError";
 import { getCachedModel, putCachedModel } from "./modelCache";
@@ -138,7 +138,10 @@ async function handleMesh(req: ParseRequest, t0: number): Promise<void> {
   const byteLength = req.buffer.byteLength;
   let parsed;
   try {
-    parsed = await parseAnyMesh(req.format as Exclude<ModelFormat, "step" | "iges" | "brep" | "3dm">, new Uint8Array(req.buffer), req.name.replace(/\.[^.]*$/, "") || "Part");
+    const bytes = new Uint8Array(req.buffer);
+    // Draco-compressed glTF: the decoder (three's bundled Draco wasm) loads only for files that use it.
+    const draco = (req.format === "glb" || req.format === "gltf") && gltfUsesDraco(bytes) ? await (await import("@sketchor/embed/three/draco")).loadDracoDecoder() : undefined;
+    parsed = await parseAnyMesh(req.format as Exclude<ModelFormat, "step" | "iges" | "brep" | "3dm">, bytes, req.name.replace(/\.[^.]*$/, "") || "Part", { draco });
   } catch (err) {
     post({ id: req.id, ok: false, error: describeImportError((err as Error)?.message ?? String(err), req.name, byteLength) });
     return;

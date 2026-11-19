@@ -4,7 +4,7 @@
  * or inside-out; a bad archive must fail with a message, not hang.
  */
 import { describe, expect, it } from "vitest";
-import { anyMeshFormatOf, parse3mf, parseAnyMesh, parseGltf, unzip } from "./parse2";
+import { anyMeshFormatOf, gltfUsesDraco, parse3mf, parseAnyMesh, parseGltf, unzip } from "./parse2";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -133,7 +133,55 @@ describe("glTF / GLB", () => {
     expect(Array.from(r.parts[0].indices)).toEqual([0, 1, 2]);
     expect(Array.from(r.parts[0].colors!.subarray(0, 3))).toEqual([0, 255, 0]);
   });
-  it("names Draco/meshopt compression instead of reporting an empty file (geometry lives in an extension it can't decode)", () => {
+  // A Draco primitive: accessors carry only counts, the geometry is one compressed bufferView.
+  const dracoBin = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+  const dracoDoc = {
+    asset: { version: "2.0" },
+    extensionsUsed: ["KHR_draco_mesh_compression"],
+    extensionsRequired: ["KHR_draco_mesh_compression"],
+    buffers: [{ byteLength: dracoBin.length }],
+    bufferViews: [{ buffer: 0, byteOffset: 2, byteLength: 4 }],
+    accessors: [{ componentType: 5126, count: 3, type: "VEC3" }, { componentType: 5125, count: 3, type: "SCALAR" }],
+    materials: [{ pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] } }],
+    meshes: [{ name: "d", primitives: [{ attributes: { POSITION: 0 }, indices: 1, material: 0, extensions: { KHR_draco_mesh_compression: { bufferView: 0, attributes: { POSITION: 7 } } } }] }],
+    nodes: [{ mesh: 0, translation: [1, 0, 0] }],
+    scenes: [{ nodes: [0] }],
+  };
+  const fakeDraco = (calls: { data: number[]; attrs: Record<string, number> }[]) => (data: Uint8Array, attrs: Record<string, number>) => {
+    calls.push({ data: [...data], attrs });
+    return { indices: new Uint32Array([0, 1, 2]), attributes: { POSITION: { array: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), itemSize: 3 } } };
+  };
+
+  it("decodes Draco primitives through the injected decoder: right bytes, attribute ids, units, node transform, material colour", () => {
+    const calls: { data: number[]; attrs: Record<string, number> }[] = [];
+    const r = parseGltf(glb(dracoDoc, dracoBin), "x", { draco: fakeDraco(calls) });
+    expect(calls).toEqual([{ data: [3, 4, 5, 6], attrs: { POSITION: 7 } }]);
+    expect(r.parts).toHaveLength(1);
+    // (1,0,0) m + translation 1 m -> 2000 mm
+    expect(Array.from(r.parts[0].positions.subarray(3, 6))).toEqual([2000, 0, 0]);
+    expect(Array.from(r.parts[0].indices)).toEqual([0, 1, 2]);
+    expect(Array.from(r.parts[0].colors!.subarray(0, 3))).toEqual([255, 0, 0]);
+    expect(gltfUsesDraco(glb(dracoDoc, dracoBin))).toBe(true);
+    expect(gltfUsesDraco(glb(doc, bin))).toBe(false);
+    expect(gltfUsesDraco(enc("not json"))).toBe(false);
+  });
+
+  it("turns a failing or hostile decoder result into a warning, never a crash", () => {
+    const boom = parseGltf(glb(dracoDoc, dracoBin), "x", { draco: () => { throw new Error("corrupt"); } });
+    expect(boom.parts).toHaveLength(0);
+    expect(boom.warnings.join()).toMatch(/could not be decoded \(corrupt\)/);
+    const nan = parseGltf(glb(dracoDoc, dracoBin), "x", {
+      draco: () => ({ indices: new Uint32Array([0, 1, 9]), attributes: { POSITION: { array: new Float32Array([NaN, 0, 0, 1, 0, 0, 0, 1, 0]), itemSize: 3 } } }),
+    });
+    expect(nan.parts[0].positions.every(Number.isFinite)).toBe(true);
+    expect(Array.from(nan.parts[0].indices)).toEqual([0, 1, 0]); // out-of-range index clamped like accessor indices
+    const outside = { ...dracoDoc, bufferViews: [{ buffer: 0, byteOffset: 6, byteLength: 40 }] };
+    const r = parseGltf(glb(outside, dracoBin), "x", { draco: fakeDraco([]) });
+    expect(r.parts).toHaveLength(0);
+    expect(r.warnings.join()).toMatch(/outside its buffer/);
+  });
+
+  it("names Draco/meshopt compression instead of reporting an empty file when no decoder is available", () => {
     const draco = { ...doc, extensionsUsed: ["KHR_draco_mesh_compression"], extensionsRequired: ["KHR_draco_mesh_compression"] };
     expect(() => parseGltf(glb(draco, bin))).toThrow(/Draco/);
     const meshopt = { ...doc, extensionsRequired: ["EXT_meshopt_compression"] };
