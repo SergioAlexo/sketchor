@@ -90,9 +90,12 @@ export function buildModelObjects(model: Model3D): ModelObjects {
   const material = new THREE.MeshLambertMaterial({
     vertexColors: true,
     side: THREE.DoubleSide,
-    // Push faces back a hair so coplanar edge lines win the depth test.
+    // Push faces back a hair so coplanar edge lines win the depth test. The
+    // slope-scaled part is kept small: at grazing angles it grows without
+    // bound and pushed a thin plate's front face behind the edges on its back,
+    // so hidden edges showed through. `biasEdgesTowardEye` does the rest.
     polygonOffset: true,
-    polygonOffsetFactor: 1,
+    polygonOffsetFactor: 0.5,
     polygonOffsetUnits: 1,
   });
   const mesh = new THREE.Mesh(geometry, material);
@@ -102,7 +105,9 @@ export function buildModelObjects(model: Model3D): ModelObjects {
   edgeGeometry.setAttribute("position", new THREE.BufferAttribute(model.edges, 3));
   edgeGeometry.boundingBox = geometry.boundingBox;
   edgeGeometry.boundingSphere = geometry.boundingSphere;
-  const edges = new THREE.LineSegments(edgeGeometry, new THREE.LineBasicMaterial({ color: EDGE_COLOR }));
+  const edgeMaterial = new THREE.LineBasicMaterial({ color: EDGE_COLOR });
+  biasEdgesTowardEye(edgeMaterial, edgeBiasFor(model.bounds));
+  const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
   edges.frustumCulled = false;
 
   const group = new THREE.Group();
@@ -120,6 +125,46 @@ export function buildModelObjects(model: Model3D): ModelObjects {
       (edges.material as THREE.Material).dispose();
     },
   };
+}
+
+/** Fraction of the model's bounding radius that edges are drawn in front of the faces they sit on. */
+export const EDGE_BIAS_FRACTION = 0.003;
+
+/** Edge depth bias in model units (mm) for a model of these bounds. */
+export function edgeBiasFor(bounds: Bounds3): number {
+  const dx = bounds.max[0] - bounds.min[0];
+  const dy = bounds.max[1] - bounds.min[1];
+  const dz = bounds.max[2] - bounds.min[2];
+  const radius = Math.hypot(dx, dy, dz) / 2;
+  return Number.isFinite(radius) && radius > 0 ? radius * EDGE_BIAS_FRACTION : 0;
+}
+
+/**
+ * Moves each edge vertex `bias` model units toward the eye before
+ * projection, so a B-rep edge wins against the faces it bounds by a fixed
+ * *world* distance. Unlike a slope-scaled polygon offset this doesn't grow at
+ * grazing angles, so edges on the far side of a thin part (a 3 mm plate, the
+ * back of a sign) stay hidden behind its near face. Perspective cameras pull
+ * along the view ray, orthographic ones along view Z.
+ */
+export function biasEdgesTowardEye(material: THREE.Material, bias: number): void {
+  if (!(bias > 0)) return;
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.sketchorEdgeBias = { value: bias };
+    shader.vertexShader =
+      "uniform float sketchorEdgeBias;\n" +
+      shader.vertexShader.replace(
+        "#include <project_vertex>",
+        [
+          "vec4 mvPosition = modelViewMatrix * vec4( transformed, 1.0 );",
+          "if ( projectionMatrix[ 3 ][ 3 ] == 1.0 ) mvPosition.z += sketchorEdgeBias;",
+          "else mvPosition.xyz -= normalize( mvPosition.xyz ) * sketchorEdgeBias;",
+          "gl_Position = projectionMatrix * mvPosition;",
+        ].join("\n"),
+      );
+  };
+  // Distinct programs per material kind, not per bias value (the bias is a uniform).
+  material.customProgramCacheKey = () => "sketchor-edge-bias";
 }
 
 /** A headlight rig: soft sky/ground fill plus a key light that follows the camera. */
