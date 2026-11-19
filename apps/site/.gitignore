@@ -6,3 +6,6 @@ next-env.d.ts
 public/app/
 public/embed/
 *.tsbuildinfo
+
+.vercel
+.env*
