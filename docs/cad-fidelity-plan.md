@@ -8,6 +8,7 @@ Written 2026-09-28 against `main` @ `8bafb82` (v0.28.0). Intended to be executed
 
 | Date | Items | Notes |
 |---|---|---|
+| 2026-11-19 | E-01, E-02, E-03, E-04, E-05, E-06, E-10 (first slice) | **`@sketchor/embed` 0.1.0 — 3D meshes.** New workspace `packages/embed`: `<sketchor-view>` custom element (Shadow DOM, `src/format/autoplay/motion=turntable|none/background/controls/full-url/logo/up/max-size/loading/label`, `play()/pause()/reset()/fit()/load()`, `load/error/play/pause` events). **E-01:** the pure 3D renderer moved from `apps/web/src/model3d/` to `packages/embed/src/three/` (`types`, `topology`, `buildModel`, `modelScene`, `upAxis`; the app keeps one-line re-export shims, so its importers are unchanged; `modelScene` imports `core/src/theme` directly so the embed doesn't bundle the core barrel). Vite lib build: entry 5.8 kB gz, three.js + parsers a lazy 198 kB gz chunk; `dist/` is self-hostable. **E-03:** `load.ts` magic-byte + extension sniff (STEP/DXF/SVG → "opens in Sketchor" card), streamed fetch with a 25 MB cap, parse via core `parseAnyMesh` → `segmentMesh` → `buildModel` (same Model3D as a model tab; glTF stood Z-up). Core `parseGltf` now names Draco/meshopt compression instead of reporting "no triangles". **E-04:** fitted iso still, vignette, play button, faint logo, full-view button, inline error card. **E-05:** `motion.ts` critically damped springs (tested); turntable 12°/s with play/pause ramps, pointer yaw/tilt bias, drag-to-orbit pauses it for 2 s; reduced motion = no autoplay/tilt; renders only while moving and on screen. **E-06:** full view (Fullscreen API, fixed-overlay fallback) adds zoom/pan + "Open in Sketchor"; the app now handles `/app?open=<url>` (`io/openFromUrl.ts`, pure `openTarget.ts` tested: http(s) + known format only; skips the demo). **E-10:** `packages/embed/index.html` demo (`?src=` / drop files), 4 test files. **Not yet:** 2D (needs render2d extraction), STEP (OCCT in the embed), worker parse + IndexedDB cache, float/draw motion, auto-upgrade mode, iframe/oEmbed endpoints, theming (E-07), npm/CDN publish (E-08), /embed docs page (E-09). |
 | 2026-11-04 | T-17 (chamfer on curves) | `chamferCurves` in `filletCurves.ts` (tested, `chamferCurves.test.ts`): distances run *along each curve* from the intersection nearest the picks (lines extended to reach it), toward the clicked side; cuts both, adds the joining line; a circle is not trimmed; both distances 0 = corner join; null when they do not meet, a distance outruns the kept piece, or a curve is an ellipse/spline. Chamfer tool accepts line/arc/circle pairs (line+line keeps `chamferLines`). Live-checked arc + line with distance 2 and one undo step. Not done: chamfer with two different distances / distance+angle on curves in the tool (one typed distance, as before), ellipse/spline operands, T-46 associative constraints |
 | 2026-11-04 | T-27 | Multifunction vertex grip. Core `gripMenu.ts` (tested): `gripMenuActions`, `polylineAddVertex` (chord midpoint; an arc segment splits into two equal arcs through its midpoint), `polylineRemoveVertex` (neighbours join straight; keeps 2 open / 3 closed vertices), `polylineSetSegmentBulge`, `applyGripMenuAction`. Web: `SelectTool.hover` opens `.grip-menu` beside a polyline vertex grip of the selection; each action is one `update-entity`. Vertex i owns the segment starting there, so the last vertex of an open polyline offers remove only. Not done: hover has no touch equivalent (long-press), line/arc end grips have no menu, Stretch is a hint row (drag) rather than a click mode. Live-checked: menu appears on hover, add/arc/line/remove, undo, closes when the pointer leaves |
 | 2026-11-04 | T-08 | Post-commit quick edit. Core `quickEdit.ts` (tested): `quickEditTarget`, `applyQuickEdit` (line keeps first end + direction, circle/arc keep centre/sweep, refuses 0/negative/NaN), `quickEditCommands` (update-entity, plus in Sketch mode a driving dimension holding the value - geometry is moved first so the solver has nothing to fix). Web: `tools/QuickEditBox.tsx` appears beside a line/circle/arc committed by its own tool, unfocused so drawing is not interrupted; F2/click focuses, Enter applies as one undo step (also ends the line chain, whose last end moved), Esc/next press/tool change dismisses. Not offered for polyline/rectangle. Live-checked in Drafting (line) and Sketch (circle -> driving radial dim), undo restores both |
@@ -258,16 +259,16 @@ Tick `[x]` and add a progress-log row as items land. Order = recommended executi
 - [x] F-08 PDF vector import
 
 **13 · Embeddable animated preview**
-- [ ] E-01 `@sketchor/embed` package + shared renderer extraction
-- [ ] E-02 `<sketchor-view>` web component, auto-upgrade mode, iframe + oEmbed
-- [ ] E-03 Loading (CORS, worker, cache, errors)
-- [ ] E-04 Idle look (play button, faint logo, full-view button)
-- [ ] E-05 Motion engine (springs, float/draw/turntable, pointer flow, reduced motion)
-- [ ] E-06 Full view + "Open in Sketchor" (`/app?open=`)
+- [~] E-01 `@sketchor/embed` package + shared renderer extraction — 3D renderer extracted and shared (app re-exports it); 2D `render2d` extraction still open
+- [~] E-02 `<sketchor-view>` web component, auto-upgrade mode, iframe + oEmbed — element + core attributes/API done; auto-upgrade, iframe endpoint, oEmbed open
+- [~] E-03 Loading (CORS, worker, cache, errors) — fetch with size cap, sniffing, error card done; worker + IndexedDB cache open
+- [x] E-04 Idle look (play button, faint logo, full-view button)
+- [~] E-05 Motion engine (springs, float/draw/turntable, pointer flow, reduced motion) — springs, turntable, pointer bias, reduced motion, offscreen pause done; 2D float/draw open
+- [~] E-06 Full view + "Open in Sketchor" (`/app?open=`) — overlay with zoom/pan + link and the app's `?open=` route done; layer toggles/measure in full view open
 - [ ] E-07 Embed theming
 - [ ] E-08 Distribution (npm/jsDelivr + site mirror; MIT — decided)
 - [ ] E-09 Site integration + /embed docs page
-- [ ] E-10 Embed tests + demo page
+- [~] E-10 Embed tests + demo page — unit tests + demo page done; browser tests open
 
 **14 · Leftovers from the older plans (added 2026-09-28)**
 

@@ -133,6 +133,12 @@ describe("glTF / GLB", () => {
     expect(Array.from(r.parts[0].indices)).toEqual([0, 1, 2]);
     expect(Array.from(r.parts[0].colors!.subarray(0, 3))).toEqual([0, 255, 0]);
   });
+  it("names Draco/meshopt compression instead of reporting an empty file (geometry lives in an extension it can't decode)", () => {
+    const draco = { ...doc, extensionsUsed: ["KHR_draco_mesh_compression"], extensionsRequired: ["KHR_draco_mesh_compression"] };
+    expect(() => parseGltf(glb(draco, bin))).toThrow(/Draco/);
+    const meshopt = { ...doc, extensionsRequired: ["EXT_meshopt_compression"] };
+    expect(() => parseGltf(enc(JSON.stringify(meshopt)))).toThrow(/meshopt/);
+  });
   it("reads .gltf with an embedded base64 buffer; warns on external buffers", () => {
     let s = "";
     for (const b of bin) s += String.fromCharCode(b);

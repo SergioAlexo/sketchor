@@ -9,7 +9,8 @@
     "skipLibCheck": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "paths": {
-      "@sketchor/core": ["../../packages/core/src/index.ts"]
+      "@sketchor/core": ["../../packages/core/src/index.ts"],
+      "@sketchor/embed/three/*": ["../../packages/embed/src/three/*"]
     }
   },
   "include": ["src"]

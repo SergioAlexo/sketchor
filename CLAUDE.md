@@ -11,6 +11,7 @@ isn't obvious from the README: how things are wired and how to build/run them.
 packages/core        framework-free document model, command bus, DXF/SVG/DWG IO, geometry analysis (pure TS)
 apps/web             React UI + custom Canvas2D viewport
 apps/web/src/model3d STEP/IGES viewer: OpenCascade wasm in a worker pool, three.js, IndexedDB cache
+packages/embed       <sketchor-view> embed (E-xx) + the shared pure 3D renderer in src/three/
 apps/web/src-tauri   Tauri 2 desktop shell (Rust); same UI as a native app
 native/dxf-parse     dependency-free Rust DXF parser + fit-to-box projection (shared)
 native/step-wire     dependency-free STEP wireframe extractor (B-rep edges + assembly transforms, no kernel)
@@ -326,6 +327,8 @@ files to the UI (DXF/SVG as text, DWG and STEP/IGES as base64) and exposes
 `list_drawings_in_dir` / `read_drawing_file` / `write_drawing_file` commands.
 
 ## 3D model tabs (`apps/web/src/model3d/`)
+
+**E-01:** the pure pieces — `types`, `topology`, `buildModel`, `modelScene`, `upAxis` (and their tests) — live in `packages/embed/src/three/`; the files of the same name in `apps/web/src/model3d/` are one-line re-exports (alias `@sketchor/embed/three` in the app tsconfig, Vite and Vitest configs). Edit them in the embed package. `modelScene` imports `core/src/theme` directly, not `@sketchor/core`, so the embed bundle stays free of the core barrel. The embed (`packages/embed`, README there) parses meshes on the main thread through the same `parseAnyMesh → segmentMesh → buildModel` path as `handleMesh` below.
 
 A STEP/IGES file opens as a *view-only* tab: `DocSession.model` is set (with
 `modelLoading`/`modelError` while it isn't yet) and `App.tsx` swaps the

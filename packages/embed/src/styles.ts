@@ -1,0 +1,133 @@
+/** Shadow-DOM styles: the host page's CSS can't reach in and ours can't leak out (E-02). */
+export const CSS = `
+:host {
+  display: block;
+  position: relative;
+  aspect-ratio: 4 / 3;
+  min-height: 120px;
+  overflow: hidden;
+  border-radius: var(--sketchor-radius, 12px);
+  background: var(--sketchor-bg, #17181c);
+  color: #e6e8ec;
+  font: 500 12px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+  contain: content;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+:host([background="transparent"]) { background: transparent; }
+:host(:focus-visible) { box-shadow: 0 0 0 2px var(--sketchor-accent, #5a8dff); }
+:host(.sk-overlay) {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 2147483000;
+  width: 100vw !important;
+  height: 100vh !important;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+:host(:fullscreen) { border-radius: 0; aspect-ratio: auto; }
+
+.stage { position: absolute; inset: 0; }
+canvas { display: block; width: 100%; height: 100%; touch-action: pan-y; cursor: grab; }
+canvas:active { cursor: grabbing; }
+:host([data-full]) canvas { touch-action: none; }
+
+.vignette {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0,0,0,.28));
+  transition: opacity .6s;
+}
+:host([background="transparent"]) .vignette { display: none; }
+:host([data-state="playing"]) .vignette { opacity: .5; }
+
+button, a.btn {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(20, 21, 25, .62);
+  border: 1px solid rgba(255,255,255,.14);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: opacity .25s, transform .25s, background .2s;
+}
+button:hover, a.btn:hover { background: var(--sketchor-accent, #5a8dff); border-color: transparent; }
+button:focus-visible, a.btn:focus-visible { outline: 2px solid var(--sketchor-accent, #5a8dff); outline-offset: 2px; }
+
+.play {
+  position: absolute; left: 50%; top: 50%;
+  width: 56px; height: 56px; margin: -28px 0 0 -28px;
+  border-radius: 50%;
+  opacity: 0;
+}
+.play svg { width: 22px; height: 22px; }
+:host(:hover) .play, :host(:focus-within) .play, .play:focus-visible { opacity: 1; }
+:host([data-state="idle"]) .play, :host([data-state="paused"]) .play { opacity: .92; }
+:host([data-state="playing"]:hover) .play { opacity: .55; transform: scale(.82); }
+@media (hover: none) { .play { opacity: .9; } :host([data-state="playing"]) .play { opacity: 0; pointer-events: none; } }
+
+.full {
+  position: absolute; top: 10px; right: 10px;
+  width: 32px; height: 32px; border-radius: 9px;
+  opacity: .0;
+}
+.full svg { width: 15px; height: 15px; }
+:host(:hover) .full, :host(:focus-within) .full, .full:focus-visible { opacity: 1; }
+@media (hover: none) { .full { opacity: .85; } }
+
+.logo {
+  all: unset;
+  position: absolute; right: 10px; bottom: 9px;
+  display: flex; align-items: center; gap: 5px;
+  font-weight: 650; letter-spacing: .01em;
+  color: #fff; opacity: .35; cursor: pointer;
+  transition: opacity .2s;
+  text-shadow: 0 1px 2px rgba(0,0,0,.4);
+}
+.logo svg { width: 13px; height: 13px; }
+:host(:hover) .logo { opacity: .6; }
+.logo:hover, .logo:focus-visible { opacity: 1; }
+:host([logo="off"]) .logo { display: none; }
+
+:host([controls="none"]) .play, :host([controls="none"]) .full { display: none; }
+
+.bar {
+  position: absolute; left: 12px; top: 12px; right: 56px;
+  display: none; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+:host([data-full]) .bar { display: flex; }
+:host([data-full]) .full { opacity: 1; }
+.bar .name { font-weight: 650; font-size: 13px; text-shadow: 0 1px 3px rgba(0,0,0,.6); margin-right: 4px; }
+.bar a.btn { display: inline-flex; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; font-weight: 600; }
+.hint { position: absolute; left: 12px; bottom: 10px; opacity: .55; display: none; }
+:host([data-full]) .hint { display: block; }
+
+.status {
+  position: absolute; inset: 0;
+  display: none; place-items: center; text-align: center; padding: 16px;
+}
+:host([data-state="loading"]) .status, :host([data-state="error"]) .status { display: grid; }
+:host([data-state="loading"]) .play, :host([data-state="error"]) .play,
+:host([data-state="loading"]) .full, :host([data-state="error"]) .full { display: none; }
+.spinner {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.15); border-top-color: var(--sketchor-accent, #5a8dff);
+  animation: sk-spin .8s linear infinite;
+}
+@keyframes sk-spin { to { transform: rotate(360deg); } }
+.card { max-width: 320px; display: none; gap: 10px; justify-items: center; line-height: 1.45; color: #c9ced6; }
+.card strong { color: #fff; font-size: 13px; }
+.card a.btn { display: inline-flex; height: 30px; padding: 0 12px; border-radius: 999px; font-weight: 600; }
+:host([data-state="error"]) .card { display: grid; }
+:host([data-state="error"]) .spinner { display: none; }
+
+canvas { opacity: 0; transition: opacity .6s ease; }
+:host([data-ready]) canvas { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  canvas, .play, .full, .vignette { transition: none; }
+  .spinner { animation-duration: 2.4s; }
+}
+`;

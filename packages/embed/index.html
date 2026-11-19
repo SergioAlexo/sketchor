@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sketchor-view demo</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: #0e0f12; color: #e6e8ec; }
+      main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
+      h1 { font-size: 22px; margin: 0 0 4px; }
+      p { color: #9aa1ab; margin: 0 0 20px; }
+      code { color: #c9d4ff; }
+      .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+      .drop { margin-top: 24px; padding: 28px; border: 1px dashed #3a3d45; border-radius: 12px; text-align: center; color: #9aa1ab; }
+      .drop.over { border-color: #5a8dff; color: #fff; }
+      sketchor-view { width: 100%; }
+    </style>
+    <script type="module" src="./src/index.ts"></script>
+  </head>
+  <body>
+    <main>
+      <h1><code>&lt;sketchor-view&gt;</code></h1>
+      <p>Pass files with <code>?src=url</code> (repeatable), or drop STL / OBJ / PLY / 3MF / glTF / GLB files below.</p>
+      <div class="grid" id="grid"></div>
+      <div class="drop" id="drop">Drop mesh files here</div>
+    </main>
+    <script type="module">
+      const grid = document.getElementById("grid");
+      const add = (attrs) => {
+        const el = document.createElement("sketchor-view");
+        for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+        el.addEventListener("error", (e) => console.warn("sketchor-view error", e.detail));
+        grid.append(el);
+        return el;
+      };
+      for (const src of new URLSearchParams(location.search).getAll("src")) add({ src, autoplay: "" });
+      const drop = document.getElementById("drop");
+      addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+      addEventListener("dragleave", () => drop.classList.remove("over"));
+      addEventListener("drop", (e) => {
+        e.preventDefault();
+        drop.classList.remove("over");
+        for (const f of e.dataTransfer.files) add({ label: f.name, autoplay: "" }).load(f, f.name);
+      });
+    </script>
+  </body>
+</html>

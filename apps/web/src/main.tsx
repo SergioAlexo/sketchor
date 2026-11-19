@@ -6,6 +6,7 @@ import { initUpdateCheck } from "./update/updateService";
 import { initExplorerPreviews } from "./desktop/explorerPreviews";
 import { initMetrics } from "./metrics/metrics";
 import { initFirstOpenDemo } from "./demo/firstOpen";
+import { initOpenFromUrl } from "./io/openFromUrl";
 import { installPluginDevHandle, loadFirstPartyPlugins, loadInstalledPlugins } from "./plugins";
 import "./styles.css";
 
@@ -42,3 +43,5 @@ void loadInstalledPlugins();
 
 // Web build, first open: show the built-in showcase drawing (?demo forces, ?blank skips).
 initFirstOpenDemo();
+// E-06: /app?open=<url> (the embed's "Open in Sketchor" link).
+void initOpenFromUrl();

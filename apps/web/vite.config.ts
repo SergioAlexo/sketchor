@@ -28,6 +28,10 @@ export default defineConfig({
       "@sketchor/core": fileURLToPath(
         new URL("../../packages/core/src/index.ts", import.meta.url),
       ),
+      // E-01: the 3D renderer lives in the embed package; the app imports its source.
+      "@sketchor/embed/three": fileURLToPath(
+        new URL("../../packages/embed/src/three", import.meta.url),
+      ),
     },
   },
   server: {

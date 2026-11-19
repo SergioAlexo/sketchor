@@ -1,0 +1,22 @@
+{
+  "name": "@sketchor/embed",
+  "version": "0.1.0",
+  "description": "<sketchor-view> — drop-in animated preview of CAD files from Sketchor",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/sketchor-embed.js",
+  "module": "dist/sketchor-embed.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.4"
+  }
+}

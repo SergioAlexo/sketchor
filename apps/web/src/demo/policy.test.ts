@@ -12,5 +12,7 @@ describe("shouldLoadDemo", () => {
     expect(shouldLoadDemo("?demo", true, true, true)).toBe(true);
     expect(shouldLoadDemo("?blank", false, false, true)).toBe(false);
     expect(shouldLoadDemo("?demo&blank", false, false, true)).toBe(false);
+    // E-06: a file arriving via ?open= must not land behind the showcase.
+    expect(shouldLoadDemo("?open=https%3A%2F%2Fx.com%2Fa.glb", false, false, true)).toBe(false);
   });
 });

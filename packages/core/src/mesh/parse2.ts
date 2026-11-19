@@ -58,6 +58,7 @@ interface GAccessor { bufferView?: number; byteOffset?: number; componentType: n
 interface GView { buffer: number; byteOffset?: number; byteLength: number; byteStride?: number }
 interface GNode { mesh?: number; children?: number[]; matrix?: number[]; translation?: number[]; rotation?: number[]; scale?: number[]; name?: string }
 interface GLTF {
+  extensionsRequired?: string[];
   buffers?: { uri?: string; byteLength: number }[];
   bufferViews?: GView[];
   accessors?: GAccessor[];
@@ -121,6 +122,13 @@ export function parseGltf(bytes: Uint8Array, name = "Part"): MeshParseResult {
   } catch {
     throw new Error("not a readable glTF/GLB file");
   }
+  // Compressed geometry sits in an extension this reader doesn't decode; without
+  // this check the file reads as "no triangles", which sends the user hunting
+  // for a problem with the model instead of the export setting.
+  const required = json.extensionsRequired ?? [];
+  if (required.includes("KHR_draco_mesh_compression")) throw new Error("this glTF uses Draco mesh compression, which isn't supported yet — export it without Draco");
+  const meshopt = required.find((e) => /meshopt_compression$/.test(e));
+  if (meshopt) throw new Error(`this glTF uses meshopt compression (${meshopt}), which isn't supported yet — export it without compression`);
   const buffers: (Uint8Array | null)[] = (json.buffers ?? []).map((b, i) => {
     if (b.uri === undefined) return i === 0 ? glbBin : null;
     const m = /^data:[^,]*;base64,(.*)$/s.exec(b.uri);
