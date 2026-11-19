@@ -12,6 +12,7 @@ packages/core        framework-free document model, command bus, DXF/SVG/DWG IO,
 apps/web             React UI + custom Canvas2D viewport
 apps/web/src/model3d STEP/IGES viewer: OpenCascade wasm in a worker pool, three.js, IndexedDB cache
 packages/embed       <sketchor-view> embed (E-xx) + the shared pure 3D renderer in src/three/
+apps/site            sketchor.sergioalexo.com (Next.js, not a workspace): landing page + web app at /app + embed at /embed; see its README
 apps/web/src-tauri   Tauri 2 desktop shell (Rust); same UI as a native app
 native/dxf-parse     dependency-free Rust DXF parser + fit-to-box projection (shared)
 native/step-wire     dependency-free STEP wireframe extractor (B-rep edges + assembly transforms, no kernel)

@@ -5,7 +5,7 @@
   "license": "AGPL-3.0-or-later",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/web"
   ],
   "scripts": {
     "dev": "npm run dev --workspace @sketchor/web",

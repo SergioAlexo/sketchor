@@ -12,7 +12,7 @@ import { getInstalled } from "./pluginStore";
  */
 
 /** The default index location — overridable so a user can point at another registry. */
-export const DEFAULT_REGISTRY_URL = "/sample-plugins/registry.json";
+export const DEFAULT_REGISTRY_URL = `${import.meta.env.BASE_URL ?? "/"}sample-plugins/registry.json`;
 
 export interface RegistryEntry {
   id: string;

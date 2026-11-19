@@ -27,7 +27,8 @@ let libredwgPromise: Promise<LibreDwgInstance> | null = null;
 async function getLibreDwg(): Promise<LibreDwgInstance> {
   if (!libredwgPromise) {
     libredwgPromise = import("@mlightcad/libredwg-web").then(({ LibreDwg }) => {
-      const wasmDir = new URL("wasm", document.baseURI).href;
+      // BASE_URL is "./" for the desktop/portable build and "/app/" when the site serves the app under /app.
+      const wasmDir = new URL(`${import.meta.env.BASE_URL}wasm`, document.baseURI).href;
       return LibreDwg.create(wasmDir) as Promise<LibreDwgInstance>;
     });
   }

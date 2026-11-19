@@ -146,7 +146,7 @@ export function installPluginDevHandle(): void {
      * the code first and watch the signature check refuse it.
      */
     installSample: async (tamper = false) => {
-      const res = await fetch("/sample-plugins/hello.sketchor-plugin.json");
+      const res = await fetch(`${import.meta.env.BASE_URL}sample-plugins/hello.sketchor-plugin.json`);
       const bundle = (await res.json()) as import("@sketchor/core").SignedBundle;
       if (tamper) bundle.code += " // tampered";
       const { installBundle } = await import("./host/install");

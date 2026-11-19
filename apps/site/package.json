@@ -1,0 +1,23 @@
+{
+  "name": "@sketchor/site",
+  "private": true,
+  "description": "sketchor.sergioalexo.com — landing page, with the web app served at /app",
+  "scripts": {
+    "dev": "next dev -p 3007",
+    "bundle": "node scripts/bundle.mjs",
+    "build": "next build",
+    "start": "next start -p 3007",
+    "deploy": "npm run bundle && vercel deploy --prod"
+  },
+  "dependencies": {
+    "next": "16.3.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.6.0"
+  }
+}
