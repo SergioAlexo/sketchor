@@ -5,3 +5,4 @@ next-env.d.ts
 # produced by scripts/bundle.mjs
 public/app/
 public/embed/
+*.tsbuildinfo
