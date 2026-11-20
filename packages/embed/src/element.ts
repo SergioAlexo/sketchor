@@ -1,4 +1,5 @@
 import { defaultPalette, needsThemeFile, paletteCss, pickMode, type EmbedPalette } from "./embedTheme";
+import { cacheKey, getCachedModel, putCachedModel, sha256Hex } from "./modelCache";
 import { CSS } from "./styles";
 import {
   DEFAULT_MAX_MB,
@@ -47,7 +48,8 @@ type State = "empty" | "loading" | "idle" | "playing" | "paused" | "error";
  * `background` (CSS colour or `transparent`), `controls` (`minimal` | `none`),
  * `full-url` (`auto` | `none` | URL), `logo` (`on` | `off`), `theme` (`auto` |
  * `dark` | `light` | built-in theme id | theme JSON URL), `up` (`auto` |
- * `y` | `z`), `max-size` (MB), `loading` (`lazy` | `eager`), `label`.
+ * `y` | `z`), `max-size` (MB), `loading` (`lazy` | `eager`), `label`,
+ * `cache` (`on` | `off` — parsed models kept in IndexedDB, E-03).
  * Methods: `play()`, `pause()`, `reset()`, `fit()`, `load(src)`.
  * Events: `load`, `error`, `play`, `pause`.
  */
@@ -288,10 +290,18 @@ export class SketchorView extends HTMLElement {
       if (verdict.kind === "app-only") throw new EmbedError(`.${verdict.ext.toUpperCase()} files open in Sketchor`, "This preview shows 3D meshes (glTF, GLB, STL, OBJ, PLY, 3MF) for now.");
       if (verdict.kind === "unknown") throw new EmbedError("Unrecognised file type", `${name} isn't a format the preview can read.`);
 
-      const viewer = await loadViewer();
       const upAttr = this.getAttribute("up");
       const up = upAttr === "y" || upAttr === "z" ? upAttr : "auto";
-      const model = await viewer.parseModel(bytes, name, verdict.format, up);
+      const useCache = this.getAttribute("cache") !== "off";
+      const viewerP = loadViewer();
+      const key = useCache ? cacheKey(await sha256Hex(bytes).catch(() => ""), verdict.format, up) : "";
+      let model = key && !key.endsWith(":") ? await getCachedModel(key) : null;
+      const cachedHit = model !== null;
+      const viewer = await viewerP;
+      if (!model) {
+        model = await viewer.parseModel(bytes, name, verdict.format, up);
+        if (key && !key.endsWith(":")) void putCachedModel(key, model);
+      }
       if (token !== this.loadToken || !this.connected) return;
 
       this.stage?.dispose();
@@ -306,7 +316,7 @@ export class SketchorView extends HTMLElement {
       this.stage.renderOnce();
       this.setState("idle");
       this.setAttribute("data-ready", "");
-      this.dispatchEvent(new CustomEvent("load", { detail: { name, parts: model.parts.length } }));
+      this.dispatchEvent(new CustomEvent("load", { detail: { name, parts: model.parts.length, cached: !!cachedHit } }));
       if (this.hasAttribute("autoplay") && !this.reducedMotion) this.play();
     } catch (err) {
       if (token !== this.loadToken || (err as Error)?.name === "AbortError") return;

@@ -65,6 +65,7 @@ CORS, since the frame fetches it from the Sketchor site's origin.
 | `max-size` | download limit in MB | `25` |
 | `loading` | `lazy` (when near the viewport), `eager` | `lazy` |
 | `label` | accessible name / title in full view | file name |
+| `cache` | `on` (parsed models kept in IndexedDB, keyed by file content), `off` | `on` |
 
 CSS custom properties on the element: `--sketchor-accent`, `--sketchor-bg`,
 `--sketchor-radius` — they always win over `theme`. A theme file is validated
