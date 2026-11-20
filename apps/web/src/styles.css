@@ -3039,6 +3039,24 @@ kbd.shortcut-key-fixed {
   white-space: nowrap;
 }
 
+/* D-02b dimension value editor: the over-define prompt wraps instead of running off-screen. */
+.dim-value-over {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 240px;
+}
+
+.dim-value-over .typed-input-hint {
+  white-space: normal;
+  color: var(--text);
+}
+
+.dim-value-actions {
+  display: flex;
+  gap: 4px;
+}
+
 .app.touch .typed-input input {
   width: 200px;
   padding: 8px 10px;
@@ -3540,3 +3558,26 @@ kbd.shortcut-key-fixed {
   cursor: pointer;
 }
 .layout-menu button:hover { background: rgba(255, 255, 255, 0.08); }
+
+/* D-02b: Properties "Dimension" section. */
+.propspanel-note {
+  margin-left: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.propspanel-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0;
+  padding: 6px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.propspanel-warning > div {
+  flex-basis: 100%;
+}

@@ -9,6 +9,7 @@ Status as of 2026-09-11 (`main` @ v0.14.4).
 ### Progress log
 
 | Date | Items | Notes |
+| 2026-11-19 | **T-42** driving dimensions UI | `dimensions/drivingEdit.ts` (pure, 14 tests): `parseDimValue` (expressions + T-45 params; a bare number is in the display unit / degrees; a param-using value is kept as the dimension's `expression`), `drivingCheck` (one dry solve: would this dimension, driving at this value, be redundant with or contradict the other constraints? its own derived constraint is ignored so re-editing works), `withDimValue` / `withDriving` (on = holds the current measurement, nothing moves), `asNewDriving[All]`. UI: **double-click a dimension** (select tool) opens `tools/DimValueBox.tsx` beside its text - Enter applies and makes it driving; when the value would over-define the sketch the box asks **Make reference / Drive anyway** (the conflict then shows in the constraints panel). Properties gets a **Dimension** section with a **Driving** checkbox (disabled with the `cannotDrive` reason; same over-define warning). **Sketch mode**: the DIM tools now create driving dimensions at what they measure, falling back to reference with a prompt note when the sketch already fixes the value (`ToolContext.drawingMode`). Verified live (line 100 -> 140 by double-click; a second dimension on it raised the prompt; Drive anyway -> over-constrained, undo -> fully constrained). *Not done:* leaders/tolerance/centre marks have no value editor (nothing to drive); ordinate, arc-length and 3-point angles stay reference-only. |
 | 2026-11-04 | **T-17** chamfer on curves | Chamfer between lines, arcs and circles (`chamferCurves`, distances measured along the curves from where they meet; circles are not trimmed). Closes the T-17 leftover; ellipse/spline chamfer and constraints are not done. |
 | 2026-11-04 | **T-27** vertex grip menu | Hover a polyline vertex grip: Add vertex / Remove vertex / Convert to arc (or line) via `gripMenu.ts`; drag still stretches. No touch equivalent yet; line/arc grips have no menu. |
 | 2026-11-04 | **T-08** quick edit | The open item from T-08 is done for line, circle and arc: after the tool commits one, a box beside it shows the length/radius (F2 or click to type, Enter applies). Pure logic in `quickEdit.ts`; Sketch mode additionally leaves a D-02b driving dimension. Polyline/rectangle are not offered. |
@@ -334,23 +335,23 @@ This is the roadmap's north star and the reason the DSL reserved `param`/`constr
 
 Extend the `Constraint` union with **concentric, midpoint, symmetric, collinear, point-on-curve**, then one tool per constraint (or one "Constrain" tool with a sub-mode strip, Onshape style): pick entities/points → `add-constraint` command. Constraint glyphs drawn next to their geometry; click a glyph to select/delete; toggle visibility. `PointRef` needs to grow beyond `a | b | center` to cover polyline vertices and arc ends.
 
-### T-42 · Driving dimensions — **P1, L**
+### T-42 · Driving dimensions — **P1, L** — ✅ 2026-11-19 (core 2026-10-09 as D-02b; value editor, over-define prompt, driving toggle 2026-11-19)
 
 Replace the current "dim draws lines" with a real `DimensionEntity` (linear/aligned, horizontal, vertical, angular, radial, diametral, arc-length) that is *both* an annotation and a `distance/angle/radius` constraint. Double-click the value to edit (opens the T-08 box) → solver moves geometry. Renders with the existing `dimension.ts` layout; exports to DXF `DIMENSION` (or exploded lines for R12). A *driven* (reference) toggle shows the value in parentheses without constraining — needed when the sketch is already fully defined.
 
-### T-43 · Inference / auto-constraints while drawing — **P1, M**
+### T-43 · Inference / auto-constraints while drawing — **P1, M** — ✅ 2026-10-15 (see cad-fidelity-plan log)
 
 Builds on T-20/T-21: when a snap fired while placing a point (endpoint → coincident, midpoint → midpoint, on-line → point-on-curve, ortho/polar 0/90 → horizontal/vertical, tangent snap → tangent, parallel/perpendicular guide → parallel/perpendicular), add that constraint with the geometry in the same batch. Show the inference glyph at the cursor before the click, exactly as Onshape does. Toggle to turn auto-constraints off (AutoCAD `AUTOCONSTRAIN`, Onshape's "Ctrl to suppress inference").
 
-### T-44 · DOF feedback and conflict diagnosis — **P2, S**
+### T-44 · DOF feedback and conflict diagnosis — **P2, S** — ✅ 2026-10-15 (see cad-fidelity-plan log)
 
 Colour by state (Onshape: blue under-defined, black fully defined, red over/conflicting). Status bar shows remaining DOF. A conflicts panel lists the constraints the solver rejected, with "delete this one" buttons.
 
-### T-45 · Parameters and expressions — **P2, M**
+### T-45 · Parameters and expressions — **P2, M** — ✅ 2026-10-15 (sketch-code `param` + DXF custom properties still open)
 
 `param width = 100` in the DSL, a Variables panel, and dimension values that accept expressions (`width / 2 + 5`). Evaluate with a tiny expression parser (no `eval`). This is what makes the AI-assistant story work ("make it 20 % wider" = edit one param).
 
-### T-46 · Associative tools — **P2, M**
+### T-46 · Associative tools — **P2, M** — ✅ 2026-10-15 (Trim-keeps-coincident and Pattern constraints still open)
 
 Mirror → adds symmetric constraints; Offset → adds an offset constraint (planegcs has `distance` per point; approximate with per-vertex distances); Fillet → adds tangent constraints; Pattern → linear/circular pattern constraints. Optional but this is what Onshape users mean by "sketch mirror".
 

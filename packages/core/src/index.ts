@@ -30,6 +30,7 @@ export * from "./dimensions/layout";
 export * from "./dimensions/format";
 export * from "./dimensions/resolve";
 export * from "./dimensions/driving";
+export * from "./dimensions/drivingEdit";
 export * from "./dimensions/explode";
 export * from "./mtext/parse";
 export * from "./mtext/layout";

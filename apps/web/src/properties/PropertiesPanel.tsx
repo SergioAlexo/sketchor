@@ -4,6 +4,7 @@ import { dynamicSpecOf, paramFields, resetParams, withParamValue } from "@sketch
 import type { BlockDefinition, BlockTreeNode, Command, Entity, HatchEntity, InsertEntity, PolylineEntity, SplineEntity } from "@sketchor/core";
 import { GRADIENT_NAMES, blockTree, editableAttributes, isMirroredInsert, withAttributeValues, withInsertArray, withInsertScale, explodeHatchCommands, recreateBoundaryCommands, setHatchDrawOrder, entityArea, entityLength, arcPointAt, arcSweep, bulgeToArc, BUILTIN_LINETYPES, dist, ellipseSweep, nurbsDomain, nurbsPointAt, findClosedRegions, isFullEllipse, layerOf, polylineLength, addSplinePoint, polylineToSpline, rebuildSpline, refitSpline, removeSplinePoint, splineToControlPoints, splineToPolyline } from "@sketchor/core";
 import { canBeAnnotative, isAnnotative, withAnnotative, withScaleAdded, withScaleRemoved } from "@sketchor/core";
+import { cannotDrive, dimEditValue, dimValueKind, drivingCheck, withDriving, type DimensionEntity } from "@sketchor/core";
 import { bus, doc, useApp } from "../state/store";
 import { workingAnnotationScale } from "../layouts/annotationScale";
 import { settingsFromHatch } from "../tools/hatchTool";
@@ -137,6 +138,7 @@ export function PropertiesPanel({ onClose }: { onClose: () => void }) {
           </Section>
           <CustomBlockParams entities={entities} applyAll={applyAll} />
           <AnnotativeSection entities={entities} applyAll={applyAll} />
+          {entities.length === 1 && entities[0].type === "dimension" && <DimensionDriving key={entities[0].id} dim={entities[0]} unit={unit} />}
           {entities.length === 1 && <Geometry entity={entities[0]} unit={unit} />}
         </div>
       )}
@@ -831,6 +833,58 @@ function toggleLegArc(pl: PolylineEntity, i: number): PolylineEntity {
 }
 
 /* --------------------------------- fields -------------------------------- */
+
+/**
+ * D-02b: the driving / reference toggle for one dimension. Turning it on holds
+ * what the dimension measures now (nothing moves); when that would over-define
+ * the sketch the panel says so and asks before making it driving anyway.
+ */
+function DimensionDriving({ dim, unit }: { dim: DimensionEntity; unit: DisplayUnit }) {
+  const [over, setOver] = useState<string | null>(null);
+  if (["leader", "tolerance", "centermark", "centerline"].includes(dim.kind)) return null;
+  const lookup = (id: string) => doc.get(id);
+  const why = cannotDrive(dim, lookup);
+  const v = dimEditValue(dim, lookup);
+  const shown = dimValueKind(dim) === "angle" ? `${Math.round(((v * 180) / Math.PI) * 1000) / 1000}°` : formatLength(v, unit);
+  const apply = (driving: boolean, force = false) => {
+    const next = withDriving(dim, driving, lookup);
+    if ("error" in next) return;
+    if (driving && !force) {
+      const check = drivingCheck(dim, next.value!, doc.all(), doc.solverConstraints());
+      if (!check.ok) return setOver(check.message);
+    }
+    setOver(null);
+    bus.execute({ type: "update-entity", entity: next });
+  };
+  return (
+    <Section title="Dimension">
+      <Row label="Driving">
+        <input
+          type="checkbox"
+          data-testid="prop-driving"
+          checked={dim.driving}
+          disabled={!!why && !dim.driving}
+          title={why ?? (dim.driving ? "Uncheck to make it a reference dimension (it stops moving the geometry)" : "Check to make the geometry follow this value")}
+          onChange={(e) => apply(e.target.checked)}
+        />
+        <span className="propspanel-note">{dim.driving ? "drives the geometry" : why ? "reference only" : "reference"}</span>
+      </Row>
+      <ReadRow label={dim.driving ? "Value" : "Measures"} value={dim.expression ? `${shown} = ${dim.expression}` : shown} />
+      {over && (
+        <div className="propspanel-warning" data-testid="prop-driving-over">
+          <div>{over}</div>
+          <button className="btn ghost sm" data-testid="prop-driving-force" onClick={() => apply(true, true)}>
+            Drive anyway
+          </button>
+          <button className="btn ghost sm" onClick={() => setOver(null)}>
+            Keep as reference
+          </button>
+        </div>
+      )}
+      {why && <div className="propspanel-note">{why}</div>}
+    </Section>
+  );
+}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
