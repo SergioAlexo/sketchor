@@ -224,8 +224,15 @@ reads both back (`rawLinetype`/`rawLineweight`), preferring neither over a
 layer default it has no way to resolve at parse time. Layer *colour* is
 still unmodeled (X-04 is entity colour only).
 
-A new entity field that sketch code can't express (this trio, plus colour/
-fill) must be carried through `sketchtext.ts`'s `diffToCommands` by hand when
+`linetypeScale` (N-43) is AutoCAD's per-entity "Linetype scale" (DXF group
+48, absent = 1). Every pattern-to-dashes conversion goes through
+`effectiveLtscale(drawingLtscale, entity)`; only the AC1032 writer emits 48
+(R12 predates it), and the reader takes it from the `AcDbEntity` subclass
+only. Anything that copies `linetype` onto a derived entity (trim/split
+`inherit`, fillet, join/explode, block evaluation, explode) copies this too.
+
+A new entity field that sketch code can't express (this trio plus
+`linetypeScale`, plus colour/fill) must be carried through `sketchtext.ts`'s `diffToCommands` by hand when
 it reconstructs an entity from a parsed code edit — it doesn't happen for
 free, and a gap here silently strips the field on the next code-panel edit
 (a real bug this way, found and fixed while building Z-04).

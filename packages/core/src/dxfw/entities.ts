@@ -6,6 +6,7 @@ import { kindTessellate } from "../kinds/registry";
 import { aciToHex, hexToRgb, nearestAci } from "../aci";
 import { H_ALIGN_CODE, V_ALIGN_CODE } from "../textStyle";
 import { n, pair } from "./write";
+import { effectiveLtscale } from "../linetypes";
 import { entityXdataText } from "../sketchorData";
 import { hatchDxfPairs, type OutPair } from "../hatch/hatchDxf";
 
@@ -30,11 +31,12 @@ function colorGroups(e: Entity): string {
   return `62\n${aci}\n` + (aciIsExact ? "" : `420\n${trueColorInt}\n`);
 }
 
-/** Z-04: linetype (group 6, BYLAYER when absent) and lineweight (group 370, hundredths of a millimetre, BYLAYER when absent). */
+/** Z-04: linetype (group 6, BYLAYER when absent) and lineweight (group 370, hundredths of a millimetre, BYLAYER when absent); plus the entity's own linetype scale (group 48), only when it isn't the default 1. */
 function linetypeGroups(e: Entity): string {
   const lt = e.linetype ? `6\n${e.linetype}\n` : "";
   const lw = e.lineweight !== undefined ? `370\n${Math.round(e.lineweight * 100)}\n` : "";
-  return lt + lw;
+  const k = effectiveLtscale(1, e);
+  return lt + lw + (k !== 1 ? pair(48, k) : "");
 }
 
 /**

@@ -148,12 +148,13 @@ export function filletCurves(e1: Entity, e2: Entity, radius: number, near1: Poin
   return { first, second, arc };
 }
 
-function props(e: Entity): { layer?: string; color?: string; linetype?: string; lineweight?: number; construction?: boolean } {
-  const out: { layer?: string; color?: string; linetype?: string; lineweight?: number; construction?: boolean } = {};
+function props(e: Entity): { layer?: string; color?: string; linetype?: string; lineweight?: number; linetypeScale?: number; construction?: boolean } {
+  const out: { layer?: string; color?: string; linetype?: string; lineweight?: number; linetypeScale?: number; construction?: boolean } = {};
   if (e.layer !== undefined) out.layer = e.layer;
   if (e.color !== undefined) out.color = e.color;
   if (e.linetype !== undefined) out.linetype = e.linetype;
   if (e.lineweight !== undefined) out.lineweight = e.lineweight;
+  if (e.linetypeScale !== undefined) out.linetypeScale = e.linetypeScale;
   if (e.construction !== undefined) out.construction = e.construction;
   return out;
 }

@@ -21,6 +21,11 @@ describe("Sheet Nesting panel", () => {
     expect(() => new Function(script)).not.toThrow();
     expect(PANEL_HTML).toContain("Nesting engine based on the Sheet Nesting Calculator by Oleksandr Borenko");
   });
+
+  it("N-43: the Toolpath button asks the plugin for the selected sheet's preview", () => {
+    expect(PANEL_HTML).toContain("data-act='toolpath'");
+    expect(PANEL_HTML).toMatch(/a === "toolpath"\) post\(\{ type: "preview-toolpath", sheetIndex: Number\(\$\("gsheet"\)\.value\) \}\)/);
+  });
 });
 
 describe("loadDxfFile", () => {

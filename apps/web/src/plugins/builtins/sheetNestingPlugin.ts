@@ -49,6 +49,7 @@ import {
   serializeJobFile,
   sheetDxfEntities,
   sheetDxfFileName,
+  sheetOutlineEntities,
   stackedSheetsDxfEntities,
   stockUsage,
   findRemnants,
@@ -75,12 +76,12 @@ import {
   type StockRow,
   type TrueNestSheet,
 } from "@sketchor/plugin-nest";
-import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, postProfileFromSpec, writeGcode, type GcodePlacement } from "@sketchor/plugin-gcode";
+import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, postProfileFromSpec, toolpathPreview, toolpathPreviewScale, writeGcode, type GcodePlacement } from "@sketchor/plugin-gcode";
 
 /** N-53: tab width used when a job asks for tabs but never set one. */
 const DEFAULT_TAB_WIDTH_MM = 3;
 import { entitiesToDxf, entityPoints, MM_PER_INSUNIT, parseDxf, scaleEntityKeepingInserts, textWidth, type Entity } from "@sketchor/core";
-import { type DisplayUnitInfo, type PickedFolder, type PluginModule } from "@sketchor/plugin-sdk";
+import { add, type DisplayUnitInfo, type PickedFolder, type PluginModule } from "@sketchor/plugin-sdk";
 import { displayUnitToDxfCode, factorFromMm } from "../../units";
 import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportWithJob, type LastNest, type LastNestPlacement } from "./nestReport";
 import { SHEET_NESTING_PANEL_HTML } from "./sheetNestingPanel";
@@ -871,15 +872,37 @@ const plugin: PluginModule = {
       if (res.saved) notify(`Saved ${res.name ?? "nest-sheets.zip"} (${ln.sheets.length} sheets).`);
     };
 
+    /** One sheet's cut plan — the G-code export and the toolpath preview must agree, so both build it here. */
+    const sheetCutPlan = (ln: LastNest, sheetIndex: number) => {
+      const gp: GcodePlacement[] = ln.placements
+        .filter((p) => p.sheet === sheetIndex)
+        .map((p) => ({ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }));
+      return buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined });
+    };
+
+    /** N-43: one sheet's cut order, pierces and dashed rapids, in a tab of its own so the result drawing is never touched. */
+    const previewToolpath = async (msg: Record<string, unknown>) => {
+      const ln = lastNest;
+      if (!ln) return fail("Nothing to preview - nest some parts first.");
+      const sheetIndex = typeof msg.sheetIndex === "number" ? msg.sheetIndex : 0;
+      if (sheetIndex < 0 || sheetIndex >= ln.sheets.length) return fail("That sheet no longer exists - nest again.");
+      const plan = sheetCutPlan(ln, sheetIndex);
+      for (const w of plan.warnings) notify(w, true);
+      const sheet = ln.sheets[sheetIndex]!;
+      const label = ln.sheetLabels[sheetIndex]!;
+      const { outline, title } = sheetOutlineEntities(sheet, label);
+      const { entities, stats } = toolpathPreview(plan.features, toolpathPreviewScale(sheet.width, sheet.height));
+      await sketchor.app.openDocumentTab(`Toolpath – ${label}`, [outline, title, ...entities].map((e) => add(e)));
+      const fmt = (mm: number) => fmtMm(mm, job.outputUnit);
+      notify(`${label}: ${stats.contours} cut${stats.contours === 1 ? "" : "s"}, ${stats.pierces} pierce${stats.pierces === 1 ? "" : "s"} - ${fmt(stats.cutLength)} cut, ${fmt(stats.rapidLength)} of rapids.`);
+    };
+
     const exportGcode = async (msg: Record<string, unknown>) => {
       const ln = lastNest;
       if (!ln) return fail("Nothing to export - nest some parts first.");
       const sheetIndex = typeof msg.sheetIndex === "number" ? msg.sheetIndex : 0;
       if (sheetIndex < 0 || sheetIndex >= ln.sheets.length) return fail("That sheet no longer exists - nest again.");
-      const gp: GcodePlacement[] = ln.placements
-        .filter((p) => p.sheet === sheetIndex)
-        .map((p) => ({ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }));
-      const plan = buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined });
+      const plan = sheetCutPlan(ln, sheetIndex);
       for (const w of plan.warnings) notify(w, true);
       const cutRow = cutTableRowFor(lastStock[ln.sheets[sheetIndex]!.stockIndex] as StockRow | undefined, CUT_TABLE);
       if (!cutRow) notify("No cut-table match for this sheet's material/thickness - using a default feed rate; check it before running the program.", true);
@@ -1208,6 +1231,7 @@ const plugin: PluginModule = {
 
       if (type === "export-dxf") return void (await exportDxf(msg));
       if (type === "export-gcode") return void (await exportGcode(msg));
+      if (type === "preview-toolpath") return void (await previewToolpath(msg));
 
       if (type === "print") {
         if (!lastNest) return fail("Nothing to print - nest some parts first.");

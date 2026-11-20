@@ -75,6 +75,12 @@ describe("SVG export: lineweight", () => {
     const back = parseSvgText(entitiesToSvgDocument([e], { padding: 0 })).entities[0] as LineEntity;
     expect(back).toMatchObject({ lineweight: 0.5, color: "#ff0000", linetype: "DASHED" });
   });
+
+  it("scales the dasharray by the entity's own linetype scale (DASHED is 6/3 mm)", () => {
+    const dash = (e: LineEntity) => doc([e]).querySelector("line")!.getAttribute("stroke-dasharray");
+    expect(dash({ ...line("1"), linetype: "DASHED" })).toBe("6 3");
+    expect(dash({ ...line("1"), linetype: "DASHED", linetypeScale: 2.5 })).toBe("15 7.5");
+  });
 });
 
 describe("SVG export: Laser / CAM mode", () => {

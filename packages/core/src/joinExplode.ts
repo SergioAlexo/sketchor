@@ -127,6 +127,7 @@ function fromSingle(e: Entity): PolylineEntity {
     ...(e.color !== undefined ? { color: e.color } : {}),
     ...(e.linetype !== undefined ? { linetype: e.linetype } : {}),
     ...(e.lineweight !== undefined ? { lineweight: e.lineweight } : {}),
+    ...(e.linetypeScale !== undefined ? { linetypeScale: e.linetypeScale } : {}),
     ...(e.construction !== undefined ? { construction: e.construction } : {}),
   };
   if (e.type === "line") return { id: e.id, type: "polyline", ...props, points: [e.a, e.b], closed: false };
@@ -147,6 +148,7 @@ export function explodePolyline(pl: PolylineEntity): (LineEntity | ArcEntity)[] 
     ...(pl.color !== undefined ? { color: pl.color } : {}),
     ...(pl.linetype !== undefined ? { linetype: pl.linetype } : {}),
     ...(pl.lineweight !== undefined ? { lineweight: pl.lineweight } : {}),
+    ...(pl.linetypeScale !== undefined ? { linetypeScale: pl.linetypeScale } : {}),
     ...(pl.construction !== undefined ? { construction: pl.construction } : {}),
   };
   const out: (LineEntity | ArcEntity)[] = [];

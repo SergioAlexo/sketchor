@@ -88,6 +88,7 @@ export function applyAffine(e: Entity, m: Affine): Entity {
     ...(e.layer !== undefined ? { layer: e.layer } : {}),
     ...(e.color !== undefined ? { color: e.color } : {}),
     ...(e.linetype !== undefined ? { linetype: e.linetype } : {}),
+    ...(e.linetypeScale !== undefined ? { linetypeScale: e.linetypeScale } : {}),
     points: pts,
     closed,
   };
