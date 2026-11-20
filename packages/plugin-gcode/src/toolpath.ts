@@ -27,9 +27,13 @@ import { loopLength, planTabs, sliceLoop } from "./tabs";
  * controller works), and a short lead-in that pierces off the true edge and
  * cuts onto it, rather than piercing on the line and leaving a mark.
  *
- * Deliberately out of scope for this pass: arc lead-ins (only the plan's
- * "line" option is built; a straight edge is what's picked first anyway),
- * and a true global travelling-salesman order (the nearest-neighbour walk
+ * Lead-ins are a straight line by default; `leadIn: "arc"` makes each one a
+ * quarter circle that joins the path tangentially, so the head is already
+ * moving along the edge when it reaches it - no dwell mark where a straight
+ * perpendicular lead-in meets the part. An arc that would not stay clear of
+ * its own contour (a small hole) falls back to the straight lead-in.
+ *
+ * Deliberately out of scope for this pass: a true global travelling-salesman order (the nearest-neighbour walk
  * here is the same class of heuristic `nestTrueShape` itself uses — good
  * enough to not wander the sheet, not claimed optimal).
  */
@@ -50,8 +54,10 @@ export interface GcodePlacement {
 export interface ToolpathOptions {
   /** Total kerf width (both sides), mm. Default 0 — cut exactly on the line. */
   kerf?: number;
-  /** Length of the straight lead-in cut from the pierce point onto the true path, mm. Default 3. */
+  /** Length of the straight lead-in cut from the pierce point onto the true path, mm - for an arc lead-in, its radius. Default 3. */
   leadInLength?: number;
+  /** Lead-in shape. Default "line" (unchanged output); "arc" = a tangent quarter circle where it fits. */
+  leadIn?: "line" | "arc";
   /** Toolpath start point (machine home), mm. Default {0,0}. */
   start?: Point;
   /** N-53: evenly spaced uncut bridges on every closed contour. Default off (count 0 / omitted) - output is then unchanged. */
@@ -66,6 +72,8 @@ export interface CutFeature {
   pierce: Point;
   /** Where the lead-in cut attaches to the true path — also where the loop, cut in full, ends back up. */
   leadIn: Point;
+  /** Arc lead-in: the lead-in from `pierce` to `leadIn` is this arc (a quarter circle, tangent to the path at `leadIn`). Absent = a straight line. */
+  leadInArc?: { center: Point; ccw: boolean };
   /** The closed loop, kerf-compensated, reordered to start and end at `leadIn`. */
   loop: Curve[];
   /**
@@ -189,8 +197,76 @@ function rerootAt(curves: Curve[], index: number, t: number): { loop: Curve[]; a
   return { loop, at: pointAt(c, t) };
 }
 
+/** The loop as a fine polygon (arcs every few degrees), for the arc lead-in's clearance checks. */
+function finePoints(path: Path): Point[] {
+  const pts: Point[] = [];
+  for (const c of path.curves) {
+    const n = c.kind === "arc" ? 48 : 1;
+    for (let i = 0; i < n; i++) pts.push(pointAt(c, i / n));
+  }
+  return pts;
+}
+
+/** Even-odd point-in-polygon. */
+function insidePolygon(pts: Point[], q: Point): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i], b = pts[j];
+    if (a.y > q.y !== b.y > q.y && q.x < ((b.x - a.x) * (q.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+/** Exact distance from `q` to the loop: segments by projection, arcs by radius when `q` is within the sweep, else the nearer end. */
+function distanceToLoop(path: Path, q: Point): number {
+  let best = Infinity;
+  for (const c of path.curves) {
+    if (c.kind === "segment") {
+      const a = c.a, b = c.b;
+      const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+      const t = l2 > 0 ? Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.y - a.y) * dy) / l2)) : 0;
+      best = Math.min(best, Math.hypot(q.x - (a.x + t * dx), q.y - (a.y + t * dy)));
+      continue;
+    }
+    const ang = Math.atan2(q.y - c.center.y, q.x - c.center.x);
+    const norm = (x: number) => ((x % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const sweep = c.full ? 2 * Math.PI : norm(c.ccw ? c.endAngle - c.startAngle : c.startAngle - c.endAngle) || 2 * Math.PI;
+    const into = norm(c.ccw ? ang - c.startAngle : c.startAngle - ang);
+    if (into <= sweep) best = Math.min(best, Math.abs(Math.hypot(q.x - c.center.x, q.y - c.center.y) - c.radius));
+    else {
+      const s0 = pointAt(c, 0), s1 = pointAt(c, 1);
+      best = Math.min(best, Math.hypot(q.x - s0.x, q.y - s0.y), Math.hypot(q.x - s1.x, q.y - s1.y));
+    }
+  }
+  return best;
+}
+
+/**
+ * A quarter-circle lead-in of radius `r` ending at `at`, tangent to the cut
+ * direction `t` there, bulging to the `n` (away-from-material) side: centre
+ * `at + n·r`, pierce `centre − t·r`. Null if any of it would come within a
+ * fraction of `r` of the contour or land on the material side - then the
+ * caller keeps the straight lead-in, which needs less room.
+ */
+function arcLeadIn(path: Path, role: "hole" | "outer", at: Point, t: Point, n: Point, r: number): { pierce: Point; center: Point; ccw: boolean } | null {
+  const center = { x: at.x + n.x * r, y: at.y + n.y * r };
+  const pierce = { x: center.x - t.x * r, y: center.y - t.y * r };
+  const ccw = t.x * n.y - t.y * n.x > 0;
+  const poly = finePoints(path);
+  // Sample the arc away from where it touches the path (the last ~20% approaches `at` by design).
+  for (let i = 0; i <= 8; i++) {
+    const a = (i / 8) * (Math.PI / 2) * 0.8; // 0 = pierce .. 72 degrees of the 90
+    const u = { x: -t.x * Math.cos(a) - n.x * Math.sin(a), y: -t.y * Math.cos(a) - n.y * Math.sin(a) };
+    const q = { x: center.x + u.x * r, y: center.y + u.y * r };
+    if (insidePolygon(poly, q) !== (role === "hole")) return null;
+    // Against a straight edge this sample would sit r·(1 − sin a) off the path; anything of the contour much closer (a corner, the far side of a small hole) means no room.
+    if (distanceToLoop(path, q) < 0.5 * r * (1 - Math.sin(a))) return null;
+  }
+  return { pierce, center, ccw };
+}
+
 /** Picks the longest straight edge (falling back to the longest curve when there's none — a plain circular hole) and returns the loop re-rooted there, plus the lead-in's off-part pierce point. */
-function planLeadIn(path: Path, awayFromMaterial: Point, leadInLength: number): { pierce: Point; leadIn: Point; loop: Curve[] } {
+function planLeadIn(path: Path, awayFromMaterial: Point, leadInLength: number, style: "line" | "arc" = "line", role: "hole" | "outer" = "outer"): { pierce: Point; leadIn: Point; loop: Curve[]; leadInArc?: { center: Point; ccw: boolean } } {
   const segments = path.curves.map((c, i) => ({ c, i })).filter((x) => x.c.kind === "segment");
   const pool = segments.length > 0 ? segments : path.curves.map((c, i) => ({ c, i }));
   const best = pool.reduce((a, b) => (curveLength(b.c) > curveLength(a.c) ? b : a));
@@ -202,6 +278,11 @@ function planLeadIn(path: Path, awayFromMaterial: Point, leadInLength: number): 
   const outward = sign >= 0 ? left : { x: -left.x, y: -left.y };
   const len = Math.hypot(outward.x, outward.y) || 1;
   const pierce = { x: at.x + (outward.x / len) * leadInLength, y: at.y + (outward.y / len) * leadInLength };
+  if (style === "arc" && leadInLength > 0) {
+    const tl = Math.hypot(tangent.x, tangent.y) || 1;
+    const arc = arcLeadIn(path, role, at, { x: tangent.x / tl, y: tangent.y / tl }, { x: outward.x / len, y: outward.y / len }, leadInLength);
+    if (arc) return { pierce: arc.pierce, leadIn: at, loop, leadInArc: { center: arc.center, ccw: arc.ccw } };
+  }
   return { pierce, leadIn: at, loop };
 }
 
@@ -219,6 +300,7 @@ function distance(a: Point, b: Point): number {
 export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions = {}): CutPlan {
   const kerf = opts.kerf ?? 0;
   const leadInLength = opts.leadInLength ?? 3;
+  const leadInStyle = opts.leadIn ?? "line";
   const start = opts.start ?? { x: 0, y: 0 };
   const warnings: string[] = [];
   const tabOpts = opts.tabs && opts.tabs.count > 0 ? opts.tabs : undefined;
@@ -256,10 +338,15 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
     if (runs.length === 0 || runs.some((r) => r.length === 0)) return;
     const first = curveStart(runs[0][0]);
     let pierce = f.pierce;
+    if (f.leadInArc) {
+      // Tabs move and re-aim the lead-in; that is done for the straight one: the same length, straight out from the arc's end.
+      const out = { x: f.leadInArc.center.x - f.leadIn.x, y: f.leadInArc.center.y - f.leadIn.y };
+      pierce = { x: f.leadIn.x + out.x, y: f.leadIn.y + out.y };
+    }
     if (distance(first, f.leadIn) > 1e-6) {
       // Re-aim the lead-in at the new start: same side of the path and same length as before.
       const t0 = tangentAt(f.loop[0], 0);
-      const out = { x: f.pierce.x - f.leadIn.x, y: f.pierce.y - f.leadIn.y };
+      const out = { x: pierce.x - f.leadIn.x, y: pierce.y - f.leadIn.y };
       const side = Math.sign(t0.x * out.y - t0.y * out.x) || 1;
       const t1 = tangentAt(runs[0][0], 0);
       const nv = { x: -t1.y * side, y: t1.x * side };
@@ -289,6 +376,7 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
     f.runs = runs;
     f.leadIn = first;
     f.pierce = pierce;
+    delete f.leadInArc;
   };
 
   interface Built {
@@ -319,8 +407,8 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
       const inside = roughCentroid(holePath);
       const { path: comp, warning } = kerfCompensate(holePath, kerf, inside);
       if (warning) warnings.push(`part #${placement.number}, hole: ${warning}`);
-      const { pierce, leadIn, loop } = planLeadIn(comp, inside, leadInLength);
-      const f: CutFeature = { placementId: placement.id, partNumber: placement.number, role: "hole", pierce, leadIn, loop };
+      const { pierce, leadIn, loop, leadInArc } = planLeadIn(comp, inside, leadInLength, leadInStyle, "hole");
+      const f: CutFeature = { placementId: placement.id, partNumber: placement.number, role: "hole", pierce, leadIn, loop, ...(leadInArc ? { leadInArc } : {}) };
       applyTabs(f, `part #${placement.number}, hole`);
       features.push(f);
     }
@@ -328,8 +416,8 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
       const outside = outsideBoundsPoint(outerLoop.path);
       const { path: comp, warning } = kerfCompensate(outerLoop.path, kerf, outside);
       if (warning) warnings.push(`part #${placement.number}, outer: ${warning}`);
-      const { pierce, leadIn, loop } = planLeadIn(comp, outside, leadInLength);
-      const f: CutFeature = { placementId: placement.id, partNumber: placement.number, role: "outer", pierce, leadIn, loop };
+      const { pierce, leadIn, loop, leadInArc } = planLeadIn(comp, outside, leadInLength, leadInStyle, "outer");
+      const f: CutFeature = { placementId: placement.id, partNumber: placement.number, role: "outer", pierce, leadIn, loop, ...(leadInArc ? { leadInArc } : {}) };
       applyTabs(f, `part #${placement.number}, outer`);
       features.push(f);
     }

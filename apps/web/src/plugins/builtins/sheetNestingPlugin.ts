@@ -621,6 +621,8 @@ const plugin: PluginModule = {
       if (patch.tabCount !== undefined) { const n = Math.max(0, Math.min(99, Math.floor(num(patch.tabCount)))); if (n >= 1) next.tabCount = n; else delete next.tabCount; }
       if (patch.tabWidth !== undefined) { const w = Math.max(0, Math.min(1000, num(patch.tabWidth))); if (w > 0) next.tabWidth = w; else delete next.tabWidth; }
       if (patch.searchLevel === "quick" || patch.searchLevel === "normal" || patch.searchLevel === "thorough") next.searchLevel = patch.searchLevel;
+      if (patch.leadIn === "arc") next.leadIn = "arc";
+      else if (patch.leadIn === "line") delete next.leadIn;
       if (typeof patch.postId === "string" && (builtinPost(patch.postId) || custom.posts.some((p) => p.id === patch.postId))) {
         if (patch.postId === DEFAULT_POST_ID) delete next.postId;
         else next.postId = patch.postId;
@@ -979,7 +981,7 @@ const plugin: PluginModule = {
       const gp: GcodePlacement[] = placements
         .filter((p) => p.sheet === sheetIndex)
         .map((p) => ({ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }));
-      return buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined });
+      return buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined, leadIn: job.leadIn ?? "line" });
     };
 
     /** N-43: one sheet's cut order, pierces and dashed rapids, in a tab of its own so the result drawing is never touched. */

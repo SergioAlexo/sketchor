@@ -120,3 +120,24 @@ describe("header title", () => {
     expect(writeGcode(plan.features, { ...base, title: "Sheet Nesting" }).split("\n")[0]).toBe("(Sheet Nesting — Sheet 1/1)");
   });
 });
+
+describe("arc lead-ins in the program", () => {
+  it("are emitted as G2/G3 with I/J and read back as the same arc", () => {
+    const placement = { id: "p", number: 1, outerEntities: [{ id: "r", type: "polyline" as const, closed: true, points: [{ x: 10, y: 10 }, { x: 110, y: 10 }, { x: 110, y: 70 }, { x: 10, y: 70 }] }], holeEntities: [] };
+    const plan = buildCutPlan([placement], { leadInLength: 4, leadIn: "arc" });
+    const f = plan.features[0]!;
+    const gcode = writeGcode(plan.features, { unit: "mm", scale: 1, feedRateMmPerMin: 3000, pierceTimeSec: 0.5 });
+    const lines = gcode.split("\n");
+    const at = lines.findIndex((l) => l.startsWith("G0 X") && l !== "G0 X0 Y0");
+    const leadLine = lines.slice(at).find((l) => /^G[23] /.test(l))!;
+    expect(leadLine).toMatch(new RegExp(`^G${f.leadInArc!.ccw ? 3 : 2} X${f.leadIn.x.toFixed(4)} Y${f.leadIn.y.toFixed(4)} I${(f.leadInArc!.center.x - f.pierce.x).toFixed(4)} J${(f.leadInArc!.center.y - f.pierce.y).toFixed(4)} F3000$`));
+    // The reader joins the cut into one polyline: its first span is the lead-in, a quarter-circle bulge from the pierce to the join.
+    const cut = gcodeToEntities(gcode, { unit: "mm" }).commands.flatMap((c) => (c.type === "add-entity" ? [c.entity] : [])).find((e) => e.type === "polyline" && e.layer === "G-code")!;
+    if (cut.type !== "polyline") throw new Error("expected a polyline");
+    expect(cut.points[0]!.x).toBeCloseTo(f.pierce.x, 3);
+    expect(cut.points[0]!.y).toBeCloseTo(f.pierce.y, 3);
+    expect(cut.points[1]!.x).toBeCloseTo(f.leadIn.x, 3);
+    expect(cut.points[1]!.y).toBeCloseTo(f.leadIn.y, 3);
+    expect(Math.abs(cut.bulges![0]!)).toBeCloseTo(Math.tan(Math.PI / 8), 6);
+  });
+});

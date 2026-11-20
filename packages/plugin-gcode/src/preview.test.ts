@@ -33,8 +33,9 @@ const onLayer = (es: Entity[], layer: string) => es.filter((e) => e.layer === la
 
 describe("toolpathPreview", () => {
   it("draws what the program does: the same beam-on and beam-off length as the emitted G-code read back", () => {
-    for (const tabs of [undefined, { count: 3, width: 4 }]) {
-      const plan = buildCutPlan([plate("a", 1, 10), plate("b", 2, 130)], { kerf: 0.2, tabs });
+    for (const [tabs, leadIn] of [[undefined, "line"], [{ count: 3, width: 4 }, "line"], [undefined, "arc"]] as const) {
+      const plan = buildCutPlan([plate("a", 1, 10), plate("b", 2, 130)], { kerf: 0.2, tabs, leadIn });
+      if (leadIn === "arc") expect(plan.features.every((f) => f.leadInArc)).toBe(true);
       const { stats } = toolpathPreview(plan.features);
       const gcode = writeGcode(plan.features, { unit: "mm", scale: 1, feedRateMmPerMin: 3000, pierceTimeSec: 0.3 });
       const back = gcodeToEntities(gcode, { unit: "mm", includeRapids: true, layer: "cut" });
