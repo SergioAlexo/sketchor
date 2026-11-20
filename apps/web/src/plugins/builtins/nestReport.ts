@@ -29,6 +29,23 @@ export interface LastNestPlacement {
   mirrored: boolean;
   /** Net area (outer − holes), mm². */
   area: number;
+  /** N-55: the part's priority and due date (Sheet Nesting); absent = normal, undated. */
+  priority?: "high" | "low";
+  due?: string;
+}
+
+/** N-55: "High · due 2026-11-25", "due 2026-11-25", "Low" - or "" for a normal, undated part. */
+export function urgencyText(p: { priority?: "high" | "low"; due?: string }): string {
+  const parts = [p.priority === "high" ? "High" : p.priority === "low" ? "Low" : "", p.due ? `due ${p.due}` : ""].filter(Boolean);
+  return parts.join(" · ");
+}
+
+/** N-55: a sheet's most urgent part (highest priority, then earliest due) as text, or "" when none on it has a priority or date. */
+function sheetUrgency(placements: LastNestPlacement[]): string {
+  const rank = (p: LastNestPlacement) => (p.priority === "high" ? 0 : p.priority === "low" ? 2 : 1) * 1e6 + (p.due ? Number(p.due.replace(/-/g, "")) % 1e6 : 999999);
+  const marked = placements.filter((p) => p.priority === "high" || p.due);
+  if (marked.length === 0) return "";
+  return urgencyText(marked.reduce((a, b) => (rank(b) < rank(a) ? b : a)));
 }
 
 /** NF-08: the report with the user's job name as its title and their notes in the job header. */
@@ -58,7 +75,7 @@ export interface LastNest {
   metrics: JobMetrics;
   result: TrueNestResult;
   /** Every working-set part that had quantity > 0 when nested, for ordered-vs-placed. */
-  ordered: { key: string; name: string; quantity: number }[];
+  ordered: { key: string; name: string; quantity: number; priority?: "high" | "low"; due?: string }[];
   unit: { perMm: number; label: string };
   /** RN-42: a credit / footer line printed at the end of the report. */
   footer?: string;
@@ -156,7 +173,9 @@ interface ReportSpine {
     weightKg: number | null;
     cost: number | null;
   }[];
-  orderedRows: { name: string; ordered: number; placed: number; unplaced: number }[];
+  orderedRows: { name: string; ordered: number; placed: number; unplaced: number; urgency?: string }[];
+  /** N-55: true when any part has a priority or due date - the report then shows them. */
+  hasUrgency: boolean;
 }
 
 function reportSpine(lastNest: LastNest): ReportSpine {
@@ -177,12 +196,14 @@ function reportSpine(lastNest: LastNest): ReportSpine {
     ordered: o.quantity,
     placed: result.placed.filter((p) => p.partId === o.key).length,
     unplaced: result.unplaced.find((u) => u.partId === o.key)?.count ?? 0,
+    urgency: urgencyText(o),
   }));
   return {
     totalPlaced: result.placed.length,
     totalUnplaced: result.unplaced.reduce((n, u) => n + u.count, 0),
     sheetRows,
     orderedRows,
+    hasUrgency: ordered.some((o) => urgencyText(o) !== "") || lastNest.placements.some((p) => urgencyText(p) !== ""),
   };
 }
 
@@ -216,7 +237,7 @@ export const FIT_PAGE_MAX_HEIGHT_PX = 460;
 
 export function buildNestReportHtml(lastNest: LastNest): string {
   const { metrics } = lastNest;
-  const { totalPlaced, totalUnplaced, sheetRows, orderedRows } = reportSpine(lastNest);
+  const { totalPlaced, totalUnplaced, sheetRows, orderedRows, hasUrgency } = reportSpine(lastNest);
   const extra = reportSummaryLines(lastNest);
   const extraHtml = extra.kpis.length
     ? `<table><tbody><tr>${extra.kpis.map(([l]) => `<th>${esc(l)}</th>`).join("")}</tr><tr>${extra.kpis.map(([, v]) => `<td>${esc(v)}</td>`).join("")}</tr></tbody></table>` +
@@ -226,10 +247,12 @@ export function buildNestReportHtml(lastNest: LastNest): string {
 
   const coverRows = sheetRows
     .map(
-      (r) =>
+      (r, i) =>
         `<tr><td>${esc(r.label)}</td><td>${Math.round(r.utilisation * 100)}%</td><td>${esc(fmtRemnant(r.remnant, lastNest))}</td>` +
         `<td>${fmtTime(r.cuttingTimeSec)}</td><td>${r.weightKg != null ? r.weightKg.toFixed(2) + " kg" : "—"}</td>` +
-        `<td>${r.cost != null ? r.cost.toFixed(2) : "—"}</td></tr>`,
+        `<td>${r.cost != null ? r.cost.toFixed(2) : "—"}</td>` +
+        (hasUrgency ? `<td>${esc(sheetUrgency(placementsOn(lastNest, i)) || "—")}</td>` : "") +
+        `</tr>`,
     )
     .join("");
 
@@ -241,12 +264,12 @@ export function buildNestReportHtml(lastNest: LastNest): string {
       const rows = placementsOn(lastNest, i)
         .map(
           (p) =>
-            `<tr><td>${p.number}</td><td>${esc(p.name)}</td><td>${p.rotationDeg}°${p.mirrored ? " (mirrored)" : ""}</td><td>${esc(fmtArea(p.area, lastNest))}</td></tr>`,
+            `<tr><td>${p.number}</td><td>${esc(p.name)}</td><td>${p.rotationDeg}°${p.mirrored ? " (mirrored)" : ""}</td><td>${esc(fmtArea(p.area, lastNest))}</td>${hasUrgency ? `<td>${esc(urgencyText(p))}</td>` : ""}</tr>`,
         )
         .join("");
       return (
         `<div class="sheet-page"><h2>${esc(lastNest.sheetLabels[i])}</h2>${svg}` +
-        `<table><thead><tr><th>#</th><th>Part</th><th>Rotation</th><th>Area</th></tr></thead><tbody>${rows}</tbody></table></div>`
+        `<table><thead><tr><th>#</th><th>Part</th><th>Rotation</th><th>Area</th>${hasUrgency ? "<th>Priority / due</th>" : ""}</tr></thead><tbody>${rows}</tbody></table></div>`
       );
     })
     .join("");
@@ -254,8 +277,8 @@ export function buildNestReportHtml(lastNest: LastNest): string {
   const detailsHtml = lastNest.details?.length
     ? `<table><tbody>${lastNest.details.map(([l, v]) => `<tr><th style="width:30%">${esc(l)}</th><td>${esc(v)}</td></tr>`).join("")}</tbody></table>`
     : "";
-  const partsTable = (rows: { name: string; ordered: number; placed: number; unplaced: number }[]) =>
-    `<table><thead><tr><th>Part</th><th>Ordered</th><th>Placed</th><th>Unplaced</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.ordered}</td><td>${r.placed}</td><td>${r.unplaced}</td></tr>`).join("")}</tbody></table>`;
+  const partsTable = (rows: { name: string; ordered: number; placed: number; unplaced: number; urgency?: string }[]) =>
+    `<table><thead><tr><th>Part</th><th>Ordered</th><th>Placed</th><th>Unplaced</th>${hasUrgency ? "<th>Priority / due</th>" : ""}</tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.ordered}</td><td>${r.placed}</td><td>${r.unplaced}</td>${hasUrgency ? `<td>${esc(r.urgency ?? "")}</td>` : ""}</tr>`).join("")}</tbody></table>`;
   const bottomHtml = lastNest.groupSections
     ? lastNest.groupSections.map((g) => `<h2>${esc(g.title)}</h2><p>${g.sheets.map(esc).join("<br>") || "No sheets"}</p>${partsTable(g.parts)}`).join("")
     : `<h2>Parts ordered vs. placed</h2>\n    ${partsTable(orderedRows)}`;
@@ -272,7 +295,7 @@ export function buildNestReportHtml(lastNest: LastNest): string {
     <h1>${esc(lastNest.title ?? "Sheet Metal Nest Report")}</h1>${detailsHtml}
     <p>${totalPlaced} part(s) placed on ${lastNest.sheets.length} sheet(s)${totalUnplaced ? `, ${totalUnplaced} didn't fit` : ""}. Overall utilisation ${Math.round(metrics.totalUtilisation * 100)}%.</p>
     ${extraHtml}
-    <table><thead><tr><th>Sheet</th><th>Utilisation</th><th>Reusable remnant</th><th>Cutting time</th><th>Weight</th><th>Cost</th></tr></thead><tbody>${coverRows}</tbody></table>
+    <table><thead><tr><th>Sheet</th><th>Utilisation</th><th>Reusable remnant</th><th>Cutting time</th><th>Weight</th><th>Cost</th>${hasUrgency ? "<th>Most urgent</th>" : ""}</tr></thead><tbody>${coverRows}</tbody></table>
     ${sheetsHtml}
     ${bottomHtml}
     ${lastNest.footer ? `<p style="margin-top:16px;font-size:11px;color:#666666">${esc(lastNest.footer)}</p>` : ""}
@@ -281,7 +304,7 @@ export function buildNestReportHtml(lastNest: LastNest): string {
 
 export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
   const { metrics } = lastNest;
-  const { totalPlaced, totalUnplaced, sheetRows, orderedRows } = reportSpine(lastNest);
+  const { totalPlaced, totalUnplaced, sheetRows, orderedRows, hasUrgency } = reportSpine(lastNest);
 
   const pdf = new PdfBuilder(PDF_LETTER);
   const margin = 36;
@@ -359,6 +382,11 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
     y = margin + 12;
     pdf.text(margin, y, lastNest.sheetLabels[i], { size: 13, bold: true });
     y += 16;
+    const urgent = hasUrgency ? sheetUrgency(placementsOn(lastNest, i)) : "";
+    if (urgent) {
+      pdf.text(margin, y, `Most urgent part: ${urgent}`, { size: 9, bold: true });
+      y += 13;
+    }
 
     const entities = sheetDrawingEntities(lastNest, i);
     const drawHeight = Math.min(pdf.height * 0.42, bottom - y - 100);
@@ -367,9 +395,9 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
       y += drawHeight + 14;
     }
 
-    const partCols = [margin, margin + 30, margin + 220, margin + 340];
+    const partCols = [margin, margin + 30, margin + 220, margin + 300, margin + 400];
     const partHeader = () => {
-      const labels = ["#", "Part", "Rotation", "Area"];
+      const labels = ["#", "Part", "Rotation", "Area", ...(hasUrgency ? ["Priority / due"] : [])];
       labels.forEach((l, idx) => pdf.text(partCols[idx], y, l, { size: 9, bold: true }));
       y += 6;
       pdf.line({ x: margin, y }, { x: right, y }, { stroke: "#999999", width: 0.5 });
@@ -382,13 +410,14 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
       pdf.text(partCols[1], y, p.name, { size: 9 });
       pdf.text(partCols[2], y, `${p.rotationDeg}°${p.mirrored ? " (mirrored)" : ""}`, { size: 9 });
       pdf.text(partCols[3], y, fmtArea(p.area, lastNest), { size: 9 });
+      if (hasUrgency) pdf.text(partCols[4], y, urgencyText(p), { size: 9 });
       y += 14;
     }
   }
 
-  const sumCols = [margin, margin + 220, margin + 320, margin + 420];
+  const sumCols = hasUrgency ? [margin, margin + 200, margin + 260, margin + 320, margin + 390] : [margin, margin + 220, margin + 320, margin + 420];
   const sumHeader = () => {
-    const labels = ["Part", "Ordered", "Placed", "Unplaced"];
+    const labels = ["Part", "Ordered", "Placed", "Unplaced", ...(hasUrgency ? ["Priority / due"] : [])];
     labels.forEach((l, idx) => pdf.text(sumCols[idx], y, l, { size: 9, bold: true }));
     y += 6;
     pdf.line({ x: margin, y }, { x: right, y }, { stroke: "#999999", width: 0.5 });
@@ -414,6 +443,8 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
       pdf.text(sumCols[1], y, String(r.ordered), { size: 9 });
       pdf.text(sumCols[2], y, String(r.placed), { size: 9, color: r.placed < r.ordered ? "#c0392b" : undefined });
       pdf.text(sumCols[3], y, String(r.unplaced), { size: 9, color: r.unplaced > 0 ? "#c0392b" : undefined });
+      const urgency = (r as { urgency?: string }).urgency;
+      if (hasUrgency && urgency) pdf.text(sumCols[4]!, y, urgency, { size: 9 });
       y += 14;
     }
     y += 12;

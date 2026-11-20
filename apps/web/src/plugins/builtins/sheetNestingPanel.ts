@@ -54,6 +54,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       .pwarn { color: #e0912f; font-size: 11px; }
       .pctl { display: grid; grid-template-columns: 46px 96px; gap: 3px; grid-column: 2 / 4; }
       .pctl select, .pctl input { margin-top: 0; padding: 3px 4px; font-size: 11px; }
+      .prio-high { border-color: var(--sk-warn,#e0a030) !important; color: var(--sk-warn,#e0a030); }
       .kpis { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; margin-bottom: 6px; }
       .kpi { background: var(--sk-bg,#1e1f22); border-radius: 5px; padding: 5px 6px; }
       .kpi b { display: block; font-size: 15px; }
@@ -89,7 +90,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         cutting: "Cutting parameters", estimate: "Estimates - set your machine's values.", kerf: "Kerf", web: "Web (gap)", margin: "Edge margin", clamp: "Clamp strip", bedW: "Bed width", bedH: "Bed height", speeds: "Cutting speeds", speedsHint: "For the cutting-time estimate and the G-code feed. Leave blank to use the built-in laser estimate shown in grey.", feed: "Feed rate (per min)", rapid: "Rapid (per min)", pierce: "Pierce time (s)",
         accuracy: "Accuracy", acc: { fast: "Fast", normal: "Normal", precise: "Precise" }, time: "Optimise for", times: { 0: "First result", 10000: "10 s", 30000: "30 s", 120000: "2 min" },
         units: "Display units", unitNames: { in: "Inches (fractions)", indec: "Inches (decimal)", ftin: "Feet-inches", mm: "mm", cm: "cm", m: "m" },
-        trueOpts: "True shape options", gravity: "Gravity", minHole: "Min hole size", tabCount: "Tabs per contour", leadIn: "Lead-in", leadIns: { line: "Straight", arc: "Arc (tangent)" }, tabWidth: "Tab width", gcodeOpts: "G-code", post: "Post-processor", postEdit: "Edit...", postDelete: "Delete", postEditOwn: "Edit post-processor", postEditCopy: "New post-processor (a copy you can change)", postName: "Name", postOn: "Beam on", postOff: "Beam off", postEnd: "Program end", postHeader: "Header lines (one per line)", postDwell: "Pierce dwell", postComments: "Comments", postSave: "Save", postSaveCopy: "Save as my post-processor", postCancel: "Cancel", search: "Search", searches: { quick: "Quick", normal: "Normal", thorough: "Thorough" },
+        trueOpts: "True shape options", gravity: "Gravity", minHole: "Min hole size", tabCount: "Tabs per contour", prio: { high: "High priority", normal: "Normal", low: "Low priority" }, due: "Due", prioHint: "High-priority and earlier-due parts are nested first, so they land on the first sheets - and are the last left out when the stock runs out.", leadIn: "Lead-in", leadIns: { line: "Straight", arc: "Arc (tangent)" }, tabWidth: "Tab width", gcodeOpts: "G-code", post: "Post-processor", postEdit: "Edit...", postDelete: "Delete", postEditOwn: "Edit post-processor", postEditCopy: "New post-processor (a copy you can change)", postName: "Name", postOn: "Beam on", postOff: "Beam off", postEnd: "Program end", postHeader: "Header lines (one per line)", postDwell: "Pierce dwell", postComments: "Comments", postSave: "Save", postSaveCopy: "Save as my post-processor", postCancel: "Cancel", search: "Search", searches: { quick: "Quick", normal: "Normal", thorough: "Thorough" },
         grav: { "bottom-left": "Bottom-left", "bottom-right": "Bottom-right", "top-left": "Top-left", "top-right": "Top-right" },
         parts: "Parts", addSelection: "+ Add selection", addFiles: "+ Add files", noParts: "No parts yet - select closed shapes and click Add selection, or add DXF/DWG files.",
         qty: "Qty", rot: { none: "No rotation", flip: "0 / 180", r90: "Every 90", r45: "Every 45", r30: "Every 30", r15: "Every 15", r10: "Every 10", free: "Any angle" },
@@ -247,6 +248,9 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
           if (!isRaster()) {
             extra = "<label title='" + T.mirror + "' style='margin:0'><input type='checkbox' data-part='" + k + "' data-pset='mirror'" + (p.mirror ? " checked" : "") + ">" + T.mirror + "</label> <label title='" + T.inHoles + "' style='margin:0'><input type='checkbox' data-part='" + k + "' data-pset='allowInHoles'" + (p.allowInHoles ? " checked" : "") + ">" + T.inHoles + "</label>";
           }
+          const prio = "<select data-part='" + k + "' data-pset='priority' title='" + esc(T.prioHint) + "'" + (p.priority && p.priority !== "normal" ? " class='prio-" + p.priority + "'" : "") + ">" + optionsHtml(T.prio, p.priority || "normal") + "</select>";
+          const due = "<label title='" + esc(T.prioHint) + "' style='margin:0'>" + T.due + " <input type='date' data-part='" + k + "' data-pset='due' value='" + esc(p.due || "") + "' style='width:118px'></label>";
+          extra = prio + " " + due + (extra ? " " + extra : "");
           let unit = "";
           if (p.file) {
             const cur = p.file.unit == null ? "" : String(p.file.unit);

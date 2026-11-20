@@ -31,6 +31,8 @@ export interface RasterPart {
   qty: number;
   /** Net area, used for ordering and the area lower bound. */
   area: number;
+  /** N-55: placement order tier - lower ranks are placed first (so they land on the earliest sheets, and are the last to go unplaced when stock runs out); area orders within a tier. Absent = 0. */
+  rank?: number;
 }
 
 export interface RasterSheetType {
@@ -464,7 +466,8 @@ export function* nestSteps(inp: RasterInput, hooks: RasterHooks = {}): Generator
   for (const t of inst) totalNet += parts[t]!.area;
   const lbSheets = (nStock === 1 && !extraIdx.length) ? Math.max(1, Math.ceil(totalNet / types[0]!.area)) : 0;
 
-  const base = inst.slice().sort((a, b) => parts[b]!.area - parts[a]!.area || a - b);
+  const rankOf = (t: number) => parts[t]!.rank ?? 0;
+  const base = inst.slice().sort((a, b) => rankOf(a) - rankOf(b) || parts[b]!.area - parts[a]!.area || a - b);
   const crit0 = inp.crit === undefined ? 0 : inp.crit;
   let best = attempt(base, null, 0, crit0, 0, tAsc());
   let iter = 1;
@@ -488,7 +491,7 @@ export function* nestSteps(inp: RasterInput, hooks: RasterHooks = {}): Generator
     if (hooks.shouldStop?.()) break;
     const noise = 0.05 + rnd() * 0.5;
     const ord = base.map((t) => ({ t, k: parts[t]!.area * (1 + (rnd() - 0.5) * noise) }))
-      .sort((a, b) => b.k - a.k).map((o) => o.t);
+      .sort((a, b) => rankOf(a.t) - rankOf(b.t) || b.k - a.k).map((o) => o.t);
     const q = rnd();
     const torder = nStock === 1 ? tAsc() : q < 0.25 ? tAsc() : q < 0.5 ? tDesc() : shuffled();
     const res = attempt(ord, rnd, rnd() * 3, Math.floor(rnd() * 3), rnd() < 0.4 ? 1 : 0, torder);

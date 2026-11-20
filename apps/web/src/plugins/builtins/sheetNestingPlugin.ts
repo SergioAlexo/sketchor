@@ -41,6 +41,7 @@ import {
   jobReadiness,
   jobSheets,
   lengthMm,
+  validDue,
   makeZip,
   materializeInstance,
   MACHINES,
@@ -546,6 +547,8 @@ const plugin: PluginModule = {
           rotation: jp.rotation,
           mirror: jp.mirror,
           allowInHoles: jp.allowInHoles,
+          priority: jp.priority ?? "normal",
+          due: jp.due ?? "",
           thumb: thumbOf(r.outer),
           file: f ? { key: f.key, unit: f.unit, usedUnit: f.usedUnit } : undefined,
         };
@@ -739,7 +742,7 @@ const plugin: PluginModule = {
 
     const presentResult = async (runs: Run[], result: RasterNestResult, sheetRun: number[], unsupported: { option: string; reason: string }[], stopped: boolean) => {
       const recByKey = new Map<string, PartRec>();
-      const orderedMap = new Map<string, { key: string; name: string; quantity: number }>();
+      const orderedMap = new Map<string, { key: string; name: string; quantity: number; priority?: "high" | "low"; due?: string }>();
       runs.forEach((run) => {
         for (const jp of run.job.parts) {
           const r = run.recs.get(jp.key);
@@ -747,7 +750,7 @@ const plugin: PluginModule = {
           recByKey.set(jp.key, r);
           const cur = orderedMap.get(jp.key);
           if (cur) cur.quantity += jp.qty;
-          else orderedMap.set(jp.key, { key: jp.key, name: r.name, quantity: jp.qty });
+          else orderedMap.set(jp.key, { key: jp.key, name: r.name, quantity: jp.qty, ...(jp.priority ? { priority: jp.priority } : {}), ...(jp.due ? { due: jp.due } : {}) });
         }
       });
 
@@ -779,6 +782,8 @@ const plugin: PluginModule = {
           rotationDeg: pl.rotationDeg,
           mirrored: pl.mirrored,
           area: p.area,
+          ...(orderedMap.get(pl.partId)?.priority ? { priority: orderedMap.get(pl.partId)!.priority } : {}),
+          ...(orderedMap.get(pl.partId)?.due ? { due: orderedMap.get(pl.partId)!.due } : {}),
         });
       }
 
@@ -1097,6 +1102,19 @@ const plugin: PluginModule = {
                   ...(typeof patch.mirror === "boolean" ? { mirror: patch.mirror } : {}),
                   ...(typeof patch.allowInHoles === "boolean" ? { allowInHoles: patch.allowInHoles } : {}),
                 },
+          ).map((p) => {
+            if (p.key !== key) return p;
+            // N-55: "normal" / an empty date clear the field.
+            const next = { ...p };
+            if (patch.priority === "high" || patch.priority === "low") next.priority = patch.priority;
+            else if (patch.priority !== undefined) delete next.priority;
+            if (patch.due !== undefined) {
+              const d = validDue(patch.due);
+              if (d) next.due = d;
+              else delete next.due;
+            }
+            return next;
+          },
           ),
         };
         persistJob();

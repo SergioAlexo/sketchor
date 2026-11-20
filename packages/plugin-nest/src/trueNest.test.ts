@@ -416,3 +416,13 @@ describe("nestTrueShape — N-12 part-in-hole", () => {
     }
   });
 });
+
+describe("nestTrueShape — N-55 priority tiers", () => {
+  it("places the high-priority part first, so it wins the only sheet even though it is smaller", () => {
+    const stock: StockRow[] = [{ size: { name: "s", width: 200, height: 200 }, qty: 1 }];
+    const big: TrueNestPart = { id: "big", name: "big", outer: rect(180, 180), holes: [], quantity: 1, rotation: { mode: "quarter" } };
+    const urgent: TrueNestPart = { id: "urgent", name: "urgent", outer: rect(150, 150), holes: [], quantity: 1, rotation: { mode: "quarter" }, rank: -1 };
+    expect(nestTrueShape([big, urgent], stock, { spacing: 1 }).placed.map((p) => p.partId)).toEqual(["urgent"]);
+    expect(nestTrueShape([big, { ...urgent, rank: undefined }], stock, { spacing: 1 }).placed.map((p) => p.partId)).toEqual(["big"]);
+  });
+});
