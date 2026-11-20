@@ -26,6 +26,8 @@ export default defineConfig({
       fileName: () => "sketchor-embed.js",
     },
     rollupOptions: {
+      // Shared code (theme tokens) stays in the entry instead of a facade + extra chunk request.
+      preserveEntrySignatures: "allow-extension",
       output: { chunkFileNames: "chunks/[name]-[hash].js" },
     },
   },

@@ -37,6 +37,8 @@ export async function parseModel(bytes: Uint8Array, name: string, format: Previe
 export interface StageOptions {
   /** CSS colour, or null for a transparent canvas over the host page. */
   background: string | null;
+  /** Edge-line colour (E-07 theme); the app's edge colour when omitted. */
+  edge?: string;
   reducedMotion: boolean;
 }
 
@@ -93,11 +95,23 @@ export class Stage {
     });
   }
 
+  /** Re-themes a live stage (E-07): background (null = transparent canvas) and edge colour. */
+  setColors(background: string | null, edge?: string): void {
+    this.opts = { ...this.opts, background, edge };
+    if (background === null) {
+      this.scene.background = null;
+      this.renderer.setClearColor(0x000000, 0);
+    } else this.scene.background = new THREE.Color(background || STAGE_BACKGROUND);
+    if (edge && this.objects) (this.objects.edges.material as THREE.LineBasicMaterial).color.set(edge);
+    this.wake();
+  }
+
   setModel(model: Model3D): void {
     this.objects?.dispose();
     this.pivot.clear();
     this.model = model;
     this.objects = buildModelObjects(model);
+    if (this.opts.edge) (this.objects.edges.material as THREE.LineBasicMaterial).color.set(this.opts.edge);
     const c = new THREE.Vector3(
       (model.bounds.min[0] + model.bounds.max[0]) / 2,
       (model.bounds.min[1] + model.bounds.max[1]) / 2,

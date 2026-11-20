@@ -7,15 +7,15 @@ export const CSS = `
   min-height: 120px;
   overflow: hidden;
   border-radius: var(--sketchor-radius, 12px);
-  background: var(--sketchor-bg, #17181c);
-  color: #e6e8ec;
+  background: var(--sketchor-bg, var(--sk-stage, #17181c));
+  color: var(--sk-fg, #e6e8ec);
   font: 500 12px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
   contain: content;
   outline: none;
   -webkit-tap-highlight-color: transparent;
 }
 :host([background="transparent"]) { background: transparent; }
-:host(:focus-visible) { box-shadow: 0 0 0 2px var(--sketchor-accent, #5a8dff); }
+:host(:focus-visible) { box-shadow: 0 0 0 2px var(--sketchor-accent, var(--sk-accent, #5a8dff)); }
 :host(.sk-overlay) {
   position: fixed !important;
   inset: 0 !important;
@@ -37,6 +37,9 @@ canvas:active { cursor: grabbing; }
   background: radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0,0,0,.28));
   transition: opacity .6s;
 }
+:host([data-theme="light"]) .vignette {
+  background: radial-gradient(ellipse at 50% 45%, transparent 60%, rgba(0,0,0,.08));
+}
 :host([background="transparent"]) .vignette { display: none; }
 :host([data-state="playing"]) .vignette { opacity: .5; }
 
@@ -46,15 +49,15 @@ button, a.btn {
   cursor: pointer;
   display: grid;
   place-items: center;
-  color: #fff;
-  background: rgba(20, 21, 25, .62);
-  border: 1px solid rgba(255,255,255,.14);
+  color: var(--sk-fg, #fff);
+  background: color-mix(in srgb, var(--sk-chrome, #141519) 62%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sk-fg, #fff) 14%, transparent);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   transition: opacity .25s, transform .25s, background .2s;
 }
-button:hover, a.btn:hover { background: var(--sketchor-accent, #5a8dff); border-color: transparent; }
-button:focus-visible, a.btn:focus-visible { outline: 2px solid var(--sketchor-accent, #5a8dff); outline-offset: 2px; }
+button:hover, a.btn:hover { background: var(--sketchor-accent, var(--sk-accent, #5a8dff)); border-color: transparent; color: #fff; }
+button:focus-visible, a.btn:focus-visible { outline: 2px solid var(--sketchor-accent, var(--sk-accent, #5a8dff)); outline-offset: 2px; }
 
 .play {
   position: absolute; left: 50%; top: 50%;
@@ -82,9 +85,9 @@ button:focus-visible, a.btn:focus-visible { outline: 2px solid var(--sketchor-ac
   position: absolute; right: 10px; bottom: 9px;
   display: flex; align-items: center; gap: 5px;
   font-weight: 650; letter-spacing: .01em;
-  color: #fff; opacity: .35; cursor: pointer;
+  color: var(--sk-fg, #fff); opacity: .35; cursor: pointer;
   transition: opacity .2s;
-  text-shadow: 0 1px 2px rgba(0,0,0,.4);
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--sk-stage, #000) 50%, transparent);
 }
 .logo svg { width: 13px; height: 13px; }
 :host(:hover) .logo { opacity: .6; }
@@ -99,7 +102,7 @@ button:focus-visible, a.btn:focus-visible { outline: 2px solid var(--sketchor-ac
 }
 :host([data-full]) .bar { display: flex; }
 :host([data-full]) .full { opacity: 1; }
-.bar .name { font-weight: 650; font-size: 13px; text-shadow: 0 1px 3px rgba(0,0,0,.6); margin-right: 4px; }
+.bar .name { font-weight: 650; font-size: 13px; text-shadow: 0 1px 3px color-mix(in srgb, var(--sk-stage, #000) 70%, transparent); margin-right: 4px; }
 .bar a.btn { display: inline-flex; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; font-weight: 600; }
 .hint { position: absolute; left: 12px; bottom: 10px; opacity: .55; display: none; }
 :host([data-full]) .hint { display: block; }
@@ -113,12 +116,12 @@ button:focus-visible, a.btn:focus-visible { outline: 2px solid var(--sketchor-ac
 :host([data-state="loading"]) .full, :host([data-state="error"]) .full { display: none; }
 .spinner {
   width: 26px; height: 26px; border-radius: 50%;
-  border: 2px solid rgba(255,255,255,.15); border-top-color: var(--sketchor-accent, #5a8dff);
+  border: 2px solid color-mix(in srgb, var(--sk-fg, #fff) 15%, transparent); border-top-color: var(--sketchor-accent, var(--sk-accent, #5a8dff));
   animation: sk-spin .8s linear infinite;
 }
 @keyframes sk-spin { to { transform: rotate(360deg); } }
-.card { max-width: 320px; display: none; gap: 10px; justify-items: center; line-height: 1.45; color: #c9ced6; }
-.card strong { color: #fff; font-size: 13px; }
+.card { max-width: 320px; display: none; gap: 10px; justify-items: center; line-height: 1.45; color: var(--sk-dim, #c9ced6); }
+.card strong { color: var(--sk-fg, #fff); font-size: 13px; }
 .card a.btn { display: inline-flex; height: 30px; padding: 0 12px; border-radius: 999px; font-weight: 600; }
 :host([data-state="error"]) .card { display: grid; }
 :host([data-state="error"]) .spinner { display: none; }

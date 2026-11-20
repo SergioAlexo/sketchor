@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sketchor-view themes demo</title>
+    <style>
+      body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: #f6f7f9; color: #1c1e22; }
+      main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
+      .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+      figure { margin: 0; }
+      figcaption { font-size: 13px; color: #6b7280; margin-top: 6px; }
+      sketchor-view { width: 100%; }
+      #brand { --sketchor-bg: #fff4e0; --sketchor-accent: #e0731a; }
+    </style>
+    <script type="module" src="./src/index.ts"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Themes</h1>
+      <div class="grid">
+        <figure><sketchor-view src="/demo-local/PRT-11742.glb" theme="dark"></sketchor-view><figcaption>theme="dark"</figcaption></figure>
+        <figure><sketchor-view src="/demo-local/PRT-11742.glb" theme="light"></sketchor-view><figcaption>theme="light"</figcaption></figure>
+        <figure><sketchor-view src="/demo-local/PRT-11742.glb"></sketchor-view><figcaption>auto (follows the visitor)</figcaption></figure>
+        <figure><sketchor-view src="/demo-local/PRT-11742.glb" theme="blueprint"></sketchor-view><figcaption>theme="blueprint" (built-in)</figcaption></figure>
+        <figure><sketchor-view src="/demo-local/PRT-11742.glb" theme="solarized-light"></sketchor-view><figcaption>theme="solarized-light"</figcaption></figure>
+        <figure><sketchor-view id="brand" src="/demo-local/PRT-11742.glb" theme="dark"></sketchor-view><figcaption>dark + page --sketchor-bg/--sketchor-accent</figcaption></figure>
+      </div>
+    </main>
+  </body>
+</html>

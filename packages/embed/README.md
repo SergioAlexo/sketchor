@@ -48,13 +48,16 @@ upgraded too. `<html data-sketchor-auto>` also switches it on, and
 | `controls` | `minimal` (play + full view), `none` | `minimal` |
 | `full-url` | `auto` (Sketchor web app `?open=`), `none`, or a URL | `auto` |
 | `logo` | `on`, `off` | `on` |
+| `theme` | `auto` (page `color-scheme`, else the visitor's preference), `dark`, `light`, a built-in theme id (`blueprint`, `nord`, `paper`, `solarized-light`, …) or the URL of a `.sketchor-theme.json` | `auto` |
 | `up` | `auto` (glTF Y-up, others Z-up), `y`, `z` | `auto` |
 | `max-size` | download limit in MB | `25` |
 | `loading` | `lazy` (when near the viewport), `eager` | `lazy` |
 | `label` | accessible name / title in full view | file name |
 
 CSS custom properties on the element: `--sketchor-accent`, `--sketchor-bg`,
-`--sketchor-radius`. Parts: `stage`, `canvas`, `play-button`, `full-button`,
+`--sketchor-radius` — they always win over `theme`. A theme file is validated
+(colour values only, 64 kB max) and must be served with CORS when it's on
+another host; one that fails falls back to `auto` with a console warning. Parts: `stage`, `canvas`, `play-button`, `full-button`,
 `logo`, `full-bar`, `open-link`, `status`.
 
 ## API

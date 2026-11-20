@@ -1,3 +1,4 @@
+import { defaultPalette, needsThemeFile, paletteCss, pickMode, type EmbedPalette } from "./embedTheme";
 import { CSS } from "./styles";
 import {
   DEFAULT_MAX_MB,
@@ -44,13 +45,14 @@ type State = "empty" | "loading" | "idle" | "playing" | "paused" | "error";
  *
  * Attributes: `src`, `format`, `autoplay`, `motion` (`turntable` | `none`),
  * `background` (CSS colour or `transparent`), `controls` (`minimal` | `none`),
- * `full-url` (`auto` | `none` | URL), `logo` (`on` | `off`), `up` (`auto` |
+ * `full-url` (`auto` | `none` | URL), `logo` (`on` | `off`), `theme` (`auto` |
+ * `dark` | `light` | built-in theme id | theme JSON URL), `up` (`auto` |
  * `y` | `z`), `max-size` (MB), `loading` (`lazy` | `eager`), `label`.
  * Methods: `play()`, `pause()`, `reset()`, `fit()`, `load(src)`.
  * Events: `load`, `error`, `play`, `pause`.
  */
 export class SketchorView extends HTMLElement {
-  static observedAttributes = ["src", "background", "full-url", "label", "up", "format"];
+  static observedAttributes = ["src", "background", "full-url", "label", "up", "format", "theme"];
 
   private root: ShadowRoot;
   private canvas: HTMLCanvasElement;
@@ -63,6 +65,10 @@ export class SketchorView extends HTMLElement {
   private seen = false;
   private savedOverflow = "";
   private connected = false;
+  private palette: EmbedPalette = defaultPalette("dark");
+  private themeToken = 0;
+  private darkQuery = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
+  private onSchemeChange = () => void this.applyTheme();
   private reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   constructor() {
@@ -102,6 +108,8 @@ export class SketchorView extends HTMLElement {
     if (!this.hasAttribute("tabindex")) this.tabIndex = 0;
     if (!this.hasAttribute("role")) this.setAttribute("role", "img");
     this.updateLabel();
+    void this.applyTheme();
+    this.darkQuery?.addEventListener("change", this.onSchemeChange);
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(this);
     this.io = new IntersectionObserver(
@@ -118,6 +126,7 @@ export class SketchorView extends HTMLElement {
 
   disconnectedCallback(): void {
     this.connected = false;
+    this.darkQuery?.removeEventListener("change", this.onSchemeChange);
     this.io?.disconnect();
     this.ro?.disconnect();
     this.abort?.abort();
@@ -131,6 +140,7 @@ export class SketchorView extends HTMLElement {
     if (old === value) return;
     if (name === "label") this.updateLabel();
     if (name === "full-url") this.updateLinks();
+    if (name === "theme" && this.connected) void this.applyTheme();
     if ((name === "src" || name === "background" || name === "up" || name === "format") && this.connected && this.state !== "empty") void this.startLoad();
   }
 
@@ -210,6 +220,40 @@ export class SketchorView extends HTMLElement {
     }
   }
 
+  /**
+   * E-07: resolves `theme` to a palette, puts it on the host as private
+   * `--sk-*` properties (the page's `--sketchor-*` still win) and re-colours a
+   * live stage. A theme file that fails to load or validate falls back to auto.
+   */
+  private async applyTheme(): Promise<void> {
+    const token = ++this.themeToken;
+    const attr = this.getAttribute("theme");
+    const autoPalette = () => defaultPalette(pickMode(needsThemeFile(attr) ? "auto" : attr, getComputedStyle(this).colorScheme ?? "", this.darkQuery?.matches ?? true));
+    let p: EmbedPalette;
+    if (needsThemeFile(attr)) {
+      try {
+        const { loadThemePalette } = await import("./themeLoad");
+        p = await loadThemePalette(attr!, document.baseURI);
+      } catch (err) {
+        console.warn(`<sketchor-view> theme "${attr}": ${(err as Error)?.message ?? err}`);
+        p = autoPalette();
+      }
+    } else p = autoPalette();
+    if (token !== this.themeToken) return;
+    this.palette = p;
+    for (const [k, v] of Object.entries(paletteCss(p))) this.style.setProperty(k, v);
+    this.setAttribute("data-theme", p.mode);
+    this.stage?.setColors(this.stageBackground(), p.edge);
+  }
+
+  /** The 3D clear colour: `background` attribute, then the page's `--sketchor-bg`, then the theme. null = transparent. */
+  private stageBackground(): string | null {
+    const attr = this.getAttribute("background");
+    if (attr === "transparent") return null;
+    if (attr) return attr;
+    return getComputedStyle(this).getPropertyValue("--sketchor-bg").trim() || this.palette.stage;
+  }
+
   private resize(): void {
     const r = this.getBoundingClientRect();
     this.stage?.resize(r.width, r.height);
@@ -251,9 +295,9 @@ export class SketchorView extends HTMLElement {
       if (token !== this.loadToken || !this.connected) return;
 
       this.stage?.dispose();
-      const bg = this.getAttribute("background");
       this.stage = new viewer.Stage(this.canvas, {
-        background: bg === "transparent" ? null : bg || "",
+        background: this.stageBackground(),
+        edge: this.palette.edge,
         reducedMotion: this.reducedMotion,
       });
       this.resize();
