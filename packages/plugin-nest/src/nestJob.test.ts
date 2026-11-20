@@ -122,3 +122,14 @@ describe("engine inputs", () => {
     expect(parts[0]!.angles).toEqual([0, 45, 90, 135, 180, 225, 270, 315]);
   });
 });
+
+describe("N-42 post-processor on the job", () => {
+  // The id picks which G-code dialect drives the machine; a job file is untrusted, so only id-shaped strings survive a reload.
+  it("keeps a chosen post id through save and reload, and drops junk", () => {
+    const job = { ...defaultJob(), postId: "linuxcnc" };
+    expect(parseNestJob(JSON.parse(JSON.stringify(job))).postId).toBe("linuxcnc");
+    expect(parseNestJob({ ...defaultJob(), postId: "M3; G0 X999" }).postId).toBeUndefined();
+    expect(parseNestJob({ ...defaultJob(), postId: 7 }).postId).toBeUndefined();
+    expect(parseNestJob(defaultJob()).postId).toBeUndefined();
+  });
+});

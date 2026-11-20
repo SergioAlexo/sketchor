@@ -3,9 +3,9 @@ import type { CutFeature } from "./toolpath";
 
 /**
  * G-code emission (N-42/43) — turns a `CutPlan` into text a controller can
- * run. Only a "generic" post exists so far (plain G0/G1/G2/G3, G20/G21,
- * M3/M5): the plan's own LinuxCNC/Mach3/4 profiles are a follow-up once a
- * real machine is validating output against this one. No Z axis is ever
+ * run: plain G0/G1/G2/G3 and G20/G21, with the controller-specific bits
+ * (beam on/off, dwell, comments, header, program end) taken from a
+ * `PostProfile` — built-ins and editable specs live in posts.ts. No Z axis is ever
  * emitted — 2D sheet cutting controls the beam with M3/M5, not a plunge,
  * and staying Z-less is what makes one post work across laser/plasma/
  * waterjet controllers that disagree about everything else.
@@ -18,6 +18,10 @@ export interface PostProfile {
   /** The dwell command for a pierce of `sec` seconds. */
   pierceDwell(sec: number): string;
   comment(text: string): string;
+  /** Extra lines after G90/G20|G21 (modal resets). */
+  header?: string[];
+  /** Program end. Default M30. */
+  programEnd?: string;
 }
 
 export const GENERIC_LASER_PROFILE: PostProfile = {
@@ -61,6 +65,7 @@ export function writeGcode(features: CutFeature[], opts: GcodeWriteOptions): str
   lines.push(profile.comment(`Post: ${profile.name}`));
   lines.push("G90");
   lines.push(opts.unit === "in" ? "G20" : "G21");
+  for (const h of profile.header ?? []) lines.push(h);
   lines.push(profile.laserOffCode);
 
   for (const feature of features) {
@@ -99,6 +104,6 @@ export function writeGcode(features: CutFeature[], opts: GcodeWriteOptions): str
   }
 
   lines.push("G0 X0 Y0");
-  lines.push("M30");
+  lines.push(profile.programEnd ?? "M30");
   return lines.join("\n") + "\n";
 }
