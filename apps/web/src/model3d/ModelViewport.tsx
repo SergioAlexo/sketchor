@@ -305,16 +305,33 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
     canvas.addEventListener("pointerup", onPivotUp);
     canvas.addEventListener("pointercancel", onPivotUp);
 
+    // A wheel or trackpad sends many events per frame, and each zoom step raycasts the model for the
+    // surface under the cursor; on a big assembly doing that per event let the work queue up behind the
+    // user's hand. The steps are summed and applied once per frame instead.
+    let wheelDy = 0;
+    let wheelAt = { x: 0, y: 0 };
+    let wheelQueued = false;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       e.stopImmediatePropagation();
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 120 : 1;
-      const dy = Math.max(-240, Math.min(240, e.deltaY * unit));
+      wheelDy += Math.max(-240, Math.min(240, e.deltaY * unit));
+      wheelAt = { x: e.clientX, y: e.clientY };
+      if (wheelQueued) return;
+      wheelQueued = true;
+      requestAnimationFrame(() => {
+        wheelQueued = false;
+        const dy = Math.max(-720, Math.min(720, wheelDy));
+        wheelDy = 0;
+        zoomAtCursor(dy, wheelAt.x, wheelAt.y);
+      });
+    };
+    const zoomAtCursor = (dy: number, clientX: number, clientY: number) => {
       let factor = Math.exp(dy * 0.0012);
       const rect = canvas.getBoundingClientRect();
       camera.updateMatrixWorld();
-      const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
-      let at = surfaceRef.current(e.clientX, e.clientY);
+      const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      let at = surfaceRef.current(clientX, clientY);
       if (!at) {
         const ray = new THREE.Raycaster();
         ray.setFromCamera(ndc, camera);

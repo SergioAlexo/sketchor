@@ -17,7 +17,8 @@ import { useViewer } from "./viewerStore";
 export function StructurePanel({ model }: { model: Model3D }) {
   const selection = useViewer((s) => s.selection);
   const hidden = useViewer((s) => s.hidden);
-  const hover = useViewer((s) => s.hover);
+  // Only the hovered *part*: the cursor crossing faces and edges of one part must not re-render a tree of thousands of rows.
+  const hoveredPart = useViewer((s) => (s.hover ? partOf(model, s.hover) : null));
   const pick = useViewer((s) => s.pick);
   const setHover = useViewer((s) => s.setHover);
   const toggleHidden = useViewer((s) => s.toggleHidden);
@@ -63,7 +64,6 @@ export function StructurePanel({ model }: { model: Model3D }) {
 
   // Which parts the current selection touches, so a picked face highlights its part in the tree.
   const selectedParts = useMemo(() => new Set(selection.map((r) => partOf(model, r))), [selection, model]);
-  const hoveredPart = hover ? partOf(model, hover) : null;
 
   /** Every part under a node, however deep — what "isolate this assembly" means. */
   const partsUnder = (node: ModelNode): number[] => [...node.parts, ...node.children.flatMap(partsUnder)];
