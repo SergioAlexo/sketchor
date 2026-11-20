@@ -1,4 +1,4 @@
-import { canvasFontFamily, layoutMText, layoutOf, resolveTextLook, type TableRecord } from "@sketchor/core";
+import { canvasFontFamily, layoutMText, layoutOf, resolveTextLook, textWidth, type TableRecord } from "@sketchor/core";
 import type { Bounds, BoxSelectMode, CanvasTokens, ClosedRegion, Entity, EntityId, Point, SketchDocument } from "@sketchor/core";
 import {
   arcPointAt,
@@ -33,6 +33,7 @@ import {
 import { drawSheet, viewportScreenView } from "./sheetRender";
 import type { MeasureResult } from "../state/store";
 import { gridStep, worldToScreen, type View } from "./view";
+import { classifyForView, GREEK_TEXT_PX, regionWorthDrawing, viewWorldRect, type WorldRect } from "./cull";
 import type { Snap } from "./snapping";
 import { getCachedImage } from "./imageCache";
 import { beginHatchFrame, drawHatchEntity } from "./hatchRender";
@@ -162,7 +163,7 @@ export function render(
   if (ui.layout) drawSheet(ctx, paperV, ui.layout, COLORS.entity);
   else drawGrid(ctx, width, height, view);
 
-  if (ui.closedRegions.length > 0) drawClosedRegions(ctx, view, ui.closedRegions);
+  if (ui.closedRegions.length > 0) drawClosedRegions(ctx, view, ui.closedRegions, viewWorldRect(view, width, height, 0));
 
   if (ui.backdrop && ui.backdrop.length > 0) {
     ctx.globalAlpha = 0.25;
@@ -187,6 +188,10 @@ export function render(
   }
   // L-01/L-02: each space draws only its own entities (paper entities never show in model space and vice versa).
   const everything = doc.all().filter((e) => (spaceOf(e) ?? null) === layoutName);
+  // Entities wholly off-screen are skipped; the margin covers arrowheads, text and line widths that bounds don't.
+  const onScreen = viewWorldRect(paperV, width, height, 40);
+  /** Sub-pixel entities, one batch per colour/alpha, drawn as single pixels after the loop. */
+  const specks = new Map<string, Point[]>();
   // H-08: lower drawOrder first (stable), so a hatch can sit behind its boundary.
   const drawList = everything.some((e) => drawOrderOf(e) !== 0) ? [...everything].sort((a, b) => drawOrderOf(a) - drawOrderOf(b)) : everything;
   for (const entity of drawList) {
@@ -203,6 +208,8 @@ export function render(
       selected && ui.moveOffset
         ? translated(scaledEntity, ui.moveOffset.dx, ui.moveOffset.dy)
         : scaledEntity;
+    const vis = classifyForView(shown, onScreen, paperV.scale);
+    if (vis.vis === "offscreen") continue;
     const color = isReference
       ? COLORS.reference
       : selected
@@ -212,6 +219,13 @@ export function render(
           : isFreeEndpoint
             ? COLORS.connectivityHint
             : dofColour(ui, entity.id) ?? (shown.color ?? COLORS.entity);
+    if (vis.vis === "speck" && !selected && !isReference && !isHovered) {
+      const key = `${locked ? 0.45 : 1}|${color}`;
+      const list = specks.get(key);
+      if (list) list.push(vis.at);
+      else specks.set(key, [vis.at]);
+      continue;
+    }
     // A locked layer is background, not geometry you are working on.
     if (locked) ctx.globalAlpha = 0.45;
     if (shown.fill) drawHatch(ctx, paperV, shown, shown.fill);
@@ -219,6 +233,19 @@ export function render(
     if (selected) drawHandles(ctx, paperV, shown);
     ctx.globalAlpha = 1;
   }
+
+  for (const [key, points] of specks) {
+    const bar = key.indexOf("|");
+    ctx.globalAlpha = Number(key.slice(0, bar));
+    ctx.fillStyle = key.slice(bar + 1);
+    ctx.beginPath();
+    for (const p of points) {
+      const s = worldToScreen(paperV, p);
+      ctx.rect(Math.round(s.x) - 0.5, Math.round(s.y) - 0.5, 1.5, 1.5);
+    }
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
 
   if (ui.groupHandle) drawGroupHandle(ctx, view, ui.groupHandle);
 
@@ -389,10 +416,10 @@ function drawBoxSelect(
   ctx.setLineDash([]);
 }
 
-function drawClosedRegions(ctx: CanvasRenderingContext2D, view: View, regions: readonly (readonly Point[])[]): void {
+function drawClosedRegions(ctx: CanvasRenderingContext2D, view: View, regions: readonly (readonly Point[])[], onScreen: WorldRect): void {
   ctx.fillStyle = COLORS.closedRegionFill;
   for (const polygon of regions) {
-    if (polygon.length < 3) continue;
+    if (polygon.length < 3 || !regionWorthDrawing(polygon, onScreen, view.scale)) continue;
     ctx.beginPath();
     const p0 = worldToScreen(view, polygon[0]);
     ctx.moveTo(p0.x, p0.y);
@@ -851,6 +878,25 @@ function drawEntity(
 
   if (entity.type === "text") {
     const p = worldToScreen(view, entity.at);
+    const px = entity.height * view.scale;
+    if (px < GREEK_TEXT_PX) {
+      // Greeked: a faint stroke where the string sits, so a zoomed-out sheet keeps its texture without drawing glyphs nobody can read.
+      const w = textWidth(entity.text, entity.height) * view.scale;
+      const x0 = entity.halign === "center" ? -w / 2 : entity.halign === "right" ? -w : 0;
+      const yMid = entity.valign === "top" ? px / 2 : entity.valign === "middle" ? 0 : -px / 2;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(-entity.rotation);
+      ctx.globalAlpha *= 0.6;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(0.5, px * 0.6);
+      ctx.beginPath();
+      ctx.moveTo(x0, yMid);
+      ctx.lineTo(x0 + w, yMid);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
     ctx.save();
     ctx.translate(p.x, p.y);
     ctx.rotate(-entity.rotation); // world CCW → screen CW
