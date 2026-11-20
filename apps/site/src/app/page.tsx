@@ -1,6 +1,7 @@
 import EmbedDemo from "@/components/EmbedDemo";
 import HeroCanvas from "@/components/HeroCanvas";
-import { Check, Code, Cube, Download, Folder, Layers, Logo, Ruler, Snap } from "@/components/icons";
+import SiteHeader from "@/components/SiteHeader";
+import { Check, Code, Cube, Download, Folder, Layers, Ruler, Snap } from "@/components/icons";
 import { bundledAppVersion, latestRelease, REPO_URL } from "@/lib/release";
 
 export const revalidate = 3600;
@@ -62,19 +63,7 @@ export default async function Home() {
   const [rel, appVersion] = await Promise.all([latestRelease(), bundledAppVersion()]);
   return (
     <>
-      <header className="top">
-        <div className="wrap">
-          <a className="brand" href="/" aria-label="Sketchor home">
-            <Logo />
-            Sketchor
-          </a>
-          <nav aria-label="Main">
-            <a href="#embed" className="hide-sm">Embed</a>
-            <a href={REPO_URL} target="_blank" rel="noopener">GitHub</a>
-            <a href="/app" className="solid">Open app</a>
-          </nav>
-        </div>
-      </header>
+      <SiteHeader />
 
       <main>
         <div className="hero">
@@ -183,10 +172,15 @@ export default async function Home() {
               <h2>Put your models on any page</h2>
               <p className="sub" style={{ marginBottom: 0 }}>
                 <code>&lt;sketchor-view&gt;</code> is Sketchor&apos;s 3D viewer as a single web component: drop in one script tag and your
-                parts turn on a turntable, orbit under the cursor, open full screen — and open in Sketchor with one click. About 6 kB
+                parts turn on a turntable, orbit under the cursor, open full screen — and open in Sketchor with one click. About 9 kB
                 until a preview scrolls into view.
               </p>
               <pre className="snippet">{EMBED_SNIPPET}</pre>
+              <p style={{ marginTop: 14 }}>
+                <a className="btn" href="/embed">
+                  Configurator and docs →
+                </a>
+              </p>
             </div>
             <EmbedDemo src="/models/bracket.glb" label="Sheet-metal bracket" />
           </div>
