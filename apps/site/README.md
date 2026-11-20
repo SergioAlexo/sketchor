@@ -21,3 +21,11 @@ npm run deploy   # bundle + `vercel deploy --prod` (Vercel project: sketchor-sit
   `npm run bundle` first).
 - `/app?open=<url>` opens a file in the web app (E-06); `public/models/bracket.glb`
   is the embed demo model.
+- `/embed?src=<file URL>&motion=&theme=&…` is the iframe endpoint (E-02): one
+  full-bleed `<sketchor-view>` for sites that can't run scripts. Query values
+  are validated in `src/lib/embedFrame.ts` (tested from the repo root with
+  `npx vitest run apps/site`); `/embed` without `src` redirects to `/#embed`.
+- `/oembed?url=<an /embed page, a /app?open= link or a model URL>` is the
+  oEmbed provider (JSON, type `rich`, an iframe of `/embed`); `/embed` pages
+  advertise it with a discovery `<link>`.
+- `npm run dev` for route work — `npm run start` serves the last `next build`.

@@ -36,6 +36,18 @@ left alone unless `data-sketchor-format` names one. Content added later is
 upgraded too. `<html data-sketchor-auto>` also switches it on, and
 `upgrade(root)` is exported for doing it by hand.
 
+## No scripts allowed? iframe and oEmbed
+
+```html
+<iframe src="https://sketchor.sergioalexo.com/embed?src=https://your.site/bracket.glb&theme=light"
+        width="640" height="480" style="border:0" allow="fullscreen" allowfullscreen></iframe>
+```
+
+Query parameters are the attributes below. Pasting a model URL (or an
+`/embed?src=` link) into Notion, WordPress or Discourse works through
+`https://sketchor.sergioalexo.com/oembed?url=…`. The file must be served with
+CORS, since the frame fetches it from the Sketchor site's origin.
+
 ## Attributes
 
 | Attribute | Values | Default |
