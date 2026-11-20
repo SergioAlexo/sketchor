@@ -71,7 +71,7 @@ CSS custom properties on the element: `--sketchor-accent`, `--sketchor-bg`,
 `--sketchor-radius` — they always win over `theme`. A theme file is validated
 (colour values only, 64 kB max) and must be served with CORS when it's on
 another host; one that fails falls back to `auto` with a console warning. Parts: `stage`, `canvas`, `play-button`, `full-button`,
-`logo`, `full-bar`, `open-link`, `status`.
+`logo`, `full-bar`, `open-link`, `status`, `measure`.
 
 ## API
 
@@ -84,7 +84,10 @@ el.addEventListener("error", (e) => console.warn(e.detail.message));
 ```
 
 Keyboard (element focused): Space/Enter play/pause, `F` full view, Esc closes it.
-Drag orbits; in full view the wheel zooms and right-drag pans.
+Drag orbits; in full view the wheel zooms, right-drag pans, and a click measures:
+a face gives its area, an edge its length or diameter, a vertex its position;
+Shift-click a second for the distance and angle between them (mm). Esc clears
+the measurement, then closes full view.
 
 ## Build / develop
 

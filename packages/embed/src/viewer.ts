@@ -15,6 +15,9 @@ import { buildModel } from "./three/buildModel";
 import { buildLights, buildModelObjects, fitClipPlanes, framePerspective, STAGE_BACKGROUND, type ModelObjects } from "./three/modelScene";
 import type { Model3D, OcctResult } from "./three/types";
 import { reorientModel, type UpAxis } from "./three/upAxis";
+import { edgePoints, vertexPoint, type Measurement, type SelRef } from "./three/measure";
+import { pickEdge, pickVertex, type Projector } from "./three/picking";
+import { faceTrianglePositions, measureForEmbed, nextSelection, partOfTriangle } from "./measureView";
 import { atRest, spring, stepSpring, TURNTABLE_RAD_PER_S, type Spring } from "./motion";
 import type { PreviewFormat } from "./load";
 
@@ -39,6 +42,8 @@ export interface StageOptions {
   background: string | null;
   /** Edge-line colour (E-07 theme); the app's edge colour when omitted. */
   edge?: string;
+  /** Selection highlight colour (E-06), the theme accent. */
+  accent?: string;
   reducedMotion: boolean;
 }
 
@@ -68,6 +73,27 @@ export class Stage {
   private last = 0;
   private dirty = true;
 
+  // E-06: click-to-measure in full view.
+  private interactive = false;
+  private selection: SelRef[] = [];
+  private overlay = new THREE.Group();
+  private raycaster = new THREE.Raycaster();
+  private down: { x: number; y: number; t: number } | null = null;
+  /** Called with the readout after every selection change (null = nothing selected). */
+  onMeasure: ((m: Measurement | null) => void) | null = null;
+
+  private onDown = (e: PointerEvent) => {
+    this.down = e.button === 0 && e.isPrimary ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
+  };
+  private onUp = (e: PointerEvent) => {
+    const d = this.down;
+    this.down = null;
+    if (!d || !this.interactive || !this.model) return;
+    // A click, not the end of an orbit drag.
+    if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5 || performance.now() - d.t > 600) return;
+    this.pickAt(e.clientX, e.clientY, e.shiftKey || e.ctrlKey || e.metaKey, e.pointerType === "touch");
+  };
+
   constructor(private canvas: HTMLCanvasElement, private opts: StageOptions) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: opts.background === null, powerPreference: "low-power" });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -93,11 +119,15 @@ export class Stage {
     this.controls.addEventListener("change", () => {
       this.dirty = true;
     });
+    canvas.addEventListener("pointerdown", this.onDown);
+    canvas.addEventListener("pointerup", this.onUp);
+    this.overlay.renderOrder = 10;
   }
 
   /** Re-themes a live stage (E-07): background (null = transparent canvas) and edge colour. */
-  setColors(background: string | null, edge?: string): void {
-    this.opts = { ...this.opts, background, edge };
+  setColors(background: string | null, edge?: string, accent?: string): void {
+    this.opts = { ...this.opts, background, edge, accent: accent ?? this.opts.accent };
+    if (this.selection.length) this.showSelection();
     if (background === null) {
       this.scene.background = null;
       this.renderer.setClearColor(0x000000, 0);
@@ -123,6 +153,9 @@ export class Stage {
     this.radius = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2 || 1;
     this.objects.group.position.copy(c).multiplyScalar(-1);
     this.pivot.add(this.objects.group);
+    this.selection = [];
+    this.clearOverlay();
+    this.objects.group.add(this.overlay);
     this.fit();
   }
 
@@ -168,6 +201,112 @@ export class Stage {
   setInteractive(full: boolean): void {
     this.controls.enableZoom = full;
     this.controls.enablePan = full;
+    this.interactive = full;
+    if (!full) this.clearSelection();
+  }
+
+  /** Drops the measurement; true when there was one (so Esc can clear it before closing full view). */
+  clearSelection(): boolean {
+    if (!this.selection.length) return false;
+    this.selection = [];
+    this.showSelection();
+    return true;
+  }
+
+  /**
+   * The app's rule: within a few pixels a vertex beats an edge beats the
+   * face under the cursor, and only the part the ray hit competes, so a
+   * click never grabs an edge on the far side of the solid.
+   */
+  private pickAt(clientX: number, clientY: number, additive: boolean, touch: boolean): void {
+    const model = this.model;
+    const objects = this.objects;
+    if (!model || !objects) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const cursor = { x: clientX - rect.left, y: clientY - rect.top };
+    this.scene.updateMatrixWorld(true);
+    this.raycaster.setFromCamera(new THREE.Vector2((cursor.x / rect.width) * 2 - 1, -(cursor.y / rect.height) * 2 + 1), this.camera);
+    const hit = this.raycaster.intersectObject(objects.mesh, false)[0];
+    let ref: SelRef | null = null;
+    if (hit && hit.faceIndex != null) {
+      const toWorld = objects.group.matrixWorld;
+      const v = new THREE.Vector3();
+      const project: Projector = (p) => {
+        v.set(p[0], p[1], p[2]).applyMatrix4(toWorld);
+        const depth = v.distanceTo(this.camera.position);
+        v.project(this.camera);
+        return { x: ((v.x + 1) / 2) * rect.width, y: ((1 - v.y) / 2) * rect.height, visible: v.z < 1, depth };
+      };
+      const tolPx = touch ? 14 : 7;
+      const worldPerPx = (2 * hit.distance * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(rect.height, 1);
+      const opts = { tolPx, maxDepth: hit.distance + worldPerPx * (tolPx + 2) };
+      const part = partOfTriangle(model, hit.faceIndex);
+      const vtx = part >= 0 ? pickVertex(model, part, cursor, project, opts) : null;
+      const edge = vtx === null && part >= 0 ? pickEdge(model, part, cursor, project, opts) : null;
+      ref =
+        vtx !== null
+          ? { kind: "vertex", index: vtx }
+          : edge !== null
+            ? { kind: "edge", index: edge }
+            : { kind: "face", index: model.faceOfTriangle[hit.faceIndex] ?? 0 };
+    }
+    this.selection = nextSelection(this.selection, ref, additive);
+    this.showSelection();
+  }
+
+  private clearOverlay(): void {
+    for (const child of [...this.overlay.children]) {
+      const o = child as THREE.Mesh;
+      o.geometry?.dispose();
+      (o.material as THREE.Material | undefined)?.dispose();
+      this.overlay.remove(child);
+    }
+  }
+
+  /** Redraws the highlight and the dimension line, and reports the readout. */
+  private showSelection(): void {
+    this.clearOverlay();
+    const model = this.model;
+    if (!model || !this.selection.length) {
+      this.onMeasure?.(null);
+      this.wake();
+      return;
+    }
+    const accent = new THREE.Color(this.opts.accent || "#5a8dff");
+    const onTop = { depthTest: false, transparent: true };
+    for (const ref of this.selection) {
+      if (ref.kind === "face") {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.BufferAttribute(faceTrianglePositions(model, ref.index), 3));
+        const mat = new THREE.MeshBasicMaterial({
+          color: accent,
+          transparent: true,
+          opacity: 0.45,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -4,
+        });
+        this.overlay.add(new THREE.Mesh(g, mat));
+      } else if (ref.kind === "edge") {
+        const pts = edgePoints(model, ref.index).map((p) => new THREE.Vector3(...p));
+        this.overlay.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: accent, ...onTop })));
+      } else if (ref.kind === "vertex") {
+        const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...vertexPoint(model, ref.index))]);
+        this.overlay.add(new THREE.Points(g, new THREE.PointsMaterial({ color: accent, size: 9, sizeAttenuation: false, ...onTop })));
+      }
+    }
+    const m = measureForEmbed(model, this.selection);
+    if (m.segment) {
+      const ends = [new THREE.Vector3(...m.segment.from), new THREE.Vector3(...m.segment.to)];
+      const dim = new THREE.Color("#ffb02e");
+      this.overlay.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ends), new THREE.LineBasicMaterial({ color: dim, ...onTop })));
+      this.overlay.add(new THREE.Points(new THREE.BufferGeometry().setFromPoints(ends), new THREE.PointsMaterial({ color: dim, size: 7, sizeAttenuation: false, ...onTop })));
+    }
+    for (const c of this.overlay.children) c.renderOrder = 10;
+    this.onMeasure?.(m);
+    this.wake();
   }
 
   /** Pointer position over the element, -1…1 each way; null when it leaves. */
@@ -235,6 +374,9 @@ export class Stage {
   }
 
   dispose(): void {
+    this.canvas.removeEventListener("pointerdown", this.onDown);
+    this.canvas.removeEventListener("pointerup", this.onUp);
+    this.clearOverlay();
     this.renderer.setAnimationLoop(null);
     this.controls.dispose();
     this.objects?.dispose();

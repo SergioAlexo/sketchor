@@ -10,6 +10,7 @@ import {
   sniffFormat,
 } from "./load";
 import type { Stage } from "./viewer";
+import type { Measurement } from "./three/measure";
 
 type ViewerModule = typeof import("./viewer");
 let viewerModule: Promise<ViewerModule> | null = null;
@@ -32,7 +33,8 @@ const TEMPLATE = `
     <div class="card"><strong class="msg"></strong><span class="detail"></span><a class="btn open-err" target="_blank" rel="noopener">Open in Sketchor ↗</a></div>
   </div>
   <div class="bar" part="full-bar"><span class="name"></span><a class="btn open" part="open-link" target="_blank" rel="noopener">Open in Sketchor ↗</a></div>
-  <span class="hint">Drag to orbit · scroll to zoom · right-drag to pan</span>
+  <span class="hint">Drag to orbit · scroll to zoom · right-drag to pan · click to measure, Shift-click a second</span>
+  <div class="measure" part="measure" aria-live="polite"></div>
   <button class="play" part="play-button" type="button" aria-label="Play">${ICON_PLAY}</button>
   <button class="full" part="full-button" type="button" aria-label="Full view">${ICON_EXPAND}</button>
   <a class="logo" part="logo" href="${SKETCHOR_SITE}" target="_blank" rel="noopener" aria-label="Made with Sketchor">${LOGO}Sketchor</a>
@@ -92,7 +94,10 @@ export class SketchorView extends HTMLElement {
         e.preventDefault();
         this.toggle();
       } else if (e.key === "f" || e.key === "F") void this.toggleFull();
-      else if (e.key === "Escape" && this.hasAttribute("data-full")) void this.toggleFull(false);
+      else if (e.key === "Escape" && this.hasAttribute("data-full")) {
+        // First Esc drops a measurement, the next closes full view.
+        if (!this.stage?.clearSelection()) void this.toggleFull(false);
+      }
     });
     this.addEventListener("pointermove", (e) => {
       const r = this.getBoundingClientRect();
@@ -245,7 +250,32 @@ export class SketchorView extends HTMLElement {
     this.palette = p;
     for (const [k, v] of Object.entries(paletteCss(p))) this.style.setProperty(k, v);
     this.setAttribute("data-theme", p.mode);
-    this.stage?.setColors(this.stageBackground(), p.edge);
+    this.stage?.setColors(this.stageBackground(), p.edge, this.accentColor());
+  }
+
+  /** Highlight colour: the page's `--sketchor-accent`, else the theme's. */
+  private accentColor(): string {
+    return getComputedStyle(this).getPropertyValue("--sketchor-accent").trim() || this.palette.accent;
+  }
+
+  /** E-06: the full-view readout, Onshape's measure box. Text only, so nothing from a file name can become markup. */
+  private showMeasure(m: Measurement | null): void {
+    const box = this.$(".measure");
+    box.replaceChildren();
+    if (!m || m.rows.length === 0) {
+      box.classList.remove("on");
+      return;
+    }
+    for (const r of m.rows) {
+      const k = document.createElement("span");
+      k.className = "k";
+      k.textContent = r.label;
+      const v = document.createElement("span");
+      v.className = "v";
+      v.textContent = (r.approx ? "≈ " : "") + r.value;
+      box.append(k, v);
+    }
+    box.classList.add("on");
   }
 
   /** The 3D clear colour: `background` attribute, then the page's `--sketchor-bg`, then the theme. null = transparent. */
@@ -308,8 +338,11 @@ export class SketchorView extends HTMLElement {
       this.stage = new viewer.Stage(this.canvas, {
         background: this.stageBackground(),
         edge: this.palette.edge,
+        accent: this.accentColor(),
         reducedMotion: this.reducedMotion,
       });
+      this.stage.onMeasure = (m) => this.showMeasure(m);
+      this.showMeasure(null);
       this.resize();
       this.stage.setModel(model);
       this.stage.setVisible(this.seen && !document.hidden);

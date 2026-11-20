@@ -104,7 +104,20 @@ button:focus-visible, a.btn:focus-visible { outline: 2px solid var(--sketchor-ac
 :host([data-full]) .full { opacity: 1; }
 .bar .name { font-weight: 650; font-size: 13px; text-shadow: 0 1px 3px color-mix(in srgb, var(--sk-stage, #000) 70%, transparent); margin-right: 4px; }
 .bar a.btn { display: inline-flex; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; font-weight: 600; }
-.hint { position: absolute; left: 12px; bottom: 10px; opacity: .55; display: none; }
+.hint { position: absolute; left: 12px; bottom: 10px; right: 120px; opacity: .55; display: none; }
+
+.measure {
+  position: absolute; right: 12px; bottom: 34px; max-width: min(360px, calc(100% - 24px));
+  display: none; grid-template-columns: auto auto; gap: 4px 14px; align-items: baseline;
+  padding: 10px 12px; border-radius: 10px;
+  background: color-mix(in srgb, var(--sk-chrome, #141519) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sk-fg, #fff) 14%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  font-variant-numeric: tabular-nums;
+}
+:host([data-full]) .measure.on { display: grid; }
+.measure .k { color: var(--sk-dim, #9a9da6); }
+.measure .v { font-weight: 650; text-align: right; white-space: nowrap; }
 :host([data-full]) .hint { display: block; }
 
 .status {

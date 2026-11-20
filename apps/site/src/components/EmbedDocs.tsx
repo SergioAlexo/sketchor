@@ -48,7 +48,7 @@ export default function EmbedDocs() {
             <h1>Put 3D models on any page</h1>
             <p className="sub">
               <code>&lt;sketchor-view&gt;</code> is Sketchor&apos;s 3D viewer as one web component. Your part turns on a turntable, leans
-              toward the cursor, orbits when dragged, opens full screen, and opens in Sketchor with one click. About 9 kB until a preview
+              toward the cursor, orbits when dragged, opens full screen — where a click measures faces, edges and the distance between them — and opens in Sketchor with one click. About 9 kB until a preview
               scrolls into view. MIT licensed.
             </p>
             <EmbedConfigurator />
@@ -106,7 +106,7 @@ export default function EmbedDocs() {
             <p>
               Set <code>--sketchor-bg</code>, <code>--sketchor-accent</code> and <code>--sketchor-radius</code> on the element; they always
               win over <code>theme</code>. Buttons are reachable with <code>::part(play-button)</code>, <code>full-button</code>,{" "}
-              <code>logo</code>, <code>open-link</code>, <code>stage</code>, <code>canvas</code> and <code>status</code>. A theme file is
+              <code>logo</code>, <code>open-link</code>, <code>stage</code>, <code>canvas</code>, <code>measure</code> and <code>status</code>. A theme file is
               validated (colour values only) and must be served with CORS from another host.
             </p>
 
