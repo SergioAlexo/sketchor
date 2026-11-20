@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sketchor-view smoke test</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #0e0f12; color: #e6e8ec; }
+      main { max-width: 1000px; margin: 0 auto; padding: 24px 16px 64px; }
+      #summary { font-size: 18px; font-weight: 700; margin: 8px 0 16px; }
+      .pass { color: #5adc7a; } .fail { color: #ff6b6b; }
+      table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+      td { border-bottom: 1px solid #2a2d34; padding: 5px 8px; vertical-align: top; }
+      td:first-child { width: 60px; font-weight: 700; }
+      .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+      sketchor-view { width: 100%; }
+    </style>
+    <script type="module" src="./src/index.ts"></script>
+  </head>
+  <body>
+    <main>
+      <h1>&lt;sketchor-view&gt; smoke test</h1>
+      <p>E-10: every check runs in this browser against the dev build; fixtures are generated below, so nothing is fetched from outside.
+        Results are also on <code>window.__smoke</code>.</p>
+      <div id="summary">running…</div>
+      <table id="results"></table>
+      <div class="grid" id="stage"></div>
+    </main>
+    <script type="module">
+      /* ---------------------------- fixtures (a 10 mm cube) ---------------------------- */
+      const V = [[0,0,0],[10,0,0],[10,10,0],[0,10,0],[0,0,10],[10,0,10],[10,10,10],[0,10,10]];
+      const F = [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]];
+      const enc = (s) => new TextEncoder().encode(s);
+      const stl = () => enc(`solid cube\n${F.map((f) => `facet normal 0 0 0\nouter loop\n${f.map((i) => `vertex ${V[i].join(" ")}`).join("\n")}\nendloop\nendfacet`).join("\n")}\nendsolid cube\n`);
+      const obj = () => enc(V.map((v) => `v ${v.join(" ")}`).join("\n") + "\n" + F.map((f) => `f ${f.map((i) => i + 1).join(" ")}`).join("\n") + "\n");
+      const ply = () => enc(`ply\nformat ascii 1.0\nelement vertex 8\nproperty float x\nproperty float y\nproperty float z\nelement face 12\nproperty list uchar int vertex_indices\nend_header\n${V.map((v) => v.join(" ")).join("\n")}\n${F.map((f) => `3 ${f.join(" ")}`).join("\n")}\n`);
+      function gltfParts() {
+        const pos = new Float32Array(V.flat().map((x) => x / 1000)); // glTF is metres
+        const idx = new Uint16Array(F.flat());
+        const bin = new Uint8Array(pos.byteLength + idx.byteLength);
+        bin.set(new Uint8Array(pos.buffer), 0);
+        bin.set(new Uint8Array(idx.buffer), pos.byteLength);
+        const json = {
+          asset: { version: "2.0" },
+          scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0, name: "cube" }],
+          meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
+          accessors: [
+            { bufferView: 0, componentType: 5126, count: 8, type: "VEC3", min: [0, 0, 0], max: [0.01, 0.01, 0.01] },
+            { bufferView: 1, componentType: 5123, count: 36, type: "SCALAR" },
+          ],
+          bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: pos.byteLength }, { buffer: 0, byteOffset: pos.byteLength, byteLength: idx.byteLength }],
+          buffers: [{ byteLength: bin.byteLength }],
+        };
+        return { json, bin };
+      }
+      const gltf = () => {
+        const { json, bin } = gltfParts();
+        json.buffers[0].uri = "data:application/octet-stream;base64," + btoa(String.fromCharCode(...bin));
+        return enc(JSON.stringify(json));
+      };
+      const glb = () => {
+        const { json, bin } = gltfParts();
+        const pad = (b, fill) => { const n = Math.ceil(b.length / 4) * 4; const o = new Uint8Array(n).fill(fill); o.set(b); return o; };
+        const j = pad(enc(JSON.stringify(json)), 0x20);
+        const b = pad(bin, 0);
+        const out = new Uint8Array(12 + 8 + j.length + 8 + b.length);
+        const dv = new DataView(out.buffer);
+        dv.setUint32(0, 0x46546c67, true); dv.setUint32(4, 2, true); dv.setUint32(8, out.length, true);
+        dv.setUint32(12, j.length, true); dv.setUint32(16, 0x4e4f534a, true); out.set(j, 20);
+        const o = 20 + j.length;
+        dv.setUint32(o, b.length, true); dv.setUint32(o + 4, 0x004e4942, true); out.set(b, o + 8);
+        return out;
+      };
+
+      /* ---------------------------------- harness ---------------------------------- */
+      const results = [];
+      const table = document.getElementById("results");
+      const stage = document.getElementById("stage");
+      const record = (ok, name, detail = "") => {
+        results.push({ ok, name, detail });
+        const tr = table.insertRow();
+        tr.insertCell().innerHTML = ok ? '<span class="pass">PASS</span>' : '<span class="fail">FAIL</span>';
+        tr.insertCell().textContent = name + (detail ? ` — ${detail}` : "");
+      };
+      const check = async (name, fn) => {
+        try {
+          const detail = await fn();
+          record(true, name, detail ?? "");
+        } catch (e) {
+          record(false, name, e?.message ?? String(e));
+        }
+      };
+      const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
+      const nextEvent = (el, type, ms = 15000) => new Promise((res, rej) => {
+        const t = setTimeout(() => rej(new Error(`no ${type} event within ${ms} ms`)), ms);
+        el.addEventListener(type, (e) => { clearTimeout(t); res(e); }, { once: true });
+      });
+      const view = (attrs = {}) => {
+        const el = document.createElement("sketchor-view");
+        for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+        stage.append(el);
+        return el;
+      };
+      const loadInto = async (el, bytes, name) => {
+        const ev = Promise.race([nextEvent(el, "load"), nextEvent(el, "error").then((e) => { throw new Error(e.detail.message); })]);
+        el.load(bytes, name);
+        return (await ev).detail;
+      };
+
+      await customElements.whenDefined("sketchor-view");
+
+      for (const [name, make] of [["cube.stl", stl], ["cube.obj", obj], ["cube.ply", ply], ["cube.gltf", gltf], ["cube.glb", glb]]) {
+        await check(`loads ${name}`, async () => {
+          const el = view({ cache: "off" });
+          const d = await loadInto(el, make(), name);
+          assert(d.parts >= 1, `parts = ${d.parts}`);
+          assert(el.getAttribute("data-state") === "idle", `state ${el.getAttribute("data-state")}`);
+          return `${d.parts} part(s)`;
+        });
+      }
+
+      await check("play / pause / reset fire their events and states", async () => {
+        const el = view({ cache: "off" });
+        await loadInto(el, stl(), "p.stl");
+        const play = nextEvent(el, "play"); el.play(); await play;
+        assert(el.getAttribute("data-state") === "playing", "not playing after play()");
+        const pause = nextEvent(el, "pause"); el.pause(); await pause;
+        assert(el.getAttribute("data-state") === "paused", "not paused after pause()");
+        el.reset(); el.fit();
+      });
+
+      await check("motion=none never plays", async () => {
+        const el = view({ motion: "none", cache: "off" });
+        await loadInto(el, stl(), "n.stl");
+        el.play();
+        assert(el.getAttribute("data-state") === "idle", `state ${el.getAttribute("data-state")}`);
+      });
+
+      await check("autoplay starts playing on load (unless reduced motion)", async () => {
+        const el = view({ autoplay: "", cache: "off" });
+        await loadInto(el, stl(), "a.stl");
+        const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        assert(el.getAttribute("data-state") === (reduced ? "idle" : "playing"), `state ${el.getAttribute("data-state")}`);
+      });
+
+      await check("theme=light / blueprint recolour the element", async () => {
+        const el = view({ theme: "light", cache: "off" });
+        await loadInto(el, stl(), "t.stl");
+        assert(el.getAttribute("data-theme") === "light", `data-theme ${el.getAttribute("data-theme")}`);
+        el.setAttribute("theme", "blueprint");
+        // A built-in theme loads its chunk first, so wait for the stage colour to move off light's.
+        const light = el.style.getPropertyValue("--sk-stage");
+        for (let i = 0; i < 60 && el.style.getPropertyValue("--sk-stage") === light; i++) await new Promise((r) => setTimeout(r, 50));
+        const stageColor = el.style.getPropertyValue("--sk-stage");
+        assert(stageColor && stageColor !== "#f3f4f6", `stage ${stageColor}`);
+        return `blueprint stage ${stageColor}`;
+      });
+
+      await check("page --sketchor-bg beats the theme", async () => {
+        const el = view({ theme: "dark", style: "--sketchor-bg: rgb(1, 2, 3)", cache: "off" });
+        await loadInto(el, stl(), "b.stl");
+        assert(getComputedStyle(el).backgroundColor === "rgb(1, 2, 3)", getComputedStyle(el).backgroundColor);
+      });
+
+      await check("unknown format shows the error card, not a blank box", async () => {
+        const el = view();
+        const err = nextEvent(el, "error");
+        el.load(enc("hello"), "notes.xyz");
+        await err;
+        assert(el.getAttribute("data-state") === "error", `state ${el.getAttribute("data-state")}`);
+        assert(/unrecognised/i.test(el.shadowRoot.querySelector(".msg").textContent), el.shadowRoot.querySelector(".msg").textContent);
+      });
+
+      await check("STEP shows the open-in-Sketchor card", async () => {
+        const el = view();
+        const err = nextEvent(el, "error");
+        el.load(enc("ISO-10303-21;\nHEADER;\n"), "plate.step");
+        await err;
+        const link = el.shadowRoot.querySelector("a.open-err");
+        assert(/open in sketchor/i.test(el.shadowRoot.querySelector(".msg").textContent), el.shadowRoot.querySelector(".msg").textContent);
+        assert(link && link.style.display !== "none", "no Open in Sketchor link");
+      });
+
+      await check("a second load of the same file comes from the IndexedDB cache", async () => {
+        const el = view();
+        const bytes = obj();
+        bytes[bytes.length - 1] = 10; // keep content identical across both loads
+        const first = await loadInto(el, bytes, "c.obj");
+        const second = await loadInto(el, bytes, "c.obj");
+        assert(second.cached === true, `first cached=${first.cached}, second cached=${second.cached}`);
+      });
+
+      await check("auto-upgrade turns a marked link into a preview", async () => {
+        const url = URL.createObjectURL(new Blob([stl()]));
+        const a = document.createElement("a");
+        a.href = url;
+        a.textContent = "Cube via link";
+        a.setAttribute("data-sketchor", "");
+        a.setAttribute("data-sketchor-format", "stl");
+        a.setAttribute("data-sketchor-cache", "off");
+        stage.append(a);
+        const { upgrade } = await import("./src/index.ts");
+        const n = upgrade(stage);
+        assert(n === 1, `upgraded ${n}`);
+        const el = [...stage.querySelectorAll("sketchor-view")].find((v) => v.getAttribute("label") === "Cube via link");
+        assert(el, "no preview with the link's label");
+        el.setAttribute("loading", "eager");
+        const d = await loadInto(el, stl(), "cube.stl");
+        assert(d.parts >= 1, "did not load");
+      });
+
+      const failed = results.filter((r) => !r.ok).length;
+      const summary = document.getElementById("summary");
+      summary.textContent = failed ? `${failed} of ${results.length} checks failed` : `all ${results.length} checks passed`;
+      summary.className = failed ? "fail" : "pass";
+      window.__smoke = { passed: results.length - failed, failed, results };
+    </script>
+  </body>
+</html>

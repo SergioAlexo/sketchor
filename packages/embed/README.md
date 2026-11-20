@@ -107,6 +107,8 @@ build if the code stops matching the published declarations.
 ```bash
 npm run build --workspace @sketchor/embed   # -> packages/embed/dist (self-host the whole folder)
 npm run dev --workspace @sketchor/embed     # demo page: ?src=<url> or drop files
+# then /smoke.html (self-checking: every mesh format, play/pause, themes, error
+# cards, cache, auto-upgrade), /themes.html and /auto.html
 ```
 
 MIT licensed.
