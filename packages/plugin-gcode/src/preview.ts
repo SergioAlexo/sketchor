@@ -139,3 +139,20 @@ export function toolpathPreview(features: CutFeature[], opts: ToolpathPreviewOpt
   if (features.length > 0) rapid(home);
   return { entities, stats };
 }
+
+/**
+ * Estimated machine time for a cut plan, seconds: beam-on length at the feed
+ * rate, a dwell per pierce, and beam-off travel at the rapid rate. Taken from
+ * the same walk `toolpathPreview` makes (lead-ins, tab restarts and the trip
+ * home included), so it counts exactly what the G-code will do. It leaves out
+ * acceleration in corners, which makes small detailed parts take longer than
+ * this - it is an estimate, labelled as one wherever it is shown.
+ */
+export function cutTimeSec(
+  stats: Pick<ToolpathPreviewStats, "cutLength" | "pierces" | "rapidLength">,
+  speeds: { feedRateMmPerMin: number; pierceTimeSec: number; rapidMmPerMin: number },
+): number {
+  const cut = speeds.feedRateMmPerMin > 0 ? (stats.cutLength / speeds.feedRateMmPerMin) * 60 : 0;
+  const rapid = speeds.rapidMmPerMin > 0 ? (stats.rapidLength / speeds.rapidMmPerMin) * 60 : 0;
+  return cut + rapid + stats.pierces * Math.max(0, speeds.pierceTimeSec);
+}

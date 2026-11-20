@@ -1,5 +1,6 @@
 import { defaultRotationFor, defaultSheets, type LengthField, type MaterialId } from "./catalog";
 import type { CncInfo, CncWarning } from "./cnc";
+import type { CutTableRow } from "./metrics";
 import type { ExtractNote } from "./partExtraction";
 import { lengthMm, type EngineId, type JobGroup, type NestJob } from "./nestJob";
 import { groupIdenticalSheets, type SheetGroup, type SignaturePlacement } from "./sheetGroups";
@@ -77,6 +78,49 @@ export function jobReadiness(job: NestJob, ctx: ReadinessContext): Readiness {
   fields.sheet = job.mode === "groups" ? "ok" : job.sheetSource === "stock" ? (job.stock.length > 0 && job.stock.every((s) => s.size.width > 0 && s.size.height > 0) ? "ok" : "missing") : job.sheet.w > 0 && job.sheet.h > 0 ? "ok" : "missing";
   const problems = Object.keys(fields).filter((k) => fields[k] !== "ok");
   return { fields, problems, canCalculate: problems.length === 0 };
+}
+
+// ---------- cutting speeds ----------
+
+export interface CutSpeeds {
+  feedRateMmPerMin: number;
+  pierceTimeSec: number;
+  rapidMmPerMin: number;
+  /** "machine": the user entered a feed rate; "table": the built-in laser estimate for the material and thickness. */
+  source: "machine" | "table";
+}
+
+/** Pierce and rapid used when the user gave a feed rate but no pierce / rapid and the table has no row for the material. */
+export const FALLBACK_PIERCE_SEC = 0.5;
+export const FALLBACK_RAPID_MM_PER_MIN = 10000;
+
+/** A typed pierce time in seconds, or null when blank or not a non-negative number. */
+export function pierceSeconds(v: string | undefined): number | null {
+  if (v === undefined || v.trim() === "") return null;
+  const n = Number(v.trim());
+  return Number.isFinite(n) && n >= 0 && n < 3600 ? n : null;
+}
+
+/**
+ * The speeds a cutting-time estimate (and the G-code feed) uses: the
+ * machine's own values where the user entered them, else the built-in cut
+ * table's row for the sheet's material and thickness. The table is laser
+ * data, so a waterjet / router / other machine gets an estimate only once
+ * its feed rate is entered - a laser speed would be several times off.
+ * Null when there is no feed rate to go on.
+ */
+export function resolveCutSpeeds(machine: NestJob["machine"], params: NestJob["params"], tableRow: CutTableRow | undefined): CutSpeeds | null {
+  const ownFeed = params.feed ? lengthMm(params.feed) : 0;
+  const row = machine === "laser" ? tableRow : undefined;
+  const feed = ownFeed > 0 ? ownFeed : row?.feedRateMmPerMin;
+  if (!feed || !(feed > 0)) return null;
+  const ownRapid = params.rapid ? lengthMm(params.rapid) : 0;
+  return {
+    feedRateMmPerMin: feed,
+    pierceTimeSec: pierceSeconds(params.pierce) ?? row?.pierceTimeSec ?? FALLBACK_PIERCE_SEC,
+    rapidMmPerMin: ownRapid > 0 ? ownRapid : (row?.rapidMmPerMin ?? FALLBACK_RAPID_MM_PER_MIN),
+    source: ownFeed > 0 ? "machine" : "table",
+  };
 }
 
 /** True when the sheet fits on the machine bed in neither orientation. Unknown bed = no warning. */
@@ -384,4 +428,22 @@ export function parseJobFile(text: string): JobFile | null {
     }
   }
   return { format: JOB_FILE_FORMAT, version: 1, job: o.job, files, custom: o.custom, bomText: typeof o.bomText === "string" ? o.bomText : undefined };
+}
+
+/** A feed or rapid rate in the job's display unit: in/min for the inch formats, mm/min (m/min for metres) otherwise. */
+export function fmtSpeed(mmPerMin: number, unit: LengthFormat): string {
+  if (!Number.isFinite(mmPerMin)) return "";
+  const r = (x: number) => String(x >= 100 ? Math.round(x) : Math.round(x * 10) / 10);
+  if (unit === "mm" || unit === "cm") return `${r(mmPerMin)} mm/min`;
+  if (unit === "m") return `${Math.round((mmPerMin / 1000) * 100) / 100} m/min`;
+  return `${r(mmPerMin / 25.4)} in/min`;
+}
+
+/** A machine time for the panel and report: seconds under a minute, tenths of a minute under an hour, then hours and minutes. */
+export function fmtDuration(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "";
+  if (sec < 60) return `${Math.round(sec)} s`;
+  if (sec < 3600) return `${Math.round(sec / 6) / 10} min`;
+  const totalMin = Math.round(sec / 60);
+  return `${Math.floor(totalMin / 60)} h ${String(totalMin % 60).padStart(2, "0")} min`;
 }

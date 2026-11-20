@@ -178,8 +178,14 @@ function readParams(v: unknown, fallback: MachineParams): MachineParams {
     clamp: readLength(o.clamp, fallback.clamp),
     bedW: readLength(o.bedW, fallback.bedW),
     bedH: readLength(o.bedH, fallback.bedH),
+    ...(o.feed !== undefined ? { feed: readLength(o.feed, NO_SPEED) } : fallback.feed ? { feed: { ...fallback.feed } } : {}),
+    ...(o.rapid !== undefined ? { rapid: readLength(o.rapid, NO_SPEED) } : fallback.rapid ? { rapid: { ...fallback.rapid } } : {}),
+    ...(typeof o.pierce === "string" ? { pierce: o.pierce.slice(0, 20) } : typeof o.pierce === "number" && Number.isFinite(o.pierce) ? { pierce: String(o.pierce) } : fallback.pierce !== undefined ? { pierce: fallback.pierce } : {}),
   };
 }
+
+/** A blank speed field: use the built-in estimate. */
+const NO_SPEED: LengthField = { v: "", u: "in" };
 
 function readStockRow(v: unknown): StockRow | null {
   if (!isObj(v)) return null;

@@ -179,3 +179,14 @@ describe("Open job", () => {
     expect(parseJobFile(text.slice(0, text.length / 2))).toBeNull();
   });
 });
+
+describe("a part exported in AutoCAD colour 7", () => {
+  it("comes in white (so the report has to ink it - see nestReport.test) and the panel offers machine speed fields", () => {
+    const white = { ...rect(100, 60), color: "#ffffff" };
+    const f = loadDxfFile("w", "0000000316.DXF", entitiesToDxf([white], 4, 1), null);
+    const rec = f.parts[0]!;
+    const outline = rec.outerSourceIds.map((id) => rec.lookup.get(id)!);
+    expect(outline.every((e) => "color" in e && e.color === "#ffffff")).toBe(true);
+    for (const id of ["data-pierce='1'", 'speedField("feed"', 'speedField("rapid"']) expect(PANEL_HTML).toContain(id);
+  });
+});
