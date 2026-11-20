@@ -106,7 +106,11 @@ export function buildSideBySideLayout(
   placements: SheetPlacementEntities[],
   groups: SheetGroup[],
   sheetLabel: (sheet: TrueNestSheet, index: number) => string,
-  opts: { clamp?: number } = {},
+  opts: {
+    clamp?: number;
+    /** Told where each drawn sheet's outline went (its id and lower-left corner), so a later read of the canvas can find a sheet's parts relative to it. */
+    onSheet?: (sheetIndex: number, outlineId: string, origin: { x: number; y: number }) => void;
+  } = {},
 ): Command[] {
   const commands: Command[] = [];
   let x = 0;
@@ -121,6 +125,7 @@ export function buildSideBySideLayout(
     };
     const { outline, title } = sheetOutlineEntities(sheet, label);
     push(translated(outline, x, 0));
+    opts.onSheet?.(first, outline.id, { x, y: 0 });
     push(translated(title, x, 0));
     for (const e of clampHatchEntities(sheet, opts.clamp ?? 0)) push(translated(e, x, 0));
     for (const p of placements.filter((p) => p.sheet === first)) {
