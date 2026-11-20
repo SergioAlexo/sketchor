@@ -1483,7 +1483,7 @@ export function App() {
             {showThemeMenu && <ThemePicker onClose={() => setShowThemeMenu(false)} />}
           </div>
         </div>
-        <div className="hint">{TOOL_HINTS[tool]}</div>
+        <div className="hint" title={TOOL_HINTS[tool]}>{TOOL_HINTS[tool]}</div>
       </header>
 
       <UpdateBanner />
