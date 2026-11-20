@@ -119,6 +119,11 @@ export default function EmbedDocs() {
               opens the file in Sketchor. Files on another host need <code>Access-Control-Allow-Origin</code>; files on your own site always
               work. To self-host, copy the package&apos;s <code>dist/</code> folder anywhere — chunks load relative to the script.
             </p>
+            <p>
+              <code>/embed/sketchor-embed.js</code> always serves the latest build. To pin one, use{" "}
+              <code>/embed/v/&lt;version&gt;/sketchor-embed.js</code> — those files never change; <code>/embed/version.json</code> names the
+              current version. TypeScript users get the element&apos;s types from <code>@sketchor/embed</code>.
+            </p>
           </div>
         </section>
       </main>

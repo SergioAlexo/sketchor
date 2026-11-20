@@ -33,11 +33,16 @@ rmSync(join(web, "dist-site"), { recursive: true, force: true });
 const version = JSON.parse(readFileSync(join(web, "package.json"), "utf8")).version;
 writeFileSync(join(appOut, "version.json"), JSON.stringify({ version, builtAt: new Date().toISOString() }) + "\n");
 
-// Embed.
-run("npx vite build", embed);
+// Embed (E-08): /embed/ is the latest build, /embed/v/<version>/ an immutable
+// copy a page can pin, and /embed/version.json says which is which.
+run("npm run build", embed);
 const embedOut = join(site, "public", "embed");
+const embedVersion = JSON.parse(readFileSync(join(embed, "package.json"), "utf8")).version;
 rmSync(embedOut, { recursive: true, force: true });
 mkdirSync(embedOut, { recursive: true });
 cpSync(join(embed, "dist"), embedOut, { recursive: true });
+cpSync(join(embed, "dist"), join(embedOut, "v", embedVersion), { recursive: true });
+writeFileSync(join(embedOut, "version.json"), JSON.stringify({ version: embedVersion, pinned: `/embed/v/${embedVersion}/sketchor-embed.js` }) + "
+");
 
 console.log(`\nbundled web app v${version} -> public/app, embed -> public/embed`);

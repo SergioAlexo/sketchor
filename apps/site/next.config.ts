@@ -17,6 +17,9 @@ const nextConfig: NextConfig = {
       { source: "/app", headers: [{ key: "Cache-Control", value: "public, max-age=0, must-revalidate" }] },
       { source: "/app/assets/:path*", headers: immutable },
       { source: "/embed/chunks/:path*", headers: immutable },
+      // E-08: a pinned version never changes; the unversioned /embed/sketchor-embed.js is "latest" and revalidates.
+      { source: "/embed/v/:path*", headers: immutable },
+      { source: "/embed/sketchor-embed.js", headers: [{ key: "Cache-Control", value: "public, max-age=300, must-revalidate" }] },
       // Cross-origin: other sites load the embed module and its chunks.
       { source: "/embed/:path*", headers: [{ key: "Access-Control-Allow-Origin", value: "*" }] },
       // The DWG (LibreDWG) and STEP (OCCT) readers stream-compile their wasm, which needs the right MIME type.

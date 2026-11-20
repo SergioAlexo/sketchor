@@ -1,22 +1,54 @@
 {
   "name": "@sketchor/embed",
-  "version": "0.1.0",
-  "description": "<sketchor-view> — drop-in animated preview of CAD files from Sketchor",
+  "version": "0.2.0",
+  "description": "<sketchor-view> — drop-in animated, orbitable 3D preview of CAD files (glTF, GLB, STL, OBJ, PLY, 3MF) from Sketchor",
   "license": "MIT",
+  "author": "Sergio Alexo (https://sergioalexo.com)",
+  "homepage": "https://sketchor.sergioalexo.com/embed",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SergioAlexo/sketchor.git",
+    "directory": "packages/embed"
+  },
+  "keywords": [
+    "3d",
+    "cad",
+    "viewer",
+    "web-component",
+    "custom-element",
+    "gltf",
+    "stl",
+    "3mf",
+    "embed",
+    "three"
+  ],
   "type": "module",
   "main": "dist/sketchor-embed.js",
   "module": "dist/sketchor-embed.js",
+  "types": "types/sketchor-embed.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/sketchor-embed.d.ts",
+      "import": "./dist/sketchor-embed.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "unpkg": "dist/sketchor-embed.js",
+  "jsdelivr": "dist/sketchor-embed.js",
+  "sideEffects": [
+    "./dist/sketchor-embed.js"
+  ],
   "files": [
-    "dist"
+    "dist",
+    "types",
+    "LICENSE"
   ],
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build"
   },
-  "dependencies": {
-    "three": "^0.186.0"
-  },
   "devDependencies": {
-    "@types/three": "^0.185.4"
+    "@types/three": "^0.185.4",
+    "three": "^0.186.0"
   }
 }

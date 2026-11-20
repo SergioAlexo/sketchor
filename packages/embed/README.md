@@ -89,6 +89,19 @@ a face gives its area, an edge its length or diameter, a vertex its position;
 Shift-click a second for the distance and angle between them (mm). Esc clears
 the measurement, then closes full view.
 
+## Versions and hosting
+
+- `https://sketchor.sergioalexo.com/embed/sketchor-embed.js` — always the latest build.
+- `https://sketchor.sergioalexo.com/embed/v/<version>/sketchor-embed.js` — a pinned
+  build that never changes (cached as immutable); `/embed/version.json` names the
+  current version.
+- npm: `@sketchor/embed` (ES module + `types/sketchor-embed.d.ts`; three.js is
+  bundled, so there are no runtime dependencies). Publishing to npm is pending.
+- Self-host: copy `dist/` anywhere; chunks load relative to the script.
+
+The attribute API is the semver contract. `src/publicTypes.check.ts` fails the
+build if the code stops matching the published declarations.
+
 ## Build / develop
 
 ```bash
