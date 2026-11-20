@@ -9,6 +9,7 @@ import {
   buildLights,
   buildModelObjects,
   EDGE_COLOR,
+  fitClipPlanes,
   framePerspective,
   HOVER_COLOR,
   SELECT_COLOR,
@@ -337,11 +338,9 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
       pending = true;
       requestAnimationFrame(() => {
         pending = false;
-        // Clip planes follow the camera: a fixed near plane eats the model once you are close.
-        const far = camera.position.distanceTo(modelCenter) + modelRadius * 2;
-        camera.far = far;
-        camera.near = Math.max(far * 1e-5, 1e-4);
-        camera.updateProjectionMatrix();
+        // Clip planes follow the camera: a fixed near plane eats the model once you are close,
+        // and a loose one costs depth precision (edges z-fight faces) once you zoom out.
+        fitClipPlanes(camera, modelCenter, modelRadius);
         renderer.render(scene, camera);
         afterRender.current?.();
       });

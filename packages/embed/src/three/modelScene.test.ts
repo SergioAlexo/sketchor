@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { biasEdgesTowardEye, edgeBiasFor, EDGE_BIAS_FRACTION } from "./modelScene";
+import { biasEdgesTowardEye, edgeBiasFor, EDGE_BIAS_FRACTION, fitClipPlanes } from "./modelScene";
 
 describe("edge depth bias", () => {
   it("scales with the model's bounding radius", () => {
@@ -34,5 +34,25 @@ describe("edge depth bias", () => {
     expect(shader.vertexShader).toContain("projectionMatrix[ 3 ][ 3 ] == 1.0");
     // The real chunk must still exist under that name, or the replace above is a no-op in production.
     expect(THREE.ShaderLib.basic.vertexShader).toContain("#include <project_vertex>");
+  });
+});
+
+describe("clip planes", () => {
+  // Zoomed out, a near plane tied to `far` made the depth step ~20x the edge bias: edges z-fought faces.
+  it("puts the near plane just in front of the model while the camera is outside it", () => {
+    const cam = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    cam.position.set(0, 0, 1000);
+    fitClipPlanes(cam, new THREE.Vector3(), 100);
+    expect(cam.near).toBeCloseTo(1000 - 105, 6);
+    expect(cam.far).toBeCloseTo(1200, 6);
+  });
+
+  it("falls back to a tiny near plane inside the model, so nothing near the eye is clipped", () => {
+    const cam = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    cam.position.set(0, 0, 10);
+    fitClipPlanes(cam, new THREE.Vector3(), 100);
+    expect(cam.near).toBeLessThan(0.01);
+    expect(cam.near).toBeGreaterThan(0);
+    expect(cam.far).toBeCloseTo(210, 6);
   });
 });

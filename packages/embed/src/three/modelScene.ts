@@ -239,6 +239,26 @@ export function frameOrthographic(
 }
 
 /**
+ * Fits a perspective camera's clip planes around a model's bounding sphere,
+ * for every frame. Depth precision goes as near/z², so the near plane must
+ * sit as far out as it can: just in front of the sphere while the camera is
+ * outside it. A near plane tied to `far` (or fixed at framing time) leaves
+ * the depth step bigger than the edge bias once you zoom out, and the B-rep
+ * edges z-fight the faces they lie on — the "noise" on a zoomed-out model.
+ * Inside the sphere it falls back to a tiny fraction of `far`, so nothing
+ * close to the eye is clipped.
+ */
+export function fitClipPlanes(camera: THREE.PerspectiveCamera, center: THREE.Vector3, radius: number): void {
+  const r = Math.max(radius, 1e-3);
+  const dist = camera.position.distanceTo(center);
+  const far = dist + r * 2;
+  const outside = dist - r * 1.05;
+  camera.far = far;
+  camera.near = Math.max(outside, far * 1e-5, 1e-4);
+  camera.updateProjectionMatrix();
+}
+
+/**
  * Places a perspective camera to see all of `bounds` — from a preset, or
  * along an explicit unit direction (model → camera) to keep the user's
  * current orbit — and returns the orbit target (the box centre).

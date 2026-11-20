@@ -12,7 +12,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { gltfUsesDraco, parseAnyMesh } from "../../core/src/mesh/parse2";
 import { segmentMesh } from "../../core/src/mesh/segment";
 import { buildModel } from "./three/buildModel";
-import { buildLights, buildModelObjects, framePerspective, STAGE_BACKGROUND, type ModelObjects } from "./three/modelScene";
+import { buildLights, buildModelObjects, fitClipPlanes, framePerspective, STAGE_BACKGROUND, type ModelObjects } from "./three/modelScene";
 import type { Model3D, OcctResult } from "./three/types";
 import { reorientModel, type UpAxis } from "./three/upAxis";
 import { atRest, spring, stepSpring, TURNTABLE_RAD_PER_S, type Spring } from "./motion";
@@ -50,6 +50,7 @@ export class Stage {
   private controls: OrbitControls;
   private pivot = new THREE.Group();
   private objects: ModelObjects | null = null;
+  private radius = 1;
   private model: Model3D | null = null;
   private home = { position: new THREE.Vector3(), target: new THREE.Vector3(), up: new THREE.Vector3(0, 0, 1) };
 
@@ -104,6 +105,8 @@ export class Stage {
     );
     // Turn about the part's own centre, around world Z (up as displayed).
     this.pivot.position.copy(c);
+    const b = model.bounds;
+    this.radius = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2 || 1;
     this.objects.group.position.copy(c).multiplyScalar(-1);
     this.pivot.add(this.objects.group);
     this.fit();
@@ -194,6 +197,7 @@ export class Stage {
     this.pivot.rotation.x = this.tiltBias.x * k + Math.sin(t * 0.45) * 0.035 * k;
     this.controls.update();
 
+    this.fitClip();
     this.renderer.render(this.scene, this.camera);
     this.dirty = false;
 
@@ -205,8 +209,14 @@ export class Stage {
     }
   }
 
+  /** Clip planes hug the model each frame so zooming out keeps depth precision (edges on faces, not through them). */
+  private fitClip(): void {
+    fitClipPlanes(this.camera, this.pivot.position, this.radius);
+  }
+
   /** A still frame, for the idle look before play. */
   renderOnce(): void {
+    this.fitClip();
     this.renderer.render(this.scene, this.camera);
   }
 
