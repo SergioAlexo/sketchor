@@ -78,7 +78,7 @@ import {
   type StockRow,
   type TrueNestSheet,
 } from "@sketchor/plugin-nest";
-import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, postProfileFromSpec, toolpathPreview, toolpathPreviewScale, writeGcode, type GcodePlacement } from "@sketchor/plugin-gcode";
+import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, isCustomPostId, parseCustomPosts, postProfileFromSpec, removeCustomPost, resolvePost, toolpathPreview, toolpathPreviewScale, upsertCustomPost, writeGcode, type GcodePlacement, type PostProfileSpec } from "@sketchor/plugin-gcode";
 
 /** N-53: tab width used when a job asks for tabs but never set one. */
 const DEFAULT_TAB_WIDTH_MM = 3;
@@ -126,10 +126,11 @@ const CUT_MATERIAL_NAME: Partial<Record<MaterialId, string>> = { al5052: "Alumin
 
 type Pt = { x: number; y: number };
 
-/** User-owned catalog edits: custom sheet sizes per material and the last-used machine parameters. */
+/** User-owned catalog edits: custom sheet sizes per material, the last-used machine parameters, and the user's own G-code post-processors (N-42). */
 export interface Custom {
   sheets: Partial<Record<MaterialId, SheetSize[]>>;
   machines: Partial<Record<MachineId, MachineParams>>;
+  posts: PostProfileSpec[];
 }
 
 /** A part ready to nest: geometry plus the entities its output is materialised from. */
@@ -267,8 +268,10 @@ const plugin: PluginModule = {
 
     let job: NestJob = parseNestJob(await sketchor.storage.get(KEY_JOB).catch(() => undefined));
     const customRaw = await sketchor.storage.get(KEY_CUSTOM).catch(() => undefined);
-    const custom: Custom = { sheets: {}, machines: {} };
+    const custom: Custom = { sheets: {}, machines: {}, posts: [] };
     if (isObj(customRaw)) {
+      // Untrusted on the way back in (storage can be edited outside the app): re-validated like a fresh edit.
+      custom.posts = parseCustomPosts(customRaw.posts);
       if (isObj(customRaw.sheets)) {
         for (const m of MATERIALS) {
           const list = (customRaw.sheets as Record<string, unknown>)[m.id];
@@ -525,8 +528,9 @@ const plugin: PluginModule = {
         sheetOptions: sheetsFor(job.material).map((s) => ({ w: s.size.w, h: s.size.h, custom: s.custom, label: `${fmtMm(s.size.w * MM_PER_IN, job.outputUnit)} × ${fmtMm(s.size.h * MM_PER_IN, job.outputUnit)}` })),
         thicknessOptions: thicknessesFor(job.material).map((t) => ({ value: t.value, label: t.label ? `${t.value}" · ${t.label}` : `${t.value}"` })),
         materials: MATERIALS.map((m) => m.id),
-        posts: BUILTIN_POSTS.map((p) => ({ id: p.id, name: p.name })),
-        postId: builtinPost(job.postId ?? "") ? job.postId : DEFAULT_POST_ID,
+        posts: [...BUILTIN_POSTS, ...custom.posts].map((p) => ({ id: p.id, name: p.name, custom: isCustomPostId(p.id) })),
+        postId: resolvePost(job.postId, custom.posts).id,
+        postSpec: resolvePost(job.postId, custom.posts),
         stockRows: job.stock.map((s) => ({ name: s.size.name, w: num3(s.size.width), h: num3(s.size.height), qty: s.qty === null ? "" : String(s.qty), thickness: s.thickness })),
         bareUnit: bareUnitFor(job.outputUnit),
         credit: NEST_CREDIT,
@@ -575,7 +579,7 @@ const plugin: PluginModule = {
       if (patch.tabCount !== undefined) { const n = Math.max(0, Math.min(99, Math.floor(num(patch.tabCount)))); if (n >= 1) next.tabCount = n; else delete next.tabCount; }
       if (patch.tabWidth !== undefined) { const w = Math.max(0, Math.min(1000, num(patch.tabWidth))); if (w > 0) next.tabWidth = w; else delete next.tabWidth; }
       if (patch.searchLevel === "quick" || patch.searchLevel === "normal" || patch.searchLevel === "thorough") next.searchLevel = patch.searchLevel;
-      if (typeof patch.postId === "string" && builtinPost(patch.postId)) {
+      if (typeof patch.postId === "string" && (builtinPost(patch.postId) || custom.posts.some((p) => p.id === patch.postId))) {
         if (patch.postId === DEFAULT_POST_ID) delete next.postId;
         else next.postId = patch.postId;
       }
@@ -923,7 +927,7 @@ const plugin: PluginModule = {
         sheetLabel: ln.sheetLabels[sheetIndex],
         title: "Sheet Nesting",
         // N-42: the job's post-processor; an unknown id (an older job, a removed profile) falls back to the default.
-        profile: postProfileFromSpec(builtinPost(job.postId ?? DEFAULT_POST_ID) ?? builtinPost(DEFAULT_POST_ID)!),
+        profile: postProfileFromSpec(resolvePost(job.postId, custom.posts)),
       });
       const name = `nest-sheet-${sheetIndex + 1}.nc`;
       const res = await sketchor.ui.saveFile(name, gcode, [{ description: "G-code", accept: { "text/plain": [".nc", ".gcode", ".tap"] } }]);
@@ -1241,6 +1245,31 @@ const plugin: PluginModule = {
       if (type === "export-dxf") return void (await exportDxf(msg));
       if (type === "export-gcode") return void (await exportGcode(msg));
       if (type === "preview-toolpath") return void (await previewToolpath(msg));
+      if (type === "post-save") {
+        // N-42: the panel's profile editor. A built-in is saved as a custom copy; the user's own is replaced.
+        const r = upsertCustomPost(custom.posts, msg.spec);
+        if (!r.ok) return fail(`Post-processor not saved: ${r.errors.join("; ")}.`);
+        custom.posts = r.list;
+        persistCustom();
+        job = r.id === DEFAULT_POST_ID ? job : { ...job, postId: r.id };
+        persistJob();
+        post({ type: "post-saved" });
+        await pushView();
+        return notify(`Saved post-processor "${custom.posts.find((p) => p.id === r.id)?.name ?? r.id}".`);
+      }
+      if (type === "post-delete") {
+        const id = typeof msg.id === "string" ? msg.id : "";
+        if (!isCustomPostId(id)) return fail("Only your own post-processors can be deleted.");
+        custom.posts = removeCustomPost(custom.posts, id);
+        persistCustom();
+        if (job.postId === id) {
+          const { postId: _gone, ...rest } = job;
+          job = rest;
+          persistJob();
+        }
+        await pushView();
+        return notify("Post-processor deleted.");
+      }
 
       if (type === "print") {
         if (!lastNest) return fail("Nothing to print - nest some parts first.");

@@ -76,7 +76,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
     <script>
       const post = (m) => parent.postMessage({ pluginMessage: m }, "*");
       const $ = (id) => document.getElementById(id);
-      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      // Single quotes too: almost every attribute below is written value='...', so a name with an apostrophe would otherwise end it.
+      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
       // All user-visible strings in one table so translations can be added later.
       const T = {
@@ -88,7 +89,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         cutting: "Cutting parameters", estimate: "Estimates - set your machine's values.", kerf: "Kerf", web: "Web (gap)", margin: "Edge margin", clamp: "Clamp strip", bedW: "Bed width", bedH: "Bed height",
         accuracy: "Accuracy", acc: { fast: "Fast", normal: "Normal", precise: "Precise" }, time: "Optimise for", times: { 0: "First result", 10000: "10 s", 30000: "30 s", 120000: "2 min" },
         units: "Display units", unitNames: { in: "Inches (fractions)", indec: "Inches (decimal)", ftin: "Feet-inches", mm: "mm", cm: "cm", m: "m" },
-        trueOpts: "True shape options", gravity: "Gravity", minHole: "Min hole size", tabCount: "Tabs per contour", tabWidth: "Tab width", gcodeOpts: "G-code", post: "Post-processor", search: "Search", searches: { quick: "Quick", normal: "Normal", thorough: "Thorough" },
+        trueOpts: "True shape options", gravity: "Gravity", minHole: "Min hole size", tabCount: "Tabs per contour", tabWidth: "Tab width", gcodeOpts: "G-code", post: "Post-processor", postEdit: "Edit...", postDelete: "Delete", postEditOwn: "Edit post-processor", postEditCopy: "New post-processor (a copy you can change)", postName: "Name", postOn: "Beam on", postOff: "Beam off", postEnd: "Program end", postHeader: "Header lines (one per line)", postDwell: "Pierce dwell", postComments: "Comments", postSave: "Save", postSaveCopy: "Save as my post-processor", postCancel: "Cancel", search: "Search", searches: { quick: "Quick", normal: "Normal", thorough: "Thorough" },
         grav: { "bottom-left": "Bottom-left", "bottom-right": "Bottom-right", "top-left": "Top-left", "top-right": "Top-right" },
         parts: "Parts", addSelection: "+ Add selection", addFiles: "+ Add files", noParts: "No parts yet - select closed shapes and click Add selection, or add DXF/DWG files.",
         qty: "Qty", rot: { none: "No rotation", flip: "0 / 180", r90: "Every 90", r45: "Every 45", r30: "Every 30", r15: "Every 15", r10: "Every 10", free: "Any angle" },
@@ -108,6 +109,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       let progress = null;
       let message = null;
       let customOpen = false;
+      let cuttingOpen = false; // the Cutting parameters <details> stays as the user left it across re-renders
+      let postDraft = null; // N-42: the post-processor being edited, or null; kept here so a re-render doesn't lose typing
 
       function optionsHtml(map, sel, keys) {
         return (keys || Object.keys(map)).map((k) => "<option value='" + esc(k) + "'" + (String(k) === String(sel) ? " selected" : "") + ">" + esc(map[k]) + "</option>").join("");
@@ -176,7 +179,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
 
       function cuttingCard() {
         const j = V.job, st = V.status, p = j.params, ras = isRaster();
-        let h = "<details class='card'><summary>" + T.cutting + "</summary><div class='muted' style='font-size:10px;margin-bottom:4px'>" + T.estimate + "</div><div class='grid2'>";
+        let h = "<details class='card' data-cutting='1'" + (cuttingOpen || postDraft ? " open" : "") + "><summary>" + T.cutting + "</summary><div class='muted' style='font-size:10px;margin-bottom:4px'>" + T.estimate + "</div><div class='grid2'>";
         h += lenField("kerf", j.machine === "router" ? "Bit diameter (kerf)" : T.kerf, p.kerf, st.kerf);
         h += lenField("web", T.web, p.web, st.web);
         h += lenField("margin", T.margin, p.margin, st.margin);
@@ -191,10 +194,28 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         h += "<label class='fld' title='" + esc(ras ? RASTER_ONLY_NA.search : "") + "'><span class='t'>" + T.search + "</span><select data-id='searchLevel' data-set='searchLevel'" + (ras ? " disabled" : "") + ">" + optionsHtml(T.searches, j.searchLevel) + "</select></label>";
         h += "<label class='fld' title='" + esc(ras ? RASTER_ONLY_NA.minHole : "") + "'><span class='t'>" + T.minHole + "</span><input data-id='minHole' data-minhole='1' value='" + esc(j.minHoleArea > 0 ? Math.round(Math.sqrt(j.minHoleArea) * 100) / 100 : "") + "' placeholder='mm'" + (ras ? " disabled" : "") + "></label></div>";
         h += "<h4 style='margin-top:6px'>" + T.gcodeOpts + "</h4><div class='grid2'>";
-        h += "<label class='fld' style='grid-column:1/-1'><span class='t'>" + T.post + "</span><select data-id='postId' data-set='postId'>" + (V.posts || []).map((p) => "<option value='" + esc(p.id) + "'" + (p.id === V.postId ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") + "</select></label>";
+        const ownPost = (V.posts || []).some((p) => p.id === V.postId && p.custom);
+        h += "<label class='fld' style='grid-column:1/-1'><span class='t'>" + T.post + "</span><span class='lf'><select data-id='postId' data-set='postId' style='flex:1;min-width:0'>" + (V.posts || []).map((p) => "<option value='" + esc(p.id) + "'" + (p.id === V.postId ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") + "</select>" +
+          "<button class='ghost sm' data-act='post-edit'>" + T.postEdit + "</button>" + (ownPost ? "<button class='ghost sm' data-act='post-delete'>" + T.postDelete + "</button>" : "") + "</span></label>";
+        if (postDraft) h += "</div>" + postEditor() + "<div class='grid2'>";
         h += "<label class='fld'><span class='t'>" + T.tabCount + "</span><input data-id='tabCount' data-tabs='tabCount' value='" + esc(j.tabCount || "") + "' placeholder='0'></label>";
         h += "<label class='fld'><span class='t'>" + T.tabWidth + "</span><input data-id='tabWidth' data-tabs='tabWidth' value='" + esc(j.tabWidth || "") + "' placeholder='3 mm'></label></div>";
         return h + "</details>";
+      }
+
+      /** N-42: edits a copy of the selected post-processor (a built-in) or the user's own one in place. */
+      function postEditor() {
+        const d = postDraft, own = (V.posts || []).some((p) => p.id === d.id && p.custom);
+        const field = (k, label) => "<label class='fld'><span class='t'>" + label + "</span><input data-id='pe-" + k + "' data-pe='" + k + "' value='" + esc(d[k]) + "'></label>";
+        const opt = (k, v, label) => "<option value='" + v + "'" + (d[k] === v ? " selected" : "") + ">" + label + "</option>";
+        let h = "<div class='card' style='margin:6px 0'><h4>" + (own ? T.postEditOwn : T.postEditCopy) + "</h4><div class='grid2'>";
+        h += "<label class='fld' style='grid-column:1/-1'><span class='t'>" + T.postName + "</span><input data-id='pe-name' data-pe='name' value='" + esc(d.name) + "'></label>";
+        h += field("on", T.postOn) + field("off", T.postOff);
+        h += "<label class='fld'><span class='t'>" + T.postDwell + "</span><select data-pe='dwellUnit'>" + opt("dwellUnit", "s", "G4 P seconds") + opt("dwellUnit", "ms", "G4 P milliseconds") + "</select></label>";
+        h += "<label class='fld'><span class='t'>" + T.postComments + "</span><select data-pe='comments'>" + opt("comments", "paren", "(comment)") + opt("comments", "semicolon", "; comment") + "</select></label>";
+        h += "<label class='fld' style='grid-column:1/-1'><span class='t'>" + T.postHeader + "</span><textarea data-id='pe-header' data-pe='header' rows='3' style='width:100%;resize:vertical;background:var(--sk-bg,#1e1f22);color:inherit;border:1px solid var(--sk-border,#3a3d42);border-radius:4px'>" + esc(d.header) + "</textarea></label>";
+        h += field("end", T.postEnd) + "</div>";
+        return h + "<div class='row' style='margin-top:6px'><button data-act='post-save'>" + (own ? T.postSave : T.postSaveCopy) + "</button><button class='ghost' data-act='post-cancel'>" + T.postCancel + "</button></div></div>";
       }
 
       function partsCard() {
@@ -303,6 +324,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         const modeBar = "<div class='seg'><button data-act='mode' data-v='manual' class='" + (V.job.mode === "manual" ? "on" : "") + "'>" + T.manual + "</button><button data-act='mode' data-v='groups' class='" + (V.job.mode === "groups" ? "on" : "") + "'>" + T.groupsMode + "</button></div>";
         const body = V.job.mode === "groups" ? bomCard() + groupsCard() : partsCard();
         $("app").innerHTML = modeBar + jobCard() + cuttingCard() + body + actionsCard() + resultCard() + "<div class='credit'>" + T.credit + "</div>";
+        const cut = document.querySelector("[data-cutting]");
+        if (cut) cut.addEventListener("toggle", () => { cuttingOpen = cut.open; });
         if (focusState) {
           const el = document.querySelector("[data-id='" + focusState.id + "']");
           if (el) { el.focus(); try { el.setSelectionRange(focusState.s, focusState.e); } catch (e) {} }
@@ -324,6 +347,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       document.addEventListener("input", (e) => {
         const t = e.target;
         if (t.dataset.jobname) { jobName = t.value; return; }
+        if (t.dataset.pe && postDraft) { postDraft[t.dataset.pe] = t.value; return; }
         if (t.dataset.jobnotes) { jobNotes = t.value; return; }
         if (t.dataset.len) later("len" + t.dataset.len, () => setJob(lenPatch(t.dataset.len)));
         else if (t.dataset.stock) later("stock", () => post({ type: "stock-set", rows: stockRows() }), 400);
@@ -336,6 +360,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       });
       document.addEventListener("change", (e) => {
         const t = e.target, d = t.dataset;
+        if (d.pe && postDraft) { postDraft[d.pe] = t.value; return; }
         if (d.lenu) setJob(lenPatch(d.lenu));
         else if (d.gauge) { if (t.value) { const f = document.querySelector("[data-len=thickness]"); setJob({ thickness: { v: t.value, u: "in" } }); } }
         else if (d.gset) post({ type: "group-set", id: d.gid, patch: { [d.gset]: t.value } });
@@ -374,6 +399,10 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         else if (a === "dxf-all") post({ type: "export-dxf", sheetIndex: -1 });
         else if (a === "gcode") post({ type: "export-gcode", sheetIndex: Number($("gsheet").value) });
         else if (a === "toolpath") post({ type: "preview-toolpath", sheetIndex: Number($("gsheet").value) });
+        else if (a === "post-edit") { const p = V.postSpec || {}; postDraft = { id: p.id, name: p.name, on: p.on, off: p.off, end: p.end, dwellUnit: p.dwellUnit, comments: p.comments, header: (p.header || []).join("\n") }; render(); }
+        else if (a === "post-cancel") { postDraft = null; render(); }
+        else if (a === "post-save" && postDraft) post({ type: "post-save", spec: Object.assign({}, postDraft, { header: String(postDraft.header || "").split("\n") }) });
+        else if (a === "post-delete") { postDraft = null; post({ type: "post-delete", id: V.postId }); }
         else if (a === "pick-print-folder") post({ type: "pick-print-folder" });
         else if (a === "print") post({ type: "print", jobName, notes: jobNotes });
       });
@@ -409,6 +438,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (m.type === "result") { R = m; message = null; render(); return; }
         if (m.type === "print-folder") { printFolder = m.folder; if (R) render(); return; }
         if (m.type === "cleared") { R = null; message = null; render(); return; }
+        if (m.type === "post-saved") { postDraft = null; message = null; render(); return; }
         if (m.type === "error") { message = m.message; render(); return; }
         if (m.type === "selection-hint") { const el = $("sel-hint"); if (el) el.textContent = m.count ? m.count + " shape(s) selected" + (m.openCount ? ", " + m.openCount + " open" : "") : ""; return; }
       });

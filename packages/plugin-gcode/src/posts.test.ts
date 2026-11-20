@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import type { Entity } from "@sketchor/core";
 import { gcodeToEntities } from "./parse";
-import { BUILTIN_POSTS, builtinPost, DEFAULT_POST_ID, postProfileFromSpec, validatePostSpec } from "./posts";
+import { BUILTIN_POSTS, builtinPost, DEFAULT_POST_ID, isCustomPostId, MAX_CUSTOM_POSTS, newCustomPostId, parseCustomPosts, postProfileFromSpec, removeCustomPost, resolvePost, upsertCustomPost, validatePostSpec, type PostProfileSpec } from "./posts";
 import { buildCutPlan, type GcodePlacement } from "./toolpath";
 import { writeGcode } from "./write";
 
@@ -74,5 +74,71 @@ describe("validatePostSpec", () => {
       expect(r.ok, JSON.stringify(bad)).toBe(false);
     }
     expect(validatePostSpec(null).ok).toBe(false);
+  });
+});
+
+describe("custom post-processors (N-42 editor)", () => {
+  const mach = builtinPost("mach")!;
+
+  it("editing a built-in saves a custom copy under a custom- id, never changing the built-in", () => {
+    const r = upsertCustomPost([], { ...mach, on: "M3 S500" });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(isCustomPostId(r.id)).toBe(true);
+    expect(r.list).toHaveLength(1);
+    expect(r.list[0]).toMatchObject({ id: r.id, on: "M3 S500", name: "Mach3 / Mach4 (custom)" });
+    expect(builtinPost("mach")!.on).toBe("M3");
+  });
+
+  it("editing one of the user's own replaces it in place", () => {
+    const first = upsertCustomPost([], { ...mach, name: "Shop plasma" });
+    if (!first.ok) throw new Error("save failed");
+    const again = upsertCustomPost(first.list, { ...first.list[0], off: "M5 M9" });
+    expect(again).toMatchObject({ ok: true, id: first.id });
+    if (again.ok) expect(again.list).toEqual([{ ...first.list[0], off: "M5 M9" }]);
+  });
+
+  it("refuses anything that isn't plain G-code, so an edit can't smuggle a second block onto the machine", () => {
+    for (const bad of [{ on: "M3\nG0 X0" }, { off: "M5 (bye)" }, { end: "" }, { header: ["G17", "M3; G1 X999"] }]) {
+      const r = upsertCustomPost([], { ...mach, ...bad });
+      expect(r.ok).toBe(false);
+    }
+  });
+
+  it("stops at the cap, but still lets an existing one be edited", () => {
+    let list: PostProfileSpec[] = [];
+    for (let i = 0; i < MAX_CUSTOM_POSTS; i++) {
+      const r = upsertCustomPost(list, { ...mach, name: `P${i}` });
+      if (!r.ok) throw new Error(r.errors.join());
+      list = r.list;
+    }
+    expect(upsertCustomPost(list, { ...mach, name: "one too many" }).ok).toBe(false);
+    expect(upsertCustomPost(list, { ...list[0], on: "M3 S1" }).ok).toBe(true);
+  });
+
+  it("ids are unique, short enough for a job's postId, and can't collide with a built-in", () => {
+    expect(newCustomPostId("Shop plasma!", [])).toBe("custom-shop-plasma");
+    expect(newCustomPostId("Shop plasma", ["custom-shop-plasma"])).toBe("custom-shop-plasma-2");
+    expect(newCustomPostId("???", [])).toBe("custom-post");
+    const long = newCustomPostId("x".repeat(200), []);
+    expect(long.length).toBeLessThanOrEqual(40);
+    expect(isCustomPostId(long)).toBe(true);
+    for (const b of BUILTIN_POSTS) expect(isCustomPostId(b.id)).toBe(false);
+  });
+
+  it("re-validates what comes back from storage: invalid, built-in-shaped and duplicate entries are dropped", () => {
+    const good = { ...mach, id: "custom-a", name: "A" };
+    const stored = [good, { ...good }, { ...mach, id: "mach", name: "fake built-in" }, { ...good, id: "custom-b", on: "M3\nM30" }, "junk", null];
+    expect(parseCustomPosts(stored)).toEqual([good]);
+    expect(parseCustomPosts({ not: "a list" })).toEqual([]);
+  });
+
+  it("a job's postId resolves to a built-in, then the user's own, then the default", () => {
+    const own = { ...mach, id: "custom-a", name: "A" };
+    expect(resolvePost("linuxcnc", [own]).id).toBe("linuxcnc");
+    expect(resolvePost("custom-a", [own])).toBe(own);
+    expect(resolvePost("custom-gone", [own]).id).toBe(DEFAULT_POST_ID);
+    expect(resolvePost(undefined, []).id).toBe(DEFAULT_POST_ID);
+    expect(removeCustomPost([own], "custom-a")).toEqual([]);
   });
 });
