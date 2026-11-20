@@ -15,7 +15,26 @@ and the parsers are a lazy chunk fetched when the first preview loads.
 
 **Formats today:** glTF/GLB, STL, OBJ, PLY, 3MF. STEP/IGES, DXF, SVG and other
 2D formats show a card that opens the file in Sketchor instead (roadmap E-01).
-Draco/meshopt-compressed glTF isn't supported yet — export uncompressed.
+Draco-compressed glTF works; meshopt-compressed glTF isn't supported yet.
+
+## Auto-upgrade (no new markup)
+
+Add `data-auto` to the script tag and mark existing links or images:
+
+```html
+<script type="module" src="/sketchor-embed/sketchor-embed.js" data-auto></script>
+
+<a href="/files/bracket.glb" data-sketchor>Bracket</a>
+<img src="/img/bracket.png" data-sketchor-src="/files/bracket.glb" alt="Bracket">
+```
+
+Each becomes a `<sketchor-view>` for the same file, labelled by the link text
+or `alt`, keeping `id`/`class`/`style`/`width`/`height`. Any attribute below
+passes through as `data-sketchor-<name>` (`data-sketchor-motion="none"`,
+`data-sketchor-autoplay`). Links to files with no recognisable extension are
+left alone unless `data-sketchor-format` names one. Content added later is
+upgraded too. `<html data-sketchor-auto>` also switches it on, and
+`upgrade(root)` is exported for doing it by hand.
 
 ## Attributes
 
