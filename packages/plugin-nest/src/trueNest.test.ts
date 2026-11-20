@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { localFrame, nestTrueShape, placementTransform, type TrueNestPart } from "./trueNest";
+import { ForbiddenIndex, localFrame, nestTrueShape, placementTransform, type TrueNestPart } from "./trueNest";
 import type { StockRow } from "./stock";
-import { bounds, normalize, polygonsClash, rotate, translate, insideSheet } from "./geometry";
+import { bounds, normalize, polygonsClash, rotate, translate, insideSheet, pointInPolygon } from "./geometry";
 import type { Point } from "./types";
 
 /**
@@ -285,11 +285,40 @@ describe("nestTrueShape — N-14 instance cap", () => {
     const result = nestTrueShape(parts, stock, { spacing: 2, edgeMargin: 5 });
     const elapsed = Date.now() - t0;
     expect(result.placed).toHaveLength(600);
-    // Measured ~9s on a dev machine at this size; a generous bound for
-    // slower CI, so this fails loudly if a future change regresses scaling
-    // rather than the cap silently needing to shrink again.
-    expect(elapsed).toBeLessThan(20000);
+    // ~1s since the forbidden-loop grid (it was 25-33s with a scan of every
+    // NFP per candidate, O(n^3) over a fill). The bound is several times the
+    // measurement so slow CI passes, and still fails loudly if scaling
+    // regresses back toward cubic rather than the cap silently shrinking.
+    expect(elapsed).toBeLessThan(8000);
   }, 25000);
+});
+
+describe("ForbiddenIndex", () => {
+  // The grid must answer exactly like testing every loop: a wrong "free"
+  // lets two parts overlap on the sheet, a wrong "blocked" wastes material.
+  it("agrees with a scan of every loop", () => {
+    let seed = 1;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const loops: { x: number; y: number }[][] = [];
+    for (let i = 0; i < 80; i++) {
+      const cx = rnd() * 500;
+      const cy = rnd() * 400;
+      const r = 5 + rnd() * 60;
+      const n = 3 + Math.floor(rnd() * 6);
+      loops.push(Array.from({ length: n }, (_, k) => {
+        const a = (k / n) * Math.PI * 2;
+        const rr = r * (0.5 + rnd() * 0.5);
+        return { x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr };
+      }));
+    }
+    loops.push([{ x: 0, y: 0 }, { x: 1, y: 1 }]); // degenerate: ignored by both
+    const index = new ForbiddenIndex(loops);
+    const points = loops.flat().concat(Array.from({ length: 3000 }, () => ({ x: rnd() * 600 - 50, y: rnd() * 500 - 50 })));
+    for (const p of points) {
+      expect(index.blocks(p)).toBe(loops.some((l) => l.length >= 3 && pointInPolygon(p, l)));
+    }
+    expect(new ForbiddenIndex([]).blocks({ x: 0, y: 0 })).toBe(false);
+  });
 });
 
 describe("nestTrueShape — N-12 part-in-hole", () => {

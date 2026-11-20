@@ -191,6 +191,75 @@ function boundaryCrossings(loop: Point[], minX: number, maxX: number, minY: numb
   return out;
 }
 
+/**
+ * "Is this point strictly inside any forbidden NFP loop?" for many points at
+ * once. The naive scan tests every candidate against every loop, which is
+ * O(n^2) per placement and made a 600-part single-sheet fill take 30 s. Loops
+ * are bucketed by bounding box into a uniform grid, so a point only meets the
+ * handful of loops whose boxes cover its cell. Same answers as the scan: a
+ * point outside a loop's box can't be inside the loop.
+ */
+export class ForbiddenIndex {
+  private loops: { loop: Point[]; minX: number; minY: number; maxX: number; maxY: number }[] = [];
+  private cells = new Map<number, number[]>();
+  private cell = 1;
+  private ox = 0;
+  private oy = 0;
+
+  constructor(loops: Point[][]) {
+    let sum = 0;
+    let gx = Infinity;
+    let gy = Infinity;
+    for (const loop of loops) {
+      if (loop.length < 3) continue;
+      const b = bounds(loop);
+      this.loops.push({ loop, minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY });
+      sum += Math.max(b.maxX - b.minX, b.maxY - b.minY);
+      if (b.minX < gx) gx = b.minX;
+      if (b.minY < gy) gy = b.minY;
+    }
+    if (this.loops.length === 0) return;
+    // About one loop per cell: the typical loop size keeps each loop in a few cells.
+    this.cell = Math.max(sum / this.loops.length, 1e-6);
+    this.ox = gx;
+    this.oy = gy;
+    this.loops.forEach((l, i) => {
+      const [x0, y0] = this.cellOf(l.minX, l.minY);
+      const [x1, y1] = this.cellOf(l.maxX, l.maxY);
+      for (let cx = x0; cx <= x1; cx++) {
+        for (let cy = y0; cy <= y1; cy++) {
+          const k = this.key(cx, cy);
+          const bucket = this.cells.get(k);
+          if (bucket) bucket.push(i);
+          else this.cells.set(k, [i]);
+        }
+      }
+    });
+  }
+
+  private cellOf(x: number, y: number): [number, number] {
+    return [Math.floor((x - this.ox) / this.cell), Math.floor((y - this.oy) / this.cell)];
+  }
+
+  private key(cx: number, cy: number): number {
+    return cx * 1_000_003 + cy;
+  }
+
+  /** True when `p` is strictly inside at least one loop (same test as `pointInPolygon`). */
+  blocks(p: Point): boolean {
+    if (this.loops.length === 0) return false;
+    const [cx, cy] = this.cellOf(p.x, p.y);
+    const bucket = this.cells.get(this.key(cx, cy));
+    if (!bucket) return false;
+    for (const i of bucket) {
+      const l = this.loops[i];
+      if (p.x < l.minX || p.x > l.maxX || p.y < l.minY || p.y > l.maxY) continue;
+      if (pointInPolygon(p, l.loop)) return true;
+    }
+    return false;
+  }
+}
+
 export function nestTrueShape(parts: TrueNestPart[], stock: StockRow[], opts: TrueNestOptions = {}): TrueNestResult {
   const spacing = opts.spacing ?? 0;
   const margin = opts.edgeMargin ?? 0;
@@ -271,9 +340,10 @@ export function nestTrueShape(parts: TrueNestPart[], stock: StockRow[], opts: Tr
         }
       }
 
+      const index = new ForbiddenIndex(forbidden);
       const valid = candidates.filter((p) => {
         if (p.x < minX - 1e-6 || p.x > maxX + 1e-6 || p.y < minY - 1e-6 || p.y > maxY + 1e-6) return false;
-        return !forbidden.some((loop) => loop.length >= 3 && pointInPolygon(p, loop));
+        return !index.blocks(p);
       });
       valid.sort(compareCandidates);
 
@@ -346,9 +416,10 @@ export function nestTrueShape(parts: TrueNestPart[], stock: StockRow[], opts: Tr
         }
       }
 
+      const holeIndex = new ForbiddenIndex(forbidden);
       const valid = candidates.filter((p) => {
         if (!fitLoops.some((loop) => loop.length >= 3 && pointInOrOnPolygon(p, loop))) return false;
-        return !forbidden.some((loop) => loop.length >= 3 && pointInPolygon(p, loop));
+        return !holeIndex.blocks(p);
       });
       valid.sort(compareCandidates);
 
