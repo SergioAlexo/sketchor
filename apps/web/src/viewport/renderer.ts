@@ -1,4 +1,4 @@
-import { canvasFontFamily, layoutMText, layoutOf, resolveTextLook, type TableRecord } from "@sketchor/core";
+import { canvasFontFamily, layoutMText, layoutOf, resolveTextLook, textWidth, type TableRecord } from "@sketchor/core";
 import type { Bounds, BoxSelectMode, CanvasTokens, ClosedRegion, Entity, EntityId, Point, SketchDocument } from "@sketchor/core";
 import {
   arcPointAt,
@@ -15,11 +15,13 @@ import {
   polylineSegments,
   resolveLinetype,
   screenDashPattern,
+  effectiveLtscale,
   transformed,
   translated,
   drawOrderOf,
   spaceOf,
   kindBounds,
+  type HighlightMark,
   type LayoutRecord,
   type ViewportEntity,
   viewportOutline,
@@ -31,6 +33,7 @@ import {
 import { drawSheet, viewportScreenView } from "./sheetRender";
 import type { MeasureResult } from "../state/store";
 import { gridStep, worldToScreen, type View } from "./view";
+import { classifyForView, GREEK_TEXT_PX, regionWorthDrawing, viewWorldRect, type WorldRect } from "./cull";
 import type { Snap } from "./snapping";
 import { getCachedImage } from "./imageCache";
 import { beginHatchFrame, drawHatchEntity } from "./hatchRender";
@@ -89,6 +92,8 @@ export interface RenderUiState {
   duplicateMarkers: readonly Point[];
   /** World locations of current line-crossing findings (read-only — see crossings.ts). */
   crossingMarkers: readonly Point[];
+  /** NF-03b: markers plugins put on this drawing through `ui.highlight` (e.g. open contour ends). */
+  pluginMarkers: readonly HighlightMark[];
   /** Dashed bbox + rotate handle shown when the selection is exactly one whole group. */
   groupHandle: { bounds: Bounds; pivot: Point } | null;
   /** While a grip is being dragged: the entity as it will be, drawn dashed over the original. */
@@ -158,7 +163,7 @@ export function render(
   if (ui.layout) drawSheet(ctx, paperV, ui.layout, COLORS.entity);
   else drawGrid(ctx, width, height, view);
 
-  if (ui.closedRegions.length > 0) drawClosedRegions(ctx, view, ui.closedRegions);
+  if (ui.closedRegions.length > 0) drawClosedRegions(ctx, view, ui.closedRegions, viewWorldRect(view, width, height, 0));
 
   if (ui.backdrop && ui.backdrop.length > 0) {
     ctx.globalAlpha = 0.25;
@@ -183,6 +188,10 @@ export function render(
   }
   // L-01/L-02: each space draws only its own entities (paper entities never show in model space and vice versa).
   const everything = doc.all().filter((e) => (spaceOf(e) ?? null) === layoutName);
+  // Entities wholly off-screen are skipped; the margin covers arrowheads, text and line widths that bounds don't.
+  const onScreen = viewWorldRect(paperV, width, height, 40);
+  /** Sub-pixel entities, one batch per colour/alpha, drawn as single pixels after the loop. */
+  const specks = new Map<string, Point[]>();
   // H-08: lower drawOrder first (stable), so a hatch can sit behind its boundary.
   const drawList = everything.some((e) => drawOrderOf(e) !== 0) ? [...everything].sort((a, b) => drawOrderOf(a) - drawOrderOf(b)) : everything;
   for (const entity of drawList) {
@@ -199,6 +208,8 @@ export function render(
       selected && ui.moveOffset
         ? translated(scaledEntity, ui.moveOffset.dx, ui.moveOffset.dy)
         : scaledEntity;
+    const vis = classifyForView(shown, onScreen, paperV.scale);
+    if (vis.vis === "offscreen") continue;
     const color = isReference
       ? COLORS.reference
       : selected
@@ -208,6 +219,13 @@ export function render(
           : isFreeEndpoint
             ? COLORS.connectivityHint
             : dofColour(ui, entity.id) ?? (shown.color ?? COLORS.entity);
+    if (vis.vis === "speck" && !selected && !isReference && !isHovered) {
+      const key = `${locked ? 0.45 : 1}|${color}`;
+      const list = specks.get(key);
+      if (list) list.push(vis.at);
+      else specks.set(key, [vis.at]);
+      continue;
+    }
     // A locked layer is background, not geometry you are working on.
     if (locked) ctx.globalAlpha = 0.45;
     if (shown.fill) drawHatch(ctx, paperV, shown, shown.fill);
@@ -215,6 +233,19 @@ export function render(
     if (selected) drawHandles(ctx, paperV, shown);
     ctx.globalAlpha = 1;
   }
+
+  for (const [key, points] of specks) {
+    const bar = key.indexOf("|");
+    ctx.globalAlpha = Number(key.slice(0, bar));
+    ctx.fillStyle = key.slice(bar + 1);
+    ctx.beginPath();
+    for (const p of points) {
+      const s = worldToScreen(paperV, p);
+      ctx.rect(Math.round(s.x) - 0.5, Math.round(s.y) - 0.5, 1.5, 1.5);
+    }
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
 
   if (ui.groupHandle) drawGroupHandle(ctx, view, ui.groupHandle);
 
@@ -269,6 +300,7 @@ export function render(
   for (const p of ui.healMarkers) drawHealMarker(ctx, view, p);
   for (const p of ui.duplicateMarkers) drawHealMarker(ctx, view, p, COLORS.duplicateMarker);
   for (const p of ui.crossingMarkers) drawHealMarker(ctx, view, p, COLORS.crossingMarker);
+  for (const m of ui.pluginMarkers) drawPluginMarker(ctx, view, m);
 
   if (ui.snap) drawSnapMarker(ctx, view, ui.snap);
 
@@ -384,10 +416,10 @@ function drawBoxSelect(
   ctx.setLineDash([]);
 }
 
-function drawClosedRegions(ctx: CanvasRenderingContext2D, view: View, regions: readonly (readonly Point[])[]): void {
+function drawClosedRegions(ctx: CanvasRenderingContext2D, view: View, regions: readonly (readonly Point[])[], onScreen: WorldRect): void {
   ctx.fillStyle = COLORS.closedRegionFill;
   for (const polygon of regions) {
-    if (polygon.length < 3) continue;
+    if (polygon.length < 3 || !regionWorthDrawing(polygon, onScreen, view.scale)) continue;
     ctx.beginPath();
     const p0 = worldToScreen(view, polygon[0]);
     ctx.moveTo(p0.x, p0.y);
@@ -494,6 +526,18 @@ function drawHealMarker(ctx: CanvasRenderingContext2D, view: View, p: Point, col
   ctx.moveTo(s.x + 4, s.y - 4);
   ctx.lineTo(s.x - 4, s.y + 4);
   ctx.stroke();
+}
+
+/** A plugin's `ui.highlight` marker: the crossings detector's violet ring, plus its label beside it. */
+function drawPluginMarker(ctx: CanvasRenderingContext2D, view: View, m: HighlightMark): void {
+  drawHealMarker(ctx, view, m.at, COLORS.crossingMarker);
+  if (!m.label) return;
+  const s = worldToScreen(view, m.at);
+  ctx.font = "12px 'Segoe UI', system-ui, sans-serif";
+  ctx.fillStyle = COLORS.crossingMarker;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "bottom";
+  ctx.fillText(m.label, s.x + 10, s.y - 8);
 }
 
 function drawMeasurement(
@@ -834,6 +878,25 @@ function drawEntity(
 
   if (entity.type === "text") {
     const p = worldToScreen(view, entity.at);
+    const px = entity.height * view.scale;
+    if (px < GREEK_TEXT_PX) {
+      // Greeked: a faint stroke where the string sits, so a zoomed-out sheet keeps its texture without drawing glyphs nobody can read.
+      const w = textWidth(entity.text, entity.height) * view.scale;
+      const x0 = entity.halign === "center" ? -w / 2 : entity.halign === "right" ? -w : 0;
+      const yMid = entity.valign === "top" ? px / 2 : entity.valign === "middle" ? 0 : -px / 2;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(-entity.rotation);
+      ctx.globalAlpha *= 0.6;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(0.5, px * 0.6);
+      ctx.beginPath();
+      ctx.moveTo(x0, yMid);
+      ctx.lineTo(x0 + w, yMid);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
     ctx.save();
     ctx.translate(p.x, p.y);
     ctx.rotate(-entity.rotation); // world CCW → screen CW
@@ -961,7 +1024,7 @@ function drawEntity(
 
   // Infinite construction lines always draw dashed, regardless of linetype — they're a drawing aid, not real geometry.
   ctx.setLineDash(
-    entity.type === "line" && entity.infinite ? [6, 4] : screenDashPattern(builtinLinetype(linetypeName).pattern, ltscale, view.scale),
+    entity.type === "line" && entity.infinite ? [6, 4] : screenDashPattern(builtinLinetype(linetypeName).pattern, effectiveLtscale(ltscale, entity), view.scale),
   );
   ctx.beginPath();
   if (entity.type === "line") {

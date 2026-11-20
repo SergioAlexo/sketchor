@@ -11,6 +11,27 @@ PDF/print report (cover summary, one page per sheet with a numbered part table,
 parts ordered-vs-placed) read the exact same entities as the drawing — no
 separate re-derivation.
 
+**N-47 — critical fix: part extraction only found circles/closed polylines on a real DXF** (`packages/plugin-nest/src/partExtraction.ts`).
+Root cause: `extractParts`'s default join/close tolerance was `1e-6` mm —
+"exact" in the sense of a document's own internal geometry, but a DXF is
+ASCII text with a fixed number of decimal digits, so an outline's own
+corners routinely round-trip a few hundred-thousandths of a millimetre
+apart even when the authoring program drew them exactly coincident
+(confirmed on a real customer part: an arc endpoint computed as `2.308032`
+came back as `2.308031`). At `1e-6` that gap never joins, so a part's
+outline — almost always lines/arcs chained together — silently vanished
+into `openChains` with nothing in the UI loud enough to explain why, while
+already-closed entities (circles, closed polylines — i.e. holes) came
+through fine. Reported as "uploading a DXF only imports the circles, not
+the whole part." Fix: raised the default to `DEFAULT_JOIN_TOLERANCE = 0.02`
+mm — ~10x the worst rounding gap seen, still far under the "few hundredths
+to a few tenths of a millimetre" that NF-03's own docs call a real open
+gap, so a genuinely unclosed contour is still reported. The user-facing
+"Join tolerance" setting (NF-03) is unchanged — it still raises the
+tolerance further for a sloppier file; it just no longer has to be touched
+for an ordinary DXF to import as one part. Regression test:
+`partExtraction.test.ts` → "N-47: DXF round-off doesn't lose the outline".
+
 **N-40/41/44** (`packages/plugin-gcode/src/toolpath.ts`, `write.ts`) — a real
 toolpath builder and G-code writer, wired to a per-sheet "Export G-code" button.
 Ordering: a part's holes are cut before its outer profile, a part nested inside
@@ -60,9 +81,14 @@ N-54 (save/reopen job file) is already done in the Sheet Nesting plugin (RN-42, 
 
 **N-52** lives in the Sheet Nesting plugin (it owns the Stock on hand model): `packages/plugin-nest/src/remnants.ts` finds the largest rectangle clear of every placed part bounding box per sheet (min side 100 mm, min area 25000 mm2), and "Save offcuts as stock" adds them as qty-1 `Remnant W x H` rows (material/thickness carried, identical ones merged) and takes the inventory sheets the job used out of the list.
 
-Remaining: N-42/43 deferrals above (other post profiles, a canvas toolpath
-preview with dashed rapids), and a real algorithmic improvement if jobs need more
-than ~600 instances sharing one sheet.
+**N-42** (`packages/plugin-gcode/src/posts.ts`, commit `58f7720`): post profiles are data (`PostProfileSpec`) with built-ins for generic laser (the old output), generic plasma, LinuxCNC, Mach3/4 and GRBL laser, each round-tripped through `gcodeToEntities`; the Sheet Nesting panel has a Post-processor picker carried on the job. Custom profiles (this pass): **Edit…** beside the picker opens an inline editor prefilled from the selected profile (name, beam on/off, pierce dwell unit, comment style, header lines, program end); saving a built-in makes the user's own copy (`custom-` id, never shadowing a built-in), saving their own replaces it, Delete removes it, up to 20 kept in plugin storage (`Custom.posts`). Every save goes through `validatePostSpec` and stored profiles are re-validated on load (`parseCustomPosts`), so only plain G-code words reach a machine; export resolves built-in, then custom, then the default (`resolvePost`). Open: the older Sheet Metal Nest panel still always uses the default (new functionality ships in Sheet Nesting, raster plan decision 5).
+
+**N-43** (`packages/plugin-gcode/src/preview.ts`): `toolpathPreview(plan.features)` draws a sheet's cut plan as geometry on three layers — `Toolpath Cut` (lead-ins + contours, holes blue, outer profiles green), `Toolpath Rapid` (beam-off travel, red `DASHED`) and `Toolpath Order` (a numbered marker at every pierce) — walking the features exactly as `writeGcode` emits them, so the test runs the real writer and reader and demands the same cut and rapid length. The Sheet Nesting panel's **Toolpath** button (next to G-code, same sheet picker) opens it in a tab of its own (`Toolpath – <sheet>`), so the result drawing is never edited, and reports cuts, pierces, cut length and rapid length. Rapids stay dashed with a whole sheet in view because they carry a per-entity linetype scale sized to the sheet (`toolpathPreviewScale`): the new `linetypeScale` entity field (DXF group 48, AutoCAD's "Linetype scale" property — read from AC1032/other writers, written by the AC1032 writer, editable in Properties, honoured by the canvas, SVG, PDF and EPS). Open: the older Sheet Metal Nest panel has no preview button (new functionality ships in Sheet Nesting, raster plan decision 5), and the preview isn't animated.
+
+**Arc lead-ins** (2026-11-20): Sheet Nesting's G-code options have **Lead-in: Straight / Arc (tangent)**. Arc makes each lead-in a quarter circle of the lead-in length that joins the path tangentially (`buildCutPlan({ leadIn: "arc" })` → `CutFeature.leadInArc`, emitted as G2/G3 with I/J, drawn by the Toolpath preview and counted in the cutting time). It is checked against its own contour - every sample in scrap, nothing of the contour closer than half the clearance a straight edge would give - and falls back to the straight lead-in where it does not fit (small holes) and on contours with tabs (the tab code re-aims and checks a straight lead-in). Default stays Straight, so existing programs are unchanged.
+
+Remaining: a real algorithmic
+improvement if jobs need more than ~2000 instances sharing one sheet — done as N-50 (2026-11-20): the candidate search is incremental per sheet and orientation, a placement only touches the frontier of the fill, the cap is 10000 (2000 parts on one sheet: 4.9 s → 0.06 s).
 
 Goal: select parts, enter quantities, nest them true-shape onto any number of sheets drawn from a library of standard sizes, with per-part rotation freedom (locked / 90° / any), part-in-part filling of large cut-outs, and output as a printed/PDF report (cutting time, utilisation, scrap), DXF, and G-code.
 
@@ -107,9 +133,11 @@ Decision: **upgrade `plugin-nest` in place** into "Sheet Metal Nest" rather than
   - *Utilisation* = net part area (outer − holes) ÷ sheet area, per sheet and job total.
   - *Scrap* split into **reusable remnant** (clean rectangle past the last part, above a minimum size) vs **true scrap** — area, weight (area × thickness × density) and cost.
   - *Cutting time* = cut length ÷ feed + pierces × pierce time + rapid length ÷ rapid speed, from an editable **cut table** (material, thickness, feed, pierce time, kerf). Seed values are **marked as estimates** — machine values win. Once Phase 4 lands, time comes from the real toolpath so report and program agree.
+  - *Done (Sheet Nesting, 2026-11-20):* time now comes from the real cut plan — `cutTimeSec` (`plugin-gcode/src/preview.ts`) over the same walk `toolpathPreview` and the G-code make (lead-ins, tab restarts, actual rapids, the trip home). Speeds: **Cutting speeds** under Cutting parameters (feed and rapid per minute, pierce seconds, per machine, persisted); a blank field uses the built-in laser estimate, shown greyed in the field (`resolveCutSpeeds`). The table is estimated for any thickness, not only its seed rows (`cutRowForThickness`: log-interpolated feed between rows, proportional past the thickest) — before, 1/8 in (3.175 mm) missed the 3 mm row's 0.05 mm tolerance and every inch-gauge job showed "—". Waterjet / router / other get a time only from their own feed rate (the table is laser data). Shown as a **Cut time** KPI in the panel, a **Cutting time** KPI and a **Cut speeds** header row in the report, per sheet in the stock table; the G-code feed uses the same speeds.
 
 ## Phase 3 — Report, PDF, DXF
 
+- **Report drawing in ink (2026-11-20):** parts are drawn in the report's black ink whatever colour their file gave them. DXFs exported with AutoCAD colour 7 import as white, and those parts printed as bare part numbers with no outline on the white page. The canvas layout keeps the file's colours.
 - **N-30 PDF / print** via `PdfBuilder` + `drawEntitiesToPdf`: cover summary (job, sheets by size, total utilisation, scrap, cutting time, cost) · one page per sheet (drawing with part numbers + part/qty/rotation/area table) · parts summary (ordered vs placed). Same HTML + PDF to `ui.print`, so autosave works for free.
 - **N-31 DXF export** per sheet or all sheets in one file; layers `SHEET`, `PARTS`, `HOLES`, `LABELS`, optional `TOOLPATH`; `$INSUNITS` set. Saved through N-04.
 
@@ -123,7 +151,7 @@ Decision: **upgrade `plugin-nest` in place** into "Sheet Metal Nest" rather than
 
 ## Phase 5 — Later
 
-Common-line cutting · remnant library (save offcuts as stock) · micro-joints/tabs (done, N-53) · save/reopen nest job file · part priority / due dates.
+Common-line cutting · remnant library (save offcuts as stock) · micro-joints/tabs (done, N-53) · save/reopen nest job file · part priority / due dates (done, N-55: priority + due date per part, nested first, shown in the report).
 
 ## Risks
 

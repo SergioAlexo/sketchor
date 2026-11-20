@@ -180,3 +180,51 @@ describe("buildCutPlan — C-08 ellipses", () => {
     expect(holeFeature.loop.length).toBeLessThan(150);
   });
 });
+
+describe("buildCutPlan — arc lead-ins", () => {
+  const plate: GcodePlacement = { id: "p0", number: 1, outerEntities: rectLines("o", 0, 0, 100, 60), holeEntities: [circle("h", 50, 30, 10)] };
+  const arcPoints = (f: ReturnType<typeof buildCutPlan>["features"][number]) => {
+    const c = f.leadInArc!.center;
+    const r = Math.hypot(f.pierce.x - c.x, f.pierce.y - c.y);
+    const a0 = Math.atan2(f.pierce.y - c.y, f.pierce.x - c.x), a1 = Math.atan2(f.leadIn.y - c.y, f.leadIn.x - c.x);
+    let sweep = f.leadInArc!.ccw ? a1 - a0 : a0 - a1;
+    while (sweep <= 0) sweep += 2 * Math.PI;
+    return { r, sweep, pts: Array.from({ length: 9 }, (_, i) => { const a = a0 + (f.leadInArc!.ccw ? 1 : -1) * sweep * (i / 8); return { x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) }; }) };
+  };
+
+  it("is off by default: the straight lead-in output is unchanged", () => {
+    expect(buildCutPlan([plate], { leadInLength: 3 }).features.every((f) => f.leadInArc === undefined)).toBe(true);
+  });
+
+  it("outer profile: a quarter circle of the lead-in radius, wholly in scrap, tangent to the edge where it joins", () => {
+    const outer = buildCutPlan([plate], { leadInLength: 4, leadIn: "arc" }).features.find((f) => f.role === "outer")!;
+    expect(outer.leadInArc).toBeDefined();
+    const { r, sweep, pts } = arcPoints(outer);
+    expect(r).toBeCloseTo(4, 9);
+    expect(sweep).toBeCloseTo(Math.PI / 2, 9);
+    // every point but the join is outside the part
+    for (const p of pts.slice(0, -1)) expect(p.x < 0 || p.x > 100 || p.y < 0 || p.y > 60).toBe(true);
+    // tangent at the join: the radius there is perpendicular to the edge's direction of cut
+    const c = outer.leadInArc!.center;
+    const first = outer.loop[0]!;
+    const end = first.kind === "segment" ? first.b : first.center;
+    const dir = { x: end.x - outer.leadIn.x, y: end.y - outer.leadIn.y };
+    expect(Math.abs((c.x - outer.leadIn.x) * dir.x + (c.y - outer.leadIn.y) * dir.y)).toBeLessThan(1e-6);
+  });
+
+  it("a hole with room gets its arc inside the hole; a hole too small for it keeps the straight lead-in", () => {
+    const hole = buildCutPlan([plate], { leadInLength: 3, leadIn: "arc" }).features.find((f) => f.role === "hole")!;
+    expect(hole.leadInArc).toBeDefined();
+    for (const p of arcPoints(hole).pts.slice(0, -1)) expect(Math.hypot(p.x - 50, p.y - 30)).toBeLessThan(10);
+    const tiny = buildCutPlan([{ ...plate, holeEntities: [circle("t", 50, 30, 2)] }], { leadInLength: 3, leadIn: "arc" }).features.find((f) => f.role === "hole")!;
+    expect(tiny.leadInArc).toBeUndefined();
+  });
+
+  it("with tabs the lead-in goes back to a straight one (re-aimed and checked against the tabs)", () => {
+    const plan = buildCutPlan([plate], { leadInLength: 3, leadIn: "arc", tabs: { count: 3, width: 4 } });
+    const outer = plan.features.find((f) => f.role === "outer")!;
+    expect(outer.runs).toBeDefined();
+    expect(outer.leadInArc).toBeUndefined();
+    expect(Math.hypot(outer.pierce.x - outer.leadIn.x, outer.pierce.y - outer.leadIn.y)).toBeCloseTo(3, 6);
+  });
+});

@@ -17,7 +17,7 @@ import { layerOf } from "../entities";
 import type { Point } from "../geometry";
 import { arcSweep, bulgeToArc } from "../geometry";
 import { kindTessellate } from "../kinds/registry";
-import { builtinLinetype } from "../linetypes";
+import { builtinLinetype, effectiveLtscale } from "../linetypes";
 import { bezierPieces } from "../nurbs";
 import { ellipsePointAt, ellipseSweep, minorAxisOf } from "../ellipse";
 import { paintedPolygons } from "../hatch/loops";
@@ -217,7 +217,8 @@ export function entitiesToEps(entitiesIn: Entity[], opts: EpsExportOptions = {})
     const lw = (e as { lineweight?: number }).lineweight;
     P(`${f6(c[0])} ${f6(c[1])} ${f6(c[2])} rg ${f6((lw && lw > 0 ? lw : defLw) * PT_PER_MM)} lw`);
     const lt = builtinLinetype((e as { linetype?: string }).linetype);
-    if (lt.pattern.length) P(`[${lt.pattern.map((v) => f6(Math.abs(v) * PT_PER_MM)).join(" ")}] 0 setdash`);
+    const k = effectiveLtscale(1, e);
+    if (lt.pattern.length) P(`[${lt.pattern.map((v) => f6(Math.abs(v) * k * PT_PER_MM)).join(" ")}] 0 setdash`);
     else P("[] 0 setdash");
   };
   const pathOps = (subs: Sub[]): string => {

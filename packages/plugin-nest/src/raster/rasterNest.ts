@@ -113,6 +113,7 @@ function prepare(parts: RasterNestPart[], stock: StockRow[], opts: RasterNestOpt
         rots: degs,
         qty: p.quantity,
         area: net,
+        ...(p.rank ? { rank: p.rank } : {}),
       };
     }),
     // Inventory only; the purchase size goes in `extra`. With no inventory a

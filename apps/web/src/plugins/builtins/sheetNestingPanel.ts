@@ -54,6 +54,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       .pwarn { color: #e0912f; font-size: 11px; }
       .pctl { display: grid; grid-template-columns: 46px 96px; gap: 3px; grid-column: 2 / 4; }
       .pctl select, .pctl input { margin-top: 0; padding: 3px 4px; font-size: 11px; }
+      .prio-high { border-color: var(--sk-warn,#e0a030) !important; color: var(--sk-warn,#e0a030); }
       .kpis { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; margin-bottom: 6px; }
       .kpi { background: var(--sk-bg,#1e1f22); border-radius: 5px; padding: 5px 6px; }
       .kpi b { display: block; font-size: 15px; }
@@ -76,7 +77,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
     <script>
       const post = (m) => parent.postMessage({ pluginMessage: m }, "*");
       const $ = (id) => document.getElementById(id);
-      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      // Single quotes too: almost every attribute below is written value='...', so a name with an apostrophe would otherwise end it.
+      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
       // All user-visible strings in one table so translations can be added later.
       const T = {
@@ -85,18 +87,18 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         thickness: "Thickness", gauge: "Gauge...", machine: "Machine", machines: { laser: "Laser", waterjet: "Waterjet", router: "CNC router", other: "Other" },
         engine: "Engine", raster: "Raster (fast)", trueShape: "True shape (exact)",
         engineHint: "Raster: default - fast, handles any quantity. True shape: pick for few large parts with tight kerf, or when you need exact clearance or mirroring.",
-        cutting: "Cutting parameters", estimate: "Estimates - set your machine's values.", kerf: "Kerf", web: "Web (gap)", margin: "Edge margin", clamp: "Clamp strip", bedW: "Bed width", bedH: "Bed height",
+        cutting: "Cutting parameters", estimate: "Estimates - set your machine's values.", kerf: "Kerf", web: "Web (gap)", margin: "Edge margin", clamp: "Clamp strip", bedW: "Bed width", bedH: "Bed height", speeds: "Cutting speeds", speedsHint: "For the cutting-time estimate and the G-code feed. Leave blank to use the built-in laser estimate shown in grey.", feed: "Feed rate (per min)", rapid: "Rapid (per min)", pierce: "Pierce time (s)",
         accuracy: "Accuracy", acc: { fast: "Fast", normal: "Normal", precise: "Precise" }, time: "Optimise for", times: { 0: "First result", 10000: "10 s", 30000: "30 s", 120000: "2 min" },
         units: "Display units", unitNames: { in: "Inches (fractions)", indec: "Inches (decimal)", ftin: "Feet-inches", mm: "mm", cm: "cm", m: "m" },
-        trueOpts: "True shape options", gravity: "Gravity", minHole: "Min hole size", tabCount: "Tabs per contour", tabWidth: "Tab width", gcodeOpts: "G-code", post: "Post-processor", search: "Search", searches: { quick: "Quick", normal: "Normal", thorough: "Thorough" },
+        trueOpts: "True shape options", gravity: "Gravity", minHole: "Min hole size", tabCount: "Tabs per contour", prio: { high: "High priority", normal: "Normal", low: "Low priority" }, due: "Due", prioHint: "High-priority and earlier-due parts are nested first, so they land on the first sheets - and are the last left out when the stock runs out.", leadIn: "Lead-in", leadIns: { line: "Straight", arc: "Arc (tangent)" }, tabWidth: "Tab width", gcodeOpts: "G-code", post: "Post-processor", postEdit: "Edit...", postDelete: "Delete", postEditOwn: "Edit post-processor", postEditCopy: "New post-processor (a copy you can change)", postName: "Name", postOn: "Beam on", postOff: "Beam off", postEnd: "Program end", postHeader: "Header lines (one per line)", postDwell: "Pierce dwell", postComments: "Comments", postSave: "Save", postSaveCopy: "Save as my post-processor", postCancel: "Cancel", search: "Search", searches: { quick: "Quick", normal: "Normal", thorough: "Thorough" },
         grav: { "bottom-left": "Bottom-left", "bottom-right": "Bottom-right", "top-left": "Top-left", "top-right": "Top-right" },
         parts: "Parts", addSelection: "+ Add selection", addFiles: "+ Add files", noParts: "No parts yet - select closed shapes and click Add selection, or add DXF/DWG files.",
         qty: "Qty", rot: { none: "No rotation", flip: "0 / 180", r90: "Every 90", r45: "Every 45", r30: "Every 30", r15: "Every 15", r10: "Every 10", free: "Any angle" },
         holes: "holes", mirror: "Mirror", inHoles: "In holes", fileUnit: "File units", fileUnits: { "": "As in file", 1: "inch", 4: "mm", 5: "cm", 6: "m", 2: "foot" },
         calculate: "Calculate", stop: "Stop", clear: "Clear", check: "Check nest", saveJob: "Save job", openJob: "Open job",
         fillIn: "Fill in the orange fields", ready: "Ready to calculate", gone: "Drawing no longer found", bedWarn: "The sheet is larger than the machine bed.",
-        results: "Results", kpi: { sheets: "Sheets", sheetsUsed: "Sheets used", toBuy: "To purchase", util: "Utilisation", placed: "Parts placed", cut: "Cut length", pierce: "Pierces" },
-        stockUsage: "Stock usage", offcuts: "Usable offcuts", saveOffcuts: "Save offcuts as stock", notPlaced: "Not placed", dxf: "DXF", allZip: "All as ZIP", gcode: "G-code",
+        results: "Results", kpi: { sheets: "Sheets", sheetsUsed: "Sheets used", toBuy: "To purchase", util: "Utilisation", placed: "Parts placed", cut: "Cut length", pierce: "Pierces", time: "Cut time (est.)" },
+        stockUsage: "Stock usage", offcuts: "Usable offcuts", saveOffcuts: "Save offcuts as stock", notPlaced: "Not placed", dxf: "DXF", allZip: "All as ZIP", gcode: "G-code", toolpath: "Toolpath", toolpathTip: "Open the cut order, pierces and rapids for this sheet in a new tab",
         manual: "Manual", groupsMode: "Groups from a list", bomHint: "Paste the parts list here (part number, quantity, material)...", loadCsv: "Load CSV", chooseFolder: "Choose folder", makeGroups: "Groups from the list",
         noFolder: "No drawing folder chosen - part numbers are looked up as DXF files in it.", noGroups: "No groups yet - paste a parts list and click Groups from the list.", group: "Group", of: "of",
         credit: "Nesting engine based on the Sheet Nesting Calculator by Oleksandr Borenko",
@@ -108,6 +110,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       let progress = null;
       let message = null;
       let customOpen = false;
+      let cuttingOpen = false; // the Cutting parameters <details> stays as the user left it across re-renders
+      let postDraft = null; // N-42: the post-processor being edited, or null; kept here so a re-render doesn't lose typing
 
       function optionsHtml(map, sel, keys) {
         return (keys || Object.keys(map)).map((k) => "<option value='" + esc(k) + "'" + (String(k) === String(sel) ? " selected" : "") + ">" + esc(map[k]) + "</option>").join("");
@@ -131,6 +135,16 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         return "<label class='fld'><span class='t'>" + esc(label) + "</span><span class='lf'>" +
           "<input data-id='" + id + "' data-len='" + id + "' class='st-" + (st || "ok") + "' value='" + esc(f.v) + "'" + (extraAttr || "") + ">" +
           "<select data-id='" + id + "-u' data-lenu='" + id + "'" + (extraAttr || "") + ">" + units + "</select></span></label>";
+      }
+
+      const MM_PER_UNIT = { in: 25.4, mm: 1, cm: 10, m: 1000, ft: 304.8 };
+      /** A machine speed (length per minute): blank shows the built-in estimate, converted to the field's own unit, in grey. */
+      function speedField(id, label, f, autoMm) {
+        const fld = f || { v: "", u: V.bareUnit || "in" };
+        const k = MM_PER_UNIT[fld.u] || 25.4;
+        const v = autoMm > 0 ? autoMm / k : 0;
+        const ph = v > 0 ? String(v >= 100 ? Math.round(v) : Math.round(v * 10) / 10) : "";
+        return lenField(id, label, fld, "ok", ph ? " placeholder='" + ph + "'" : "");
       }
 
       function thumb(pts) {
@@ -176,13 +190,18 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
 
       function cuttingCard() {
         const j = V.job, st = V.status, p = j.params, ras = isRaster();
-        let h = "<details class='card'><summary>" + T.cutting + "</summary><div class='muted' style='font-size:10px;margin-bottom:4px'>" + T.estimate + "</div><div class='grid2'>";
+        let h = "<details class='card' data-cutting='1'" + (cuttingOpen || postDraft ? " open" : "") + "><summary>" + T.cutting + "</summary><div class='muted' style='font-size:10px;margin-bottom:4px'>" + T.estimate + "</div><div class='grid2'>";
         h += lenField("kerf", j.machine === "router" ? "Bit diameter (kerf)" : T.kerf, p.kerf, st.kerf);
         h += lenField("web", T.web, p.web, st.web);
         h += lenField("margin", T.margin, p.margin, st.margin);
         if (j.machine === "laser") h += lenField("clamp", T.clamp, p.clamp, st.clamp);
         h += lenField("bedW", T.bedW, p.bedW, st.bedW);
         h += lenField("bedH", T.bedH, p.bedH, st.bedH);
+        h += "</div><h4 style='margin-top:6px'>" + T.speeds + "</h4><div class='muted' style='font-size:10px;margin-bottom:4px'>" + esc(V.speedAuto && V.speedAuto.none ? V.speedAuto.none : T.speedsHint) + "</div><div class='grid2'>";
+        h += speedField("feed", T.feed, p.feed, V.speedAuto ? V.speedAuto.feedMm : 0);
+        h += speedField("rapid", T.rapid, p.rapid, V.speedAuto ? V.speedAuto.rapidMm : 0);
+        h += "<label class='fld'><span class='t'>" + T.pierce + "</span><input data-id='pierce' data-pierce='1' value='" + esc(p.pierce || "") + "' placeholder='" + esc(V.speedAuto ? V.speedAuto.pierce : "") + "'></label>";
+        h += "</div><div class='grid2'>";
         h += "<label class='fld' title='" + esc(ras ? "" : RASTER_ONLY_NA.accuracy) + "'><span class='t'>" + T.accuracy + "</span><select data-id='accuracy' data-set='accuracy'" + (ras ? "" : " disabled") + ">" + optionsHtml(T.acc, j.accuracy) + "</select></label>";
         h += "<label class='fld' title='" + esc(ras ? "" : RASTER_ONLY_NA.time) + "'><span class='t'>" + T.time + "</span><select data-id='timeMs' data-set='timeMs'" + (ras ? "" : " disabled") + ">" + optionsHtml(T.times, j.timeMs, [0, 10000, 30000, 120000]) + "</select></label>";
         h += "<label class='fld'><span class='t'>" + T.units + "</span><select data-id='outputUnit' data-set='outputUnit'>" + optionsHtml(T.unitNames, j.outputUnit) + "</select></label></div>";
@@ -191,10 +210,29 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         h += "<label class='fld' title='" + esc(ras ? RASTER_ONLY_NA.search : "") + "'><span class='t'>" + T.search + "</span><select data-id='searchLevel' data-set='searchLevel'" + (ras ? " disabled" : "") + ">" + optionsHtml(T.searches, j.searchLevel) + "</select></label>";
         h += "<label class='fld' title='" + esc(ras ? RASTER_ONLY_NA.minHole : "") + "'><span class='t'>" + T.minHole + "</span><input data-id='minHole' data-minhole='1' value='" + esc(j.minHoleArea > 0 ? Math.round(Math.sqrt(j.minHoleArea) * 100) / 100 : "") + "' placeholder='mm'" + (ras ? " disabled" : "") + "></label></div>";
         h += "<h4 style='margin-top:6px'>" + T.gcodeOpts + "</h4><div class='grid2'>";
-        h += "<label class='fld' style='grid-column:1/-1'><span class='t'>" + T.post + "</span><select data-id='postId' data-set='postId'>" + (V.posts || []).map((p) => "<option value='" + esc(p.id) + "'" + (p.id === V.postId ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") + "</select></label>";
+        const ownPost = (V.posts || []).some((p) => p.id === V.postId && p.custom);
+        h += "<label class='fld' style='grid-column:1/-1'><span class='t'>" + T.post + "</span><span class='lf'><select data-id='postId' data-set='postId' style='flex:1;min-width:0'>" + (V.posts || []).map((p) => "<option value='" + esc(p.id) + "'" + (p.id === V.postId ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") + "</select>" +
+          "<button class='ghost sm' data-act='post-edit'>" + T.postEdit + "</button>" + (ownPost ? "<button class='ghost sm' data-act='post-delete'>" + T.postDelete + "</button>" : "") + "</span></label>";
+        if (postDraft) h += "</div>" + postEditor() + "<div class='grid2'>";
+        h += "<label class='fld' title='Arc: a quarter circle that joins the edge tangentially - no dwell mark where the cut meets the part. Falls back to straight where it does not fit (small holes) and on contours with tabs.'><span class='t'>" + T.leadIn + "</span><select data-id='leadIn' data-set='leadIn'>" + optionsHtml(T.leadIns, j.leadIn || "line") + "</select></label>";
         h += "<label class='fld'><span class='t'>" + T.tabCount + "</span><input data-id='tabCount' data-tabs='tabCount' value='" + esc(j.tabCount || "") + "' placeholder='0'></label>";
         h += "<label class='fld'><span class='t'>" + T.tabWidth + "</span><input data-id='tabWidth' data-tabs='tabWidth' value='" + esc(j.tabWidth || "") + "' placeholder='3 mm'></label></div>";
         return h + "</details>";
+      }
+
+      /** N-42: edits a copy of the selected post-processor (a built-in) or the user's own one in place. */
+      function postEditor() {
+        const d = postDraft, own = (V.posts || []).some((p) => p.id === d.id && p.custom);
+        const field = (k, label) => "<label class='fld'><span class='t'>" + label + "</span><input data-id='pe-" + k + "' data-pe='" + k + "' value='" + esc(d[k]) + "'></label>";
+        const opt = (k, v, label) => "<option value='" + v + "'" + (d[k] === v ? " selected" : "") + ">" + label + "</option>";
+        let h = "<div class='card' style='margin:6px 0'><h4>" + (own ? T.postEditOwn : T.postEditCopy) + "</h4><div class='grid2'>";
+        h += "<label class='fld' style='grid-column:1/-1'><span class='t'>" + T.postName + "</span><input data-id='pe-name' data-pe='name' value='" + esc(d.name) + "'></label>";
+        h += field("on", T.postOn) + field("off", T.postOff);
+        h += "<label class='fld'><span class='t'>" + T.postDwell + "</span><select data-pe='dwellUnit'>" + opt("dwellUnit", "s", "G4 P seconds") + opt("dwellUnit", "ms", "G4 P milliseconds") + "</select></label>";
+        h += "<label class='fld'><span class='t'>" + T.postComments + "</span><select data-pe='comments'>" + opt("comments", "paren", "(comment)") + opt("comments", "semicolon", "; comment") + "</select></label>";
+        h += "<label class='fld' style='grid-column:1/-1'><span class='t'>" + T.postHeader + "</span><textarea data-id='pe-header' data-pe='header' rows='3' style='width:100%;resize:vertical;background:var(--sk-bg,#1e1f22);color:inherit;border:1px solid var(--sk-border,#3a3d42);border-radius:4px'>" + esc(d.header) + "</textarea></label>";
+        h += field("end", T.postEnd) + "</div>";
+        return h + "<div class='row' style='margin-top:6px'><button data-act='post-save'>" + (own ? T.postSave : T.postSaveCopy) + "</button><button class='ghost' data-act='post-cancel'>" + T.postCancel + "</button></div></div>";
       }
 
       function partsCard() {
@@ -210,6 +248,9 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
           if (!isRaster()) {
             extra = "<label title='" + T.mirror + "' style='margin:0'><input type='checkbox' data-part='" + k + "' data-pset='mirror'" + (p.mirror ? " checked" : "") + ">" + T.mirror + "</label> <label title='" + T.inHoles + "' style='margin:0'><input type='checkbox' data-part='" + k + "' data-pset='allowInHoles'" + (p.allowInHoles ? " checked" : "") + ">" + T.inHoles + "</label>";
           }
+          const prio = "<select data-part='" + k + "' data-pset='priority' title='" + esc(T.prioHint) + "'" + (p.priority && p.priority !== "normal" ? " class='prio-" + p.priority + "'" : "") + ">" + optionsHtml(T.prio, p.priority || "normal") + "</select>";
+          const due = "<label title='" + esc(T.prioHint) + "' style='margin:0'>" + T.due + " <input type='date' data-part='" + k + "' data-pset='due' value='" + esc(p.due || "") + "' style='width:118px'></label>";
+          extra = prio + " " + due + (extra ? " " + extra : "");
           let unit = "";
           if (p.file) {
             const cur = p.file.unit == null ? "" : String(p.file.unit);
@@ -279,7 +320,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (!R) return "";
         const k = R.kpis;
         let h = "<div class='card'><h4>" + T.results + "</h4><div class='kpis'>" +
-          [[k.sheets, k.showPurchase ? T.kpi.sheets : T.kpi.sheetsUsed]].concat(k.showPurchase ? [[k.toPurchase, T.kpi.toBuy]] : []).concat([[Math.round(k.utilisation * 1000) / 10 + "%", T.kpi.util], [k.placed + "/" + k.required, T.kpi.placed], [k.cutLength, T.kpi.cut], [k.pierces, T.kpi.pierce]])
+          [[k.sheets, k.showPurchase ? T.kpi.sheets : T.kpi.sheetsUsed]].concat(k.showPurchase ? [[k.toPurchase, T.kpi.toBuy]] : []).concat([[Math.round(k.utilisation * 1000) / 10 + "%", T.kpi.util], [k.placed + "/" + k.required, T.kpi.placed], [k.cutLength, T.kpi.cut], [k.pierces, T.kpi.pierce]]).concat(k.cutTime ? [[k.cutTime, T.kpi.time]] : [])
             .map((x) => "<div class='kpi'><b>" + esc(x[0]) + "</b><span>" + x[1] + "</span></div>").join("") + "</div>";
         if (R.unplaced.length) h += "<div class='msg err'>" + T.notPlaced + ": " + R.unplaced.map((u) => esc(u.name) + " &times;" + u.count).join(", ") + "</div>";
         if (R.stopped) h += "<div class='msg warn'>Stopped early - showing the best layout found so far.</div>";
@@ -290,7 +331,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         h += "<h4 style='margin-top:8px'>Sheets</h4>" + R.cards.map((c) =>
           "<div class='scard'><div><b>" + esc(c.title) + "</b>" + (c.group ? " <span class='muted'>" + esc(c.group) + "</span>" : "") + "<div class='pdim'>" + esc(c.size) + " &middot; " + c.parts + " parts &middot; " + Math.round(c.utilisation * 100) + "%</div></div>" +
           "<button class='ghost sm' data-act='dxf' data-i='" + c.index + "'>" + T.dxf + "</button></div>").join("");
-        h += "<div class='row' style='margin-top:8px'><button class='ghost sm' data-act='dxf-all'>" + T.allZip + "</button><select id='gsheet' style='width:auto;margin:0'>" + R.sheetLabels.map((l, i) => "<option value='" + i + "'>" + esc(l) + "</option>").join("") + "</select><button class='ghost sm' data-act='gcode'>" + T.gcode + "</button><button class='ghost sm' data-act='print'>Print report</button></div>" + reportCard();
+        h += "<div class='row' style='margin-top:8px'><button class='ghost sm' data-act='dxf-all'>" + T.allZip + "</button><select id='gsheet' style='width:auto;margin:0'>" + R.sheetLabels.map((l, i) => "<option value='" + i + "'>" + esc(l) + "</option>").join("") + "</select><button class='ghost sm' data-act='toolpath' title='" + esc(T.toolpathTip) + "'>" + T.toolpath + "</button><button class='ghost sm' data-act='gcode'>" + T.gcode + "</button><button class='ghost sm' data-act='print'>Print report</button></div>" + reportCard();
         return h + "</div>";
       }
 
@@ -303,6 +344,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         const modeBar = "<div class='seg'><button data-act='mode' data-v='manual' class='" + (V.job.mode === "manual" ? "on" : "") + "'>" + T.manual + "</button><button data-act='mode' data-v='groups' class='" + (V.job.mode === "groups" ? "on" : "") + "'>" + T.groupsMode + "</button></div>";
         const body = V.job.mode === "groups" ? bomCard() + groupsCard() : partsCard();
         $("app").innerHTML = modeBar + jobCard() + cuttingCard() + body + actionsCard() + resultCard() + "<div class='credit'>" + T.credit + "</div>";
+        const cut = document.querySelector("[data-cutting]");
+        if (cut) cut.addEventListener("toggle", () => { cuttingOpen = cut.open; });
         if (focusState) {
           const el = document.querySelector("[data-id='" + focusState.id + "']");
           if (el) { el.focus(); try { el.setSelectionRange(focusState.s, focusState.e); } catch (e) {} }
@@ -324,8 +367,10 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       document.addEventListener("input", (e) => {
         const t = e.target;
         if (t.dataset.jobname) { jobName = t.value; return; }
+        if (t.dataset.pe && postDraft) { postDraft[t.dataset.pe] = t.value; return; }
         if (t.dataset.jobnotes) { jobNotes = t.value; return; }
         if (t.dataset.len) later("len" + t.dataset.len, () => setJob(lenPatch(t.dataset.len)));
+        else if (t.dataset.pierce) later("pierce", () => setJob({ params: { pierce: t.value } }));
         else if (t.dataset.stock) later("stock", () => post({ type: "stock-set", rows: stockRows() }), 400);
         else if (t.dataset.pset === "qty") later("q" + t.dataset.part, () => post({ type: "part-set", key: t.dataset.part, patch: { qty: t.value }, refresh: false }));
         else if (t.dataset.bom) later("bom", () => post({ type: "bom-text", text: t.value, refresh: false }), 400);
@@ -336,6 +381,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       });
       document.addEventListener("change", (e) => {
         const t = e.target, d = t.dataset;
+        if (d.pe && postDraft) { postDraft[d.pe] = t.value; return; }
         if (d.lenu) setJob(lenPatch(d.lenu));
         else if (d.gauge) { if (t.value) { const f = document.querySelector("[data-len=thickness]"); setJob({ thickness: { v: t.value, u: "in" } }); } }
         else if (d.gset) post({ type: "group-set", id: d.gid, patch: { [d.gset]: t.value } });
@@ -373,6 +419,11 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         else if (a === "dxf") post({ type: "export-dxf", sheetIndex: Number(b.dataset.i) });
         else if (a === "dxf-all") post({ type: "export-dxf", sheetIndex: -1 });
         else if (a === "gcode") post({ type: "export-gcode", sheetIndex: Number($("gsheet").value) });
+        else if (a === "toolpath") post({ type: "preview-toolpath", sheetIndex: Number($("gsheet").value) });
+        else if (a === "post-edit") { const p = V.postSpec || {}; postDraft = { id: p.id, name: p.name, on: p.on, off: p.off, end: p.end, dwellUnit: p.dwellUnit, comments: p.comments, header: (p.header || []).join("\n") }; render(); }
+        else if (a === "post-cancel") { postDraft = null; render(); }
+        else if (a === "post-save" && postDraft) post({ type: "post-save", spec: Object.assign({}, postDraft, { header: String(postDraft.header || "").split("\n") }) });
+        else if (a === "post-delete") { postDraft = null; post({ type: "post-delete", id: V.postId }); }
         else if (a === "pick-print-folder") post({ type: "pick-print-folder" });
         else if (a === "print") post({ type: "print", jobName, notes: jobNotes });
       });
@@ -408,6 +459,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (m.type === "result") { R = m; message = null; render(); return; }
         if (m.type === "print-folder") { printFolder = m.folder; if (R) render(); return; }
         if (m.type === "cleared") { R = null; message = null; render(); return; }
+        if (m.type === "post-saved") { postDraft = null; message = null; render(); return; }
         if (m.type === "error") { message = m.message; render(); return; }
         if (m.type === "selection-hint") { const el = $("sel-hint"); if (el) el.textContent = m.count ? m.count + " shape(s) selected" + (m.openCount ? ", " + m.openCount + " open" : "") : ""; return; }
       });

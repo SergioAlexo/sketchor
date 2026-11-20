@@ -34,6 +34,8 @@ export interface EntityOptions {
   linetype?: string;
   /** Plot/display line weight in mm; omit for BYLAYER. */
   lineweight?: number;
+  /** This entity's own linetype scale (DXF group 48), multiplied with the drawing's `$LTSCALE`; omit for 1. */
+  linetypeScale?: number;
   /** A construction/guide entity, excluded from export weight. */
   construction?: boolean;
 }
@@ -46,6 +48,7 @@ function base(opts?: EntityOptions): {
   fill?: string;
   linetype?: string;
   lineweight?: number;
+  linetypeScale?: number;
   construction?: boolean;
 } {
   return {
@@ -56,6 +59,7 @@ function base(opts?: EntityOptions): {
     ...(opts?.fill !== undefined ? { fill: opts.fill } : {}),
     ...(opts?.linetype !== undefined ? { linetype: opts.linetype } : {}),
     ...(opts?.lineweight !== undefined ? { lineweight: opts.lineweight } : {}),
+    ...(opts?.linetypeScale !== undefined ? { linetypeScale: opts.linetypeScale } : {}),
     ...(opts?.construction ? { construction: true } : {}),
   };
 }
@@ -89,7 +93,7 @@ export function text(
   str: string,
   opts?: EntityOptions & { height?: number; rotation?: number },
 ): TextEntity {
-  const { fill: _f, linetype: _lt, lineweight: _lw, construction: _c, ...b } = base(opts);
+  const { fill: _f, linetype: _lt, lineweight: _lw, linetypeScale: _ls, construction: _c, ...b } = base(opts);
   return { ...b, type: "text", at, text: str, height: opts?.height ?? 10, rotation: opts?.rotation ?? 0 };
 }
 

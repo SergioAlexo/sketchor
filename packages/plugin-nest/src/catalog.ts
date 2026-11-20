@@ -176,6 +176,16 @@ export interface MachineParams {
   /** Bed size; empty string = unknown / unlimited. */
   bedW: LengthField;
   bedH: LengthField;
+  /**
+   * The machine's own cutting speeds, for the cutting-time estimate and the
+   * G-code feed rate. Blank (or absent, in a job saved before these existed)
+   * = the built-in laser estimate for the material and thickness.
+   * `feed` / `rapid` are lengths per minute (a LengthField's unit, per min).
+   */
+  feed?: LengthField;
+  rapid?: LengthField;
+  /** Pierce time, seconds, as typed. */
+  pierce?: string;
 }
 
 const lf = (v: string): LengthField => ({ v, u: "in" });

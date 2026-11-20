@@ -407,6 +407,24 @@ export function Viewport() {
     }
   };
 
+  /**
+   * At most one redraw per display frame for continuous input (wheel, pan,
+   * pinch, hover). A wheel or trackpad sends far more events than a big
+   * drawing can redraw, and a synchronous redraw per event queued them up:
+   * the app fell further behind the longer you scrolled, until it seemed to
+   * do nothing at all. The view itself still changes on every event.
+   */
+  const frameQueuedRef = useRef(false);
+  const requestRedraw = () => {
+    if (frameQueuedRef.current) return;
+    frameQueuedRef.current = true;
+    requestAnimationFrame(() => {
+      frameQueuedRef.current = false;
+      useApp.getState().setZoom(viewRef.current.scale);
+      redraw();
+    });
+  };
+
   const redraw = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -481,6 +499,9 @@ export function Viewport() {
       healMarkers: state.healIssues.map((i) => i.location),
       duplicateMarkers: state.duplicateIssues.map((i) => i.location),
       crossingMarkers: state.crossingIssues.map((i) => i.location),
+      pluginMarkers: Object.values(state.pluginHighlights)
+        .filter((h) => h.sessionId === state.activeSessionId)
+        .flatMap((h) => h.marks),
       groupHandle: groupBounds && groupPivot ? { bounds: groupBounds, pivot: groupPivot } : null,
       gripPreview: overlay?.gripPreview ?? [],
       freeEndpointIds: state.showConnectivityHint ? freeEndpointEntityIds(doc) : null,
@@ -904,6 +925,7 @@ export function Viewport() {
   const healIssues = useApp((s) => s.healIssues);
   const duplicateIssues = useApp((s) => s.duplicateIssues);
   const crossingIssues = useApp((s) => s.crossingIssues);
+  const pluginHighlights = useApp((s) => s.pluginHighlights);
   const healFocus = useApp((s) => s.healFocus);
   const showConnectivityHint = useApp((s) => s.showConnectivityHint);
   const showClosedRegions = useApp((s) => s.showClosedRegions);
@@ -933,6 +955,7 @@ export function Viewport() {
     healIssues,
     duplicateIssues,
     crossingIssues,
+    pluginHighlights,
     showConnectivityHint,
     showClosedRegions,
     showSplineCvs,
@@ -1481,6 +1504,10 @@ export function Viewport() {
       view.ox += screen.x - interaction.lastX;
       view.oy += screen.y - interaction.lastY;
       interactionRef.current = { ...interaction, lastX: screen.x, lastY: screen.y };
+      // Mid-pan there is nothing to snap to or hover: skip the snap search and just move the picture.
+      lastScreenRef.current = screen;
+      requestRedraw();
+      return;
     } else if (interaction.kind === "tool-fence") {
       const last = interaction.points[interaction.points.length - 1];
       if (dist(last, world) > 2 / view.scale) interaction.points.push(world);
@@ -1499,7 +1526,7 @@ export function Viewport() {
     getTool(app.tool)?.hover?.(toolCtx, { point: snap.point, world, snap, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey || e.metaKey, altKey: e.altKey });
     const shown = app.tool === "select" ? world : snap.point;
     app.setCursor({ x: shown.x, y: shown.y });
-    redraw();
+    requestRedraw();
   };
 
   /** Two-finger move: pan by the midpoint's travel, zoom by the change in finger spread, about the midpoint. */
@@ -1518,8 +1545,7 @@ export function Viewport() {
     if (d0 > 0 && d1 > 0) view = zoomAt(view, m0, d1 / d0);
     view = { ...view, ox: view.ox + (m1.x - m0.x), oy: view.oy + (m1.y - m0.y) };
     viewRef.current = view;
-    useApp.getState().setZoom(view.scale);
-    redraw();
+    requestRedraw();
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
@@ -1777,8 +1803,7 @@ export function Viewport() {
     const screen = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
     const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
     viewRef.current = zoomAt(viewRef.current, screen, factor);
-    useApp.getState().setZoom(viewRef.current.scale);
-    redraw();
+    requestRedraw();
   };
 
   const onDoubleClick = (e: React.MouseEvent) => {

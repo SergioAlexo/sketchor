@@ -4,7 +4,12 @@
 
 This document is the gap analysis + build order. Each item has an ID (`T-xx`) so it can be referenced from issues/PRs, a priority, a size estimate, dependencies, which app's behaviour to copy, and implementation notes anchored in the current code.
 
-Status as of 2026-09-11 (`main` @ v0.14.4).
+Written 2026-09-11 against `main` @ v0.14.4. **Status as of 2026-11-20:
+Phases 1-4 (T-00 through T-46) are all done** — see the feature gap matrix
+(§1, no `❌` left) and the per-item write-ups in §3-6 for what shipped and
+what small edges within each are still open. §7's backlog (T-30..T-36) also
+shipped in full, just under `docs/cad-fidelity-plan.md`'s own ids, which is
+why it never got ticked off here.
 
 ### Progress log
 
@@ -65,88 +70,94 @@ Sketchor can *draw* the basic primitives but has almost **no modify tools** (no 
 
 Legend: ✅ have · 🟡 partial · ❌ missing. "Ref" = whose behaviour to copy.
 
+**As of 2026-11-20: every row below is ✅ or 🟡 — there is no `❌` left in
+this matrix.** T-30..T-36 (ellipse, spline, hatch patterns, MTEXT/leaders,
+blocks, linetypes) shipped under `docs/cad-fidelity-plan.md`'s own ids
+(B-xx/H-xx/D-xx/Z-04), not this doc's progress log, which is why this table
+had gone stale — it was never updated when that plan closed them out.
+
 ### 1.1 Draw
 
 | Tool | AutoCAD | LibreCAD | Onshape | Sketchor | Ref |
 |---|---|---|---|---|---|
 | Line (chained) | ✅ | ✅ | ✅ | ✅ | — |
-| Line by angle / horizontal / vertical / tangent to circle / perpendicular / bisector | 🟡 (via osnap) | ✅ dedicated tools | 🟡 (inference) | ❌ | Onshape inference + AutoCAD osnap (**T-20**, **T-21**), not LibreCAD's 12 line sub-tools |
-| Infinite construction line / ray (XLINE) | ✅ | ❌ | ❌ | ❌ | AutoCAD (**T-07**) |
+| Line by angle / horizontal / vertical / tangent to circle / perpendicular / bisector | 🟡 (via osnap) | ✅ dedicated tools | 🟡 (inference) | ✅ osnaps + object snap tracking | **T-20**/**T-21** done 2026-11-02 |
+| Infinite construction line / ray (XLINE) | ✅ | ❌ | ❌ | ✅ `LineEntity.infinite` | **T-07** done 2026-09-21 |
 | Polyline | ✅ | ✅ | 🟡 | ✅ | — |
-| Polyline arc segments while drawing | ✅ (`A` in PLINE) | ✅ | n/a | ❌ | AutoCAD (**T-03**) |
+| Polyline arc segments while drawing | ✅ (`A` in PLINE) | ✅ | n/a | ✅ | **T-03** done 2026-09-18 |
 | Rectangle: 2-corner | ✅ | ✅ | ✅ | ✅ | — |
-| Rectangle: center-point, 3-point (rotated) | ✅ | ✅ | ✅ | ❌ | Onshape (**T-05**) |
+| Rectangle: center-point, 3-point (rotated) | ✅ | ✅ | ✅ | ✅ | **T-05** done 2026-09-21 |
 | Circle: center-point | ✅ | ✅ | ✅ | ✅ | — |
-| Circle: 2-point, 3-point, tan-tan-radius, center-diameter | ✅ | ✅ | 🟡 (3-pt) | ❌ | AutoCAD (**T-02**) |
-| **Arc** (3-point, center-start-end, tangent continuation) | ✅ | ✅ | ✅ | ❌ (entity exists, no tool) | Onshape (**T-01**) |
-| Ellipse / elliptical arc | ✅ | ✅ | ✅ | ❌ (imports as polyline) | (**T-30**) |
-| Spline (fit-point, control-point) | ✅ | ✅ | ✅ | ❌ (imports as polyline) | Onshape (**T-31**) |
-| Regular polygon (N sides, inscribed/circumscribed) | ✅ | ✅ | ✅ | ❌ | Onshape (**T-04**) |
-| Slot (straight, arc) | ❌ | ❌ | ✅ | ❌ | Onshape (**T-06**) |
+| Circle: 2-point, 3-point, tan-tan-radius, center-diameter | ✅ | ✅ | 🟡 (3-pt) | ✅ | **T-02** done 2026-09-21 |
+| **Arc** (3-point, center-start-end, tangent continuation) | ✅ | ✅ | ✅ | ✅ | **T-01** done 2026-09-18 |
+| Ellipse / elliptical arc | ✅ | ✅ | ✅ | ✅ real entity + `EllipseTool` | **T-30**, cad-fidelity-plan |
+| Spline (fit-point, control-point) | ✅ | ✅ | ✅ | ✅ real entity + `splineTool`/`splineEditTool` | **T-31**, cad-fidelity-plan |
+| Regular polygon (N sides, inscribed/circumscribed) | ✅ | ✅ | ✅ | ✅ | **T-04** done 2026-09-21 |
+| Slot (straight, arc) | ❌ | ❌ | ✅ | ✅ | **T-06** done 2026-09-21 |
 | Point | ✅ | ✅ | ✅ | ✅ | — |
-| Divide / Measure (points along an entity) | ✅ | ✅ | ❌ | ❌ | AutoCAD (**T-19**) |
+| Divide / Measure (points along an entity) | ✅ | ✅ | ❌ | ✅ | **T-19** done 2026-09-21 |
 | Text | ✅ | ✅ | ✅ | ✅ | — |
-| Multi-line text (MTEXT) | ✅ | ✅ | ❌ | ❌ | (**T-33**) |
+| Multi-line text (MTEXT) | ✅ | ✅ | ❌ | ✅ `MTextTool` + word-wrap layout | **T-33**, cad-fidelity-plan |
 | Hatch: solid fill | ✅ | ✅ | ❌ | ✅ | — |
-| Hatch: line patterns (ANSI31…) / boundary detection | ✅ | ✅ | ❌ | ❌ | AutoCAD (**T-32**) |
+| Hatch: line patterns (ANSI31…) / boundary detection | ✅ | ✅ | ❌ | ✅ 70-pattern library + boundary detection | **T-32**, cad-fidelity-plan |
 | Image | ✅ | ✅ | ✅ | ✅ | — |
-| Blocks / symbols (definition + instances) | ✅ | ✅ | n/a | ❌ (INSERT expanded on import) | AutoCAD (**T-34**) |
+| Blocks / symbols (definition + instances) | ✅ | ✅ | n/a | ✅ definitions, instances, dynamic blocks, library | **T-34**, cad-fidelity-plan |
 | Construction geometry | ✅ | ✅ | ✅ | ✅ | — |
 
 ### 1.2 Modify
 
 | Tool | AutoCAD | LibreCAD | Onshape | Sketchor | Ref |
 |---|---|---|---|---|---|
-| Move (base point → target, typed displacement) | ✅ | ✅ | ✅ (Transform) | 🟡 drag only | AutoCAD (**T-10**) |
-| Copy / Copy-multiple / Ctrl+C-V / Duplicate | ✅ | ✅ | ✅ | ❌ | AutoCAD (**T-11**) |
-| Rotate (base, angle, reference, copy) | ✅ | ✅ | ✅ | 🟡 straighten only | AutoCAD (**T-12**) |
-| Scale (base, factor, reference) | ✅ | ✅ | ✅ | ❌ | AutoCAD (**T-13**) |
-| Mirror (2-pt axis, keep source) | ✅ | ✅ | ✅ | ❌ | AutoCAD/Onshape (**T-14**) |
-| Stretch (move only enclosed endpoints) | ✅ | ✅ | n/a | ❌ | AutoCAD (**T-18**) |
-| **Offset** (distance / through point, both sides, polylines w/ arcs) | ✅ | ✅ | ✅ | ❌ | AutoCAD (**T-15**) |
-| **Trim / Extend** (click segment to remove; Shift toggles; fence) | ✅ | ✅ | ✅ | ❌ | AutoCAD 2021+ quick-trim (**T-16**) |
-| **Fillet / Chamfer** (radius/distance, polyline corners, r=0 corner-join) | ✅ | ✅ | ✅ | ❌ | AutoCAD (**T-17**) |
-| Break / Break-at-point / Split | ✅ | 🟡 | ✅ | ❌ | Onshape Split (**T-16**) |
-| Join (lines/arcs → polyline) | ✅ | ✅ | n/a | 🟡 heal joins collinear only | AutoCAD JOIN (**T-22**) |
-| Explode (polyline → segments, group → entities) | ✅ | ✅ | n/a | ❌ | AutoCAD (**T-22**) |
-| Lengthen (delta / total / percent) | ✅ | ✅ | n/a | ❌ | LibreCAD (**T-23**) |
-| Align (2 source pts → 2 target pts) | ✅ | ✅ (Move+Rotate) | n/a | 🟡 straighten | AutoCAD ALIGN (**T-24**) |
+| Move (base point → target, typed displacement) | ✅ | ✅ | ✅ (Transform) | ✅ | **T-10** done 2026-09-21 |
+| Copy / Copy-multiple / Ctrl+C-V / Duplicate | ✅ | ✅ | ✅ | ✅ | **T-11** done 2026-09-21 |
+| Rotate (base, angle, reference, copy) | ✅ | ✅ | ✅ | ✅ | **T-12** done 2026-09-21 |
+| Scale (base, factor, reference) | ✅ | ✅ | ✅ | ✅ | **T-13** done 2026-09-21 |
+| Mirror (2-pt axis, keep source) | ✅ | ✅ | ✅ | ✅ | **T-14** done 2026-09-21 |
+| Stretch (move only enclosed endpoints) | ✅ | ✅ | n/a | ✅ | **T-18** done 2026-09-21 |
+| **Offset** (distance / through point, both sides, polylines w/ arcs) | ✅ | ✅ | ✅ | ✅ | **T-15** done 2026-09-21, through-point/round gap 2026-11-02 |
+| **Trim / Extend** (click segment to remove; Shift toggles; fence) | ✅ | ✅ | ✅ | ✅ | **T-16** done 2026-09-21, fence trim 2026-11-02 |
+| **Fillet / Chamfer** (radius/distance, polyline corners, r=0 corner-join) | ✅ | ✅ | ✅ | ✅ | **T-17** done 2026-09-21, arcs/circles 2026-11-02, chamfer curves 2026-11-04 |
+| Break / Break-at-point / Split | ✅ | 🟡 | ✅ | ✅ | **T-16** done 2026-09-21 |
+| Join (lines/arcs → polyline) | ✅ | ✅ | n/a | ✅ | **T-22** done 2026-09-21 |
+| Explode (polyline → segments, group → entities) | ✅ | ✅ | n/a | ✅ | **T-22** done 2026-09-21 |
+| Lengthen (delta / total / percent) | ✅ | ✅ | n/a | ✅ | **T-23** done 2026-09-21 |
+| Align (2 source pts → 2 target pts) | ✅ | ✅ (Move+Rotate) | n/a | ✅ | **T-24** done 2026-09-21 |
 | Array (rect/polar) | ✅ | ✅ | ✅ | ✅ | — |
-| Array along path | ✅ | ❌ | ❌ | ❌ | (**T-35**) |
-| Polyline vertex edit (add/remove vertex, seg↔arc, reverse) | ✅ PEDIT | ✅ | 🟡 | ❌ | (**T-25**) |
+| Array along path | ✅ | ❌ | ❌ | 🟡 command-line tool only, no panel UI, not associative | **T-35** done 2026-11-02 |
+| Polyline vertex edit (add/remove vertex, seg↔arc, reverse) | ✅ PEDIT | ✅ | 🟡 | ✅ | **T-25** done 2026-09-21, grip menu 2026-11-04 |
 | Delete duplicates (OVERKILL) | ✅ | ❌ | n/a | ✅ | — |
-| Match properties | ✅ | ✅ | n/a | ❌ | (**T-26**) |
+| Match properties | ✅ | ✅ | n/a | ✅ | **T-26** done 2026-09-21 |
 
 ### 1.3 Precision, input and selection (cross-cutting)
 
 | Capability | AutoCAD | LibreCAD | Onshape | Sketchor | Ref |
 |---|---|---|---|---|---|
-| **Typed input while drawing** (length, angle, `x,y`, `@dx,dy`, `@len<ang`) | ✅ DYN + command line | ✅ command line | ✅ inline dimension boxes | ❌ | AutoCAD DYN + Onshape (**T-08**) |
-| **Ortho (F8) / Polar tracking (F10)** | ✅ | ✅ (restrict H/V/ortho) | 🟡 Shift | ❌ | AutoCAD (**T-09**) |
-| Object snap tracking / alignment guides | ✅ OTRACK | ❌ | ✅ inference lines | ✅ | Onshape (**T-20**) — done 2026-09-22 |
-| Osnaps: perpendicular, tangent, extension, parallel, node, apparent-intersection | ✅ | ✅ | ✅ | ❌ | AutoCAD (**T-21**) |
-| Osnap on/off per kind + snap-override key | ✅ | ✅ | ❌ | 🟡 all-or-nothing | AutoCAD (**T-21**) |
-| Relative zero / temporary origin | ❌ | ✅ | ❌ | ❌ | LibreCAD (**T-08**) |
-| **Grips** (drag endpoint / midpoint / center / radius / vertex) | ✅ | ✅ | ✅ | ❌ | AutoCAD (**T-27**) |
-| **Properties panel** (numeric edit of coords, length, radius, layer, colour, linetype) | ✅ | ✅ | 🟡 | ❌ | AutoCAD (**T-28**) |
-| Selection: Ctrl+A, invert, select-similar, by layer/type, lasso, fence, cycling | ✅ | ✅ | 🟡 | ❌ | AutoCAD (**T-29**) |
-| Nudge with arrow keys | ✅ | ❌ | ❌ | ❌ | (**T-29**) |
-| Linetype (continuous/dashed/center/hidden) + lineweight per entity/layer | ✅ | ✅ | n/a | 🟡 `dashed` boolean | AutoCAD (**T-36**) |
-| Zoom window / zoom selected / zoom previous | ✅ | ✅ | ✅ | 🟡 fit only | (**T-29**) |
+| **Typed input while drawing** (length, angle, `x,y`, `@dx,dy`, `@len<ang`) | ✅ DYN + command line | ✅ command line | ✅ inline dimension boxes | ✅ | **T-08** done 2026-09-18, command line 2026-09-22 |
+| **Ortho (F8) / Polar tracking (F10)** | ✅ | ✅ (restrict H/V/ortho) | 🟡 Shift | ✅ | **T-09** done 2026-09-18 |
+| Object snap tracking / alignment guides | ✅ OTRACK | ❌ | ✅ inference lines | ✅ | **T-20** done 2026-09-22 |
+| Osnaps: perpendicular, tangent, extension, parallel, node, apparent-intersection | ✅ | ✅ | ✅ | ✅ | **T-21** done 2026-09-21, parallel/apparent 2026-11-02 |
+| Osnap on/off per kind + snap-override key | ✅ | ✅ | ❌ | ✅ per-kind SNAP popover | **T-21** done |
+| Relative zero / temporary origin | ❌ | ✅ | ❌ | ✅ | **T-08** done 2026-09-22 |
+| **Grips** (drag endpoint / midpoint / center / radius / vertex) | ✅ | ✅ | ✅ | ✅ | **T-27** done 2026-09-21, vertex grip menu 2026-11-04 |
+| **Properties panel** (numeric edit of coords, length, radius, layer, colour, linetype) | ✅ | ✅ | 🟡 | ✅ | **T-28** done 2026-09-21 |
+| Selection: Ctrl+A, invert, select-similar, by layer/type, lasso, fence, cycling | ✅ | ✅ | 🟡 | ✅ | **T-29** done 2026-09-22 |
+| Nudge with arrow keys | ✅ | ❌ | ❌ | ✅ | **T-29**/**T-10** done 2026-09-21 |
+| Linetype (continuous/dashed/center/hidden) + lineweight per entity/layer | ✅ | ✅ | n/a | ✅ 9 built-in linetypes + per-entity/layer lineweight | **T-36**, cad-fidelity-plan (Z-04) |
+| Zoom window / zoom selected / zoom previous | ✅ | ✅ | ✅ | ✅ | **T-29** done 2026-09-21, zoom selected 2026-11-02 |
 
 ### 1.4 Parametric (Onshape's core strength)
 
 | Capability | Onshape | Sketchor | Ref |
 |---|---|---|---|
-| Constraint solver | ✅ | ❌ (data model only) | planegcs WASM (**T-40**) |
-| Constraints: coincident, H, V, parallel, perpendicular, tangent, equal, fix | ✅ | 🟡 in model, no tools | (**T-41**) |
-| Constraints: concentric, midpoint, symmetric, collinear, normal | ✅ | ❌ not in model | (**T-41**) |
-| Driving dimensions (linear/aligned, angular, radial, diametral) | ✅ | ❌ (dim tool draws lines) | (**T-42**) |
-| Inference while drawing → auto-constraints | ✅ | ❌ | (**T-20** + **T-43**) |
-| DOF colouring (blue=under, black=fully, red=over) | ✅ | ❌ | (**T-44**) |
-| Variables / expressions (`param w = 100`, `dim = w/2`) | ✅ | ❌ (grammar reserved) | (**T-45**) |
-| Constraint visibility / delete / conflict diagnosis | ✅ | ❌ | (**T-44**) |
-| Sketch mirror with symmetric constraint, associative offset/pattern | ✅ | ❌ | (**T-46**) |
+| Constraint solver | ✅ | ✅ own Levenberg–Marquardt solver | **T-40** done 2026-09-22 |
+| Constraints: coincident, H, V, parallel, perpendicular, tangent, equal, fix | ✅ | ✅ | **T-41** done 2026-09-22 |
+| Constraints: concentric, midpoint, symmetric, collinear, normal | ✅ | ✅ (no "normal" constraint; not needed in 2D) | **T-41** done 2026-09-22 |
+| Driving dimensions (linear/aligned, angular, radial, diametral) | ✅ | ✅ value editor + over-define prompt | **T-42** done 2026-11-19 |
+| Inference while drawing → auto-constraints | ✅ | ✅ | **T-43** done 2026-10-15 |
+| DOF colouring (blue=under, black=fully, red=over) | ✅ | ✅ | **T-44** done 2026-10-15 |
+| Variables / expressions (`param w = 100`, `dim = w/2`) | ✅ | ✅ (DXF custom-property round-trip still open) | **T-45** done 2026-10-15 |
+| Constraint visibility / delete / conflict diagnosis | ✅ | ✅ | **T-44** done 2026-10-15 |
+| Sketch mirror with symmetric constraint, associative offset/pattern | ✅ | ✅ (trim-keeps-coincident, pattern constraints still open) | **T-46** done 2026-10-15 |
 
 ---
 
@@ -360,15 +371,19 @@ Mirror → adds symmetric constraints; Offset → adds an offset constraint (pla
 
 ## 7. Later / nice-to-have
 
+All seven of these shipped — every one under `docs/cad-fidelity-plan.md`'s
+own ids (B-xx/H-xx/D-xx/Z-04) rather than this roadmap's progress log, which
+is why this table still read as a backlog after the fact.
+
 | ID | Item | Notes |
 |---|---|---|
-| T-30 | Ellipse / elliptical arc | New entity type (touches all exhaustive switches). Until then, the importer's polyline approximation is acceptable for fab work. |
-| T-31 | Spline (interpolated + control-point) | New entity (cubic B-spline / Catmull-Rom). DXF `SPLINE` round-trip. Onshape users will ask for it; laser/CNC users mostly don't need it. |
-| T-32 | Hatch patterns + boundary detection | `regions.ts` already finds closed loops. Add ANSI31-style line patterns clipped to the region (render + DXF `HATCH` export). |
-| T-33 | Multi-line text / leaders | Word-wrapped text box; leader = polyline + arrowhead + text. |
-| T-34 | Blocks (definition + instance entity) | Keep DXF `INSERT` as instances instead of expanding; a symbol library panel; "make block" from selection. Pairs with T-19 (divide with blocks). |
+| T-30 | Ellipse / elliptical arc | ✅ real `EllipseEntity` + `EllipseTool`, DXF `ELLIPSE` round-trip (cad-fidelity-plan P-05). |
+| T-31 | Spline (interpolated + control-point) | ✅ real `SplineEntity` (NURBS), `splineTool`/`splineEditTool`, DXF `SPLINE` round-trip (cad-fidelity-plan P-01/P-04). |
+| T-32 | Hatch patterns + boundary detection | ✅ 70-pattern clean-room library, `hatchTool.ts`, `boundary.ts` planar-graph face search, DXF `HATCH` export (cad-fidelity-plan §6). |
+| T-33 | Multi-line text / leaders | ✅ `MTextEntity` + word-wrap layout + `MTextTool`; leaders/multileaders/balloons as `DimensionEntity` kind `leader` (cad-fidelity-plan D-04/D-05). |
+| T-34 | Blocks (definition + instance entity) | ✅ `BlockDefinition`/`InsertEntity`, block editor, dynamic blocks, shipped + installable libraries; DXF `INSERT` kept as instances, not expanded (cad-fidelity-plan §5, B-01..B-26). |
 | T-35 | Array along path | ✅ 2026-11-02 - extends `pattern.ts` (`pathPatternCommands`). |
-| T-36 | Linetypes and lineweights | Replace `dashed: boolean` with `linetype: "continuous" \| "dashed" \| "center" \| "hidden" \| "phantom"` + `lineweight` mm, per entity with layer defaults; DXF `LTYPE` round-trip. Keep `dashed` reading as a migration alias. |
+| T-36 | Linetypes and lineweights | ✅ `linetype`/`lineweight` fields (9 built-ins), layer defaults, DXF `LTYPE` round-trip; `dashed` kept only as a migration alias (cad-fidelity-plan Z-04). |
 
 Explicitly **not** on the roadmap: 3D, dynamic blocks, sheet/paper-space layouts (print already covers one-sheet output), AutoLISP-style scripting (the plugin host + DSL are the equivalents).
 

@@ -90,14 +90,13 @@ that need handling regardless:
   live selection hint shows an open count before Add is even clicked; a
   new **Join tolerance** setting (Settings tab, 0–0.5mm, blank = exact)
   actually closes small real gaps, threaded through `resolvePart` so a
-  part that needed it keeps resolving later. **Not done**: marking the
-  open ends on the *canvas* (violet markers, like the crossings detector)
-  — there's no host capability for a plugin to draw an ephemeral overlay
-  today (`PluginHostApi` has no `ui.highlight`/selection-set method; the
-  crossings markers are core-app state, not something a sandboxed plugin
-  can reach). That needs a small additive host API bump
-  (`ui.highlight(points)` + host-side render wiring) — worth doing as its
-  own follow-up rather than folding into this pass.
+  part that needed it keeps resolving later. **NF-03b done (2026-11-20):**
+  the open ends are now marked on the *canvas* — violet rings like the
+  crossings detector, labelled "gap 0.02\"" for a near-miss or "not
+  connected" for a lone piece — through the additive host API 0.13.0
+  `ui.highlight(marks)` (sanitised and capped by the host, drawn only while
+  the plugin's panel is open, on the tab it was set on). Both nest panels
+  update them on every selection change and on Add selection.
 - **NF-04 Never fail silently. DONE (first pass).** Nest now: names parts
   that no longer resolve on the drawing and prunes them instead of
   blocking Nest forever; flags a part bigger than every stock sheet

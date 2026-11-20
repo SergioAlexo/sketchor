@@ -122,3 +122,66 @@ export function validatePostSpec(input: unknown): PostValidation {
   if (errors.length) return { ok: false, errors };
   return { ok: true, spec: { id, name, on, off, end, dwellUnit: dwellUnit!, comments: comments!, header } };
 }
+
+/** Custom profiles live under their own id prefix, so one can never shadow (or be shadowed by) a built-in. */
+export const CUSTOM_POST_PREFIX = "custom-";
+export const MAX_CUSTOM_POSTS = 20;
+const MAX_POST_NAME = 40;
+
+/** A user-made profile's id: `custom-` plus a slug, short enough for a job's `postId` (≤ 40 chars). */
+export function isCustomPostId(id: string): boolean {
+  return /^custom-[a-z0-9-]{1,33}$/.test(id);
+}
+
+/** A fresh id for a profile named `name`: `custom-<slug>`, numbered past any id already in `taken`. */
+export function newCustomPostId(name: string, taken: Iterable<string>): string {
+  const used = new Set(taken);
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24).replace(/-+$/, "") || "post";
+  let id = `${CUSTOM_POST_PREFIX}${slug}`;
+  for (let n = 2; used.has(id); n++) id = `${CUSTOM_POST_PREFIX}${slug}-${n}`;
+  return id;
+}
+
+/** The custom profiles from storage, re-validated on the way in: anything invalid, built-in-shaped or duplicated is dropped. */
+export function parseCustomPosts(stored: unknown): PostProfileSpec[] {
+  if (!Array.isArray(stored)) return [];
+  const out: PostProfileSpec[] = [];
+  for (const raw of stored) {
+    if (out.length >= MAX_CUSTOM_POSTS) break;
+    const v = validatePostSpec(raw);
+    if (v.ok && isCustomPostId(v.spec.id) && !out.some((p) => p.id === v.spec.id)) out.push(v.spec);
+  }
+  return out;
+}
+
+/** The profile a job's `postId` names: a built-in, else one of the user's own, else the default (a deleted profile, or one saved on another machine). */
+export function resolvePost(id: string | undefined, custom: readonly PostProfileSpec[]): PostProfileSpec {
+  return (id ? (builtinPost(id) ?? custom.find((p) => p.id === id)) : undefined) ?? builtinPost(DEFAULT_POST_ID)!;
+}
+
+export type CustomPostSave = { ok: true; list: PostProfileSpec[]; id: string } | { ok: false; errors: string[] };
+
+/**
+ * Saves an edited profile into the user's list. Editing one of their own
+ * replaces it; a built-in can't change, so editing one saves a new custom
+ * copy (with " (custom)" added when it would otherwise share the built-in's
+ * name in the picker). Validation is {@link validatePostSpec}'s, so nothing
+ * but plain G-code words can reach a machine.
+ */
+export function upsertCustomPost(list: readonly PostProfileSpec[], edited: unknown): CustomPostSave {
+  const e = (edited ?? {}) as Record<string, unknown>;
+  const fromId = typeof e.id === "string" ? e.id : "";
+  const replacing = isCustomPostId(fromId) && list.some((p) => p.id === fromId);
+  if (!replacing && list.length >= MAX_CUSTOM_POSTS) return { ok: false, errors: [`at most ${MAX_CUSTOM_POSTS} custom post-processors - delete one first`] };
+  let name = typeof e.name === "string" ? e.name.replace(/\s+/g, " ").trim().slice(0, MAX_POST_NAME) : "";
+  if (!replacing && BUILTIN_POSTS.some((b) => b.name.toLowerCase() === name.toLowerCase())) name = `${name} (custom)`.slice(0, MAX_POST_NAME);
+  const id = replacing ? fromId : newCustomPostId(name, [...list.map((p) => p.id), ...BUILTIN_POSTS.map((p) => p.id)]);
+  const v = validatePostSpec({ ...e, id, name });
+  if (!v.ok) return v;
+  return { ok: true, id, list: replacing ? list.map((p) => (p.id === id ? v.spec : p)) : [...list, v.spec] };
+}
+
+/** The user's list without `id` (a built-in id changes nothing). */
+export function removeCustomPost(list: readonly PostProfileSpec[], id: string): PostProfileSpec[] {
+  return list.filter((p) => p.id !== id);
+}

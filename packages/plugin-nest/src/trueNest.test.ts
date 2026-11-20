@@ -273,17 +273,19 @@ describe("nestTrueShape — N-14 instance cap", () => {
     // every piece already placed: the worst case for the candidate search.
     const extra = 50;
     const parts: TrueNestPart[] = [{ id: "p", name: "p", outer: rect(40, 30), holes: [], quantity: TRUE_NEST_MAX_INSTANCES + extra, rotation: { mode: "quarter" } }];
-    const stock: StockRow[] = [{ size: { name: "sheet", width: 3000, height: 3000 }, qty: null }];
+    // 5 m square holds ~18000 of these, so all of the cap competes on one sheet.
+    const stock: StockRow[] = [{ size: { name: "sheet", width: 5000, height: 5000 }, qty: null }];
     const t0 = Date.now();
     const result = nestTrueShape(parts, stock, { spacing: 2, edgeMargin: 5 });
     const elapsed = Date.now() - t0;
     expect(result.placed).toHaveLength(TRUE_NEST_MAX_INSTANCES);
     expect(result.sheets).toHaveLength(1);
     expect(result.unplaced.find((u) => u.partId === "p")?.count).toBe(extra);
-    // ~5 s at 2000 on a slow machine (the scan before ForbiddenIndex took
-    // 25-33 s for just 600). The bound leaves room for slow CI and still
-    // fails loudly if scaling regresses toward cubic.
-    expect(elapsed).toBeLessThan(25000);
+    // N-50: ~0.4 s at 10000 on a dev machine (the per-placement rebuild took
+    // ~5 s for 2000 and would need ~2 min here; the scan before ForbiddenIndex
+    // took 25-33 s for just 600). The bound leaves room for slow CI and still
+    // fails loudly if the fill regresses toward quadratic.
+    expect(elapsed).toBeLessThan(10000);
   }, 60000);
 });
 
@@ -414,5 +416,15 @@ describe("nestTrueShape — N-12 part-in-hole", () => {
       expect(p.y).toBeGreaterThanOrEqual(30 - 1e-6);
       expect(p.y).toBeLessThanOrEqual(60 + 1e-6);
     }
+  });
+});
+
+describe("nestTrueShape — N-55 priority tiers", () => {
+  it("places the high-priority part first, so it wins the only sheet even though it is smaller", () => {
+    const stock: StockRow[] = [{ size: { name: "s", width: 200, height: 200 }, qty: 1 }];
+    const big: TrueNestPart = { id: "big", name: "big", outer: rect(180, 180), holes: [], quantity: 1, rotation: { mode: "quarter" } };
+    const urgent: TrueNestPart = { id: "urgent", name: "urgent", outer: rect(150, 150), holes: [], quantity: 1, rotation: { mode: "quarter" }, rank: -1 };
+    expect(nestTrueShape([big, urgent], stock, { spacing: 1 }).placed.map((p) => p.partId)).toEqual(["urgent"]);
+    expect(nestTrueShape([big, { ...urgent, rank: undefined }], stock, { spacing: 1 }).placed.map((p) => p.partId)).toEqual(["big"]);
   });
 });

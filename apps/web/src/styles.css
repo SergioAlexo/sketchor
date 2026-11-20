@@ -133,6 +133,10 @@ body {
 
 .hint {
   margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--text-dim);
 }
 

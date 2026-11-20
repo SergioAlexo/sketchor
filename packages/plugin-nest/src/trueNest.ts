@@ -24,6 +24,8 @@ export interface TrueNestPart {
   rotation: PartRotationSpec;
   /** N-12: try this part inside an already-placed part's hole before the open sheet area. */
   allowInHoles?: boolean;
+  /** N-55: placement order tier - lower ranks are placed first, whatever `order` says within a tier. Absent = 0. */
+  rank?: number;
 }
 
 /** Which sheet corner placement gravitates toward. Default "bottom-left". */
@@ -143,12 +145,14 @@ export function placementTransform(
 /**
  * Hard cap so a pathological quantity can't hang the plugin worker. The
  * worst case is one huge quantity that all fits on a single large sheet.
- * With the forbidden-loop grid (ForbiddenIndex) a placement costs about
- * O(n) in the pieces already on the sheet instead of O(n^2), so the cap went
- * from 600 to 2000: that adversarial fill measured ~5 s on a slow machine
- * (600: 0.5 s, 1200: 1.6 s, 3000: 12 s). The perf test pins a bound above it.
+ * History: 400 -> 600 (candidate density fix) -> 2000 (ForbiddenIndex: a
+ * placement O(n) instead of O(n^2)) -> 10000 (N-50: the candidate search is
+ * kept per sheet and orientation and updated per placement, so a placement
+ * only touches the frontier of the fill - 2000 identical parts on one sheet
+ * went from ~4.9 s to ~0.06 s, 20000 take ~0.75 s, growth about linear).
+ * The perf test pins a bound at the cap.
  */
-export const TRUE_NEST_MAX_INSTANCES = 2000;
+export const TRUE_NEST_MAX_INSTANCES = 10000;
 const MAX_INSTANCES = TRUE_NEST_MAX_INSTANCES;
 
 /** Deterministic Mulberry32 shuffle — `order: <seed>` uses this to give `nestTrueShapeSearch` reproducible alternate orderings to try. */
@@ -260,6 +264,84 @@ export class ForbiddenIndex {
   }
 }
 
+/** Bounding box of a polygon, kept next to it for the grids below. */
+interface Boxed {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/**
+ * A uniform bucket grid over bounding boxes that grows as items are added -
+ * the incremental counterpart of `ForbiddenIndex`'s one-shot grid. The cell
+ * size is fixed by the first item (about one item per cell for a fill of
+ * similar parts); a bigger item just spans more cells.
+ */
+class BoxGrid {
+  private cells = new Map<number, number[]>();
+
+  /** `cell` > 0 fixes the cell size up front - needed when the first items are points. */
+  constructor(private cell = 0) {}
+
+  private range(b: Boxed): [number, number, number, number] {
+    const c = this.cell;
+    return [Math.floor(b.minX / c), Math.floor(b.minY / c), Math.floor(b.maxX / c), Math.floor(b.maxY / c)];
+  }
+
+  add(id: number, b: Boxed): void {
+    // Sized by the first item, never below 1 mm: a degenerate first box would make every query walk millions of cells.
+    if (this.cell === 0) this.cell = Math.max(b.maxX - b.minX, b.maxY - b.minY, 1);
+    const [x0, y0, x1, y1] = this.range(b);
+    for (let cx = x0; cx <= x1; cx++) {
+      for (let cy = y0; cy <= y1; cy++) {
+        const k = cx * 1_000_003 + cy;
+        const bucket = this.cells.get(k);
+        if (bucket) bucket.push(id);
+        else this.cells.set(k, [id]);
+      }
+    }
+  }
+
+  /** Every id whose box shares a cell with `b` (a superset of the boxes overlapping it); may repeat ids. */
+  query(b: Boxed, visit: (id: number) => void): void {
+    if (this.cell === 0) return;
+    const [x0, y0, x1, y1] = this.range(b);
+    for (let cx = x0; cx <= x1; cx++) {
+      for (let cy = y0; cy <= y1; cy++) {
+        const bucket = this.cells.get(cx * 1_000_003 + cy);
+        if (bucket) for (const id of bucket) visit(id);
+      }
+    }
+  }
+}
+
+/**
+ * N-50: the candidate search for one part orientation on one sheet, kept
+ * between placements instead of rebuilt for each. The rebuild was O(n) in
+ * the parts already on the sheet - every placed part's NFP translated into
+ * sheet space, a fresh grid, every candidate re-tested - so filling one
+ * sheet was O(n^2) (2000 identical parts: ~5 s). Here each placed part is
+ * folded in once: its NFP loops join the forbidden set, the pooled
+ * candidates they now cover are dropped, and their own vertices and
+ * sheet-edge crossings join the pool if nothing covers them. The pool holds
+ * exactly the candidates the rebuild would have found valid, so placements
+ * are unchanged; only the frontier of the fill is ever looked at again.
+ */
+interface CandidateState {
+  /** How many of the sheet's placed items are folded in. */
+  processed: number;
+  loops: (Boxed & { loop: Point[] })[];
+  loopGrid: BoxGrid;
+  pool: Map<number, Point>;
+  poolGrid: BoxGrid;
+  nextId: number;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
 export function nestTrueShape(parts: TrueNestPart[], stock: StockRow[], opts: TrueNestOptions = {}): TrueNestResult {
   const spacing = opts.spacing ?? 0;
   const margin = opts.edgeMargin ?? 0;
@@ -294,6 +376,8 @@ export function nestTrueShape(parts: TrueNestPart[], stock: StockRow[], opts: Tr
   } else {
     instances.sort((a, b) => b.area - a.area);
   }
+  // N-55: priority / due date tiers first; the sort is stable, so `order` still decides within a tier.
+  if (instances.some((i) => (i.part.rank ?? 0) !== 0)) instances.sort((a, b) => (a.part.rank ?? 0) - (b.part.rank ?? 0));
 
   const minHoleArea = opts.minHoleArea ?? 0;
 
@@ -306,6 +390,84 @@ export function nestTrueShape(parts: TrueNestPart[], stock: StockRow[], opts: Tr
   const placed: TrueNestPlacement[] = [];
   const nfpCache = new NfpCache();
   let placedArea = 0;
+
+  /** N-50: per sheet, the incremental candidate search of every part orientation tried there, and a grid over the placed outlines. */
+  const candidateStates: Map<string, CandidateState>[] = [];
+  const placedGrids: BoxGrid[] = [];
+
+  /** True when `polygon` clashes with anything placed on the sheet - the same test as checking every placed part, through the grid. */
+  function clashesOnSheet(sheetIdx: number, polygon: Point[]): boolean {
+    const items = sheetItems[sheetIdx];
+    const grid = placedGrids[sheetIdx];
+    if (!grid || items.length === 0) return false;
+    const b = bounds(polygon);
+    let hit = false;
+    const seen = new Set<number>();
+    grid.query({ minX: b.minX - spacing, minY: b.minY - spacing, maxX: b.maxX + spacing, maxY: b.maxY + spacing }, (id) => {
+      if (hit || seen.has(id)) return;
+      seen.add(id);
+      if (polygonsClash(polygon, items[id].placedPolygon, spacing)) hit = true;
+    });
+    return hit;
+  }
+
+  /** Strictly inside any loop folded into `st` (the `ForbiddenIndex.blocks` test). */
+  function blockedIn(st: CandidateState, p: Point): boolean {
+    let hit = false;
+    st.loopGrid.query({ minX: p.x, minY: p.y, maxX: p.x, maxY: p.y }, (id) => {
+      if (hit) return;
+      const l = st.loops[id];
+      if (p.x < l.minX || p.x > l.maxX || p.y < l.minY || p.y > l.maxY) return;
+      if (pointInPolygon(p, l.loop)) hit = true;
+    });
+    return hit;
+  }
+
+  function offerCandidate(st: CandidateState, p: Point): void {
+    if (p.x < st.minX - 1e-6 || p.x > st.maxX + 1e-6 || p.y < st.minY - 1e-6 || p.y > st.maxY + 1e-6) return;
+    if (blockedIn(st, p)) return;
+    const id = st.nextId++;
+    st.pool.set(id, p);
+    st.poolGrid.add(id, { minX: p.x, minY: p.y, maxX: p.x, maxY: p.y });
+  }
+
+  /** The candidate search for this orientation on this sheet, with every part placed there since it was last used folded in. */
+  function candidateState(sheetIdx: number, orbitingKey: string, local: Point[], minX: number, maxX: number, minY: number, maxY: number): CandidateState {
+    const states = candidateStates[sheetIdx] ?? (candidateStates[sheetIdx] = new Map());
+    let st = states.get(orbitingKey);
+    if (!st) {
+      // Candidates are points: size their grid by the part (an NFP loop is about twice the part, so a loop query covers a few cells).
+      const pb = bounds(local);
+      const partSize = Math.max(pb.maxX - pb.minX, pb.maxY - pb.minY, 1e-3);
+      st = { processed: 0, loops: [], loopGrid: new BoxGrid(partSize * 2), pool: new Map(), poolGrid: new BoxGrid(partSize), nextId: 0, minX, maxX, minY, maxY };
+      states.set(orbitingKey, st);
+      for (const c of [{ x: minX, y: minY }, { x: maxX, y: minY }, { x: maxX, y: maxY }, { x: minX, y: maxY }]) offerCandidate(st, c);
+    }
+    const placedHere = sheetItems[sheetIdx];
+    for (; st.processed < placedHere.length; st.processed++) {
+      const other = placedHere[st.processed];
+      for (const loop of nfpCache.get(other.key, other.local, orbitingKey, local, spacing)) {
+        if (loop.length < 3) continue;
+        const translated = loop.map((p) => ({ x: p.x + other.translation.x, y: p.y + other.translation.y }));
+        const b = bounds(translated);
+        const entry = { loop: translated, minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY };
+        const loopId = st.loops.length;
+        st.loops.push(entry);
+        st.loopGrid.add(loopId, entry);
+        // Pooled candidates this loop now covers are no longer valid.
+        const pool = st.pool;
+        st.poolGrid.query(entry, (id) => {
+          const p = pool.get(id);
+          if (!p) return;
+          if (p.x < entry.minX || p.x > entry.maxX || p.y < entry.minY || p.y > entry.maxY) return;
+          if (pointInPolygon(p, translated)) pool.delete(id);
+        });
+        for (const p of translated) offerCandidate(st, p);
+        for (const p of boundaryCrossings(translated, st.minX, st.maxX, st.minY, st.maxY)) offerCandidate(st, p);
+      }
+    }
+    return st;
+  }
 
   /** Tries every rotation candidate on one already-open sheet; returns the first accepted placement, or null. */
   function tryPlaceOnSheet(sheetIdx: number, part: TrueNestPart): { deg: number; mirrored: boolean; translation: Point; local: Point[] } | null {
@@ -324,34 +486,15 @@ export function nestTrueShape(parts: TrueNestPart[], stock: StockRow[], opts: Tr
       if (maxX < minX - 1e-9 || maxY < minY - 1e-9) continue; // this rotation can't fit this sheet at all
 
       const orbitingKey = nfpKey(part.id, deg, mirrored);
-      const candidates: Point[] = [
-        { x: minX, y: minY },
-        { x: maxX, y: minY },
-        { x: maxX, y: maxY },
-        { x: minX, y: maxY },
-      ];
-      const forbidden: Point[][] = [];
-      for (const other of placedHere) {
-        for (const loop of nfpCache.get(other.key, other.local, orbitingKey, local, spacing)) {
-          const translated = loop.map((p) => ({ x: p.x + other.translation.x, y: p.y + other.translation.y }));
-          forbidden.push(translated);
-          candidates.push(...translated);
-          candidates.push(...boundaryCrossings(translated, minX, maxX, minY, maxY));
-        }
-      }
-
-      const index = new ForbiddenIndex(forbidden);
-      const valid = candidates.filter((p) => {
-        if (p.x < minX - 1e-6 || p.x > maxX + 1e-6 || p.y < minY - 1e-6 || p.y > maxY + 1e-6) return false;
-        return !index.blocks(p);
-      });
+      const state = candidateState(sheetIdx, orbitingKey, local, minX, maxX, minY, maxY);
+      const valid = [...state.pool.values()];
       valid.sort(compareCandidates);
 
       for (const candidate of valid) {
         const placedPolygon = translate(local, candidate.x, candidate.y);
         // Safety net: NFP placement should already guarantee this, but never
         // emit an overlap even if a concave-shape edge case slips through.
-        if (placedHere.some((other) => polygonsClash(placedPolygon, other.placedPolygon, spacing))) continue;
+        if (clashesOnSheet(sheetIdx, placedPolygon)) continue;
         if (!insideSheet(placedPolygon, sheet.width, sheet.height, margin)) continue;
         return { deg, mirrored, translation: candidate, local };
       }
@@ -360,11 +503,14 @@ export function nestTrueShape(parts: TrueNestPart[], stock: StockRow[], opts: Tr
   }
 
   function commitPlacement(sheetIdx: number, part: TrueNestPart, result: { deg: number; mirrored: boolean; translation: Point; local: Point[] }): void {
-    sheetItems[sheetIdx].push({
+    const placedPolygon = translate(result.local, result.translation.x, result.translation.y);
+    const items = sheetItems[sheetIdx];
+    (placedGrids[sheetIdx] ??= new BoxGrid()).add(items.length, bounds(placedPolygon));
+    items.push({
       key: nfpKey(part.id, result.deg, result.mirrored),
       local: result.local,
       translation: result.translation,
-      placedPolygon: translate(result.local, result.translation.x, result.translation.y),
+      placedPolygon,
     });
     placed.push({ partId: part.id, sheet: sheetIdx, rotationDeg: result.deg, mirrored: result.mirrored, translation: result.translation });
   }

@@ -36,6 +36,9 @@ const REQUIRED: Record<string, Permission | null> = {
   // and relative paths and can read just inside that grant (no path escape).
   "ui.pickFolder": null,
   "ui.readPickedFile": null,
+  // Draws throwaway markers over the open drawing: no read of it, no write to
+  // it, nothing saved - and the host sanitises and caps what it is handed.
+  "ui.highlight": null,
   "app.displayUnit": null,
   "app.onDisplayUnitChange": null,
   // Creates a tab and writes a drawing into it - same power as document.apply.

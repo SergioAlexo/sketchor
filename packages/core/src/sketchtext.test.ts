@@ -252,7 +252,7 @@ describe("diffToCommands", () => {
     expect(cmds[0]).toMatchObject({ type: "update-entity", entity: { id: "e1", b: { x: 250, y: 0 } } });
   });
 
-  it("carries colour, fill, linetype, lineweight and construction through a code-driven geometry edit (Z-04)", () => {
+  it("carries colour, fill, linetype, lineweight, linetype scale and construction through a code-driven geometry edit (Z-04)", () => {
     // None of these are expressible in sketch code, so a text edit that only
     // changes the endpoint must not silently drop them (CLAUDE.md's rule for
     // any new entity field the DSL can't express).
@@ -261,13 +261,14 @@ describe("diffToCommands", () => {
       color: "#ff0000",
       linetype: "CENTER",
       lineweight: 0.5,
+      linetypeScale: 4,
       construction: true,
     });
     const cmds = diffToCommands(doc, parseCode("line L1 from (0, 0) to (250, 0)").entities);
     expect(cmds).toHaveLength(1);
     expect(cmds[0]).toMatchObject({
       type: "update-entity",
-      entity: { id: "e1", b: { x: 250, y: 0 }, color: "#ff0000", linetype: "CENTER", lineweight: 0.5, construction: true },
+      entity: { id: "e1", b: { x: 250, y: 0 }, color: "#ff0000", linetype: "CENTER", lineweight: 0.5, linetypeScale: 4, construction: true },
     });
   });
 

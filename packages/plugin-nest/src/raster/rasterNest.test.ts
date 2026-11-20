@@ -131,3 +131,26 @@ describe("chooseCell", () => {
     expect((20000 * 10000) / (c * c)).toBeLessThanOrEqual(9e6);
   });
 });
+
+describe("N-55: priority / due date tiers", () => {
+  const opts = { spacing: 2, edgeMargin: 2, accuracy: "fast" as const };
+
+  it("with one sheet of stock and room for one big part, the high-priority one gets it - whichever is larger", () => {
+    const big = part("big", rect(180, 180), 1);
+    const urgent = part("urgent", rect(150, 150), 1, { rank: -1_000_000 });
+    const r = nestRasterMm([big, urgent], [stockRow(200, 200, 1)], opts);
+    expect(r.placed.map((p) => p.partId)).toEqual(["urgent"]);
+    expect(r.unplaced).toEqual([{ partId: "big", count: 1 }]);
+    // without the rank, area order wins as before
+    const plain = nestRasterMm([big, { ...urgent, rank: undefined }], [stockRow(200, 200, 1)], opts);
+    expect(plain.placed.map((p) => p.partId)).toEqual(["big"]);
+  });
+
+  it("with unlimited sheets, every urgent part is on the first sheets", () => {
+    const filler = part("filler", rect(90, 90), 8);
+    const urgent = part("urgent", rect(60, 60), 4, { rank: -5 });
+    const r = nestRasterMm([filler, urgent], [stockRow(200, 200)], opts);
+    expect(r.sheets.length).toBeGreaterThan(1);
+    expect(r.placed.filter((p) => p.partId === "urgent").every((p) => p.sheet === 0)).toBe(true);
+  });
+});

@@ -72,6 +72,7 @@ export type {
   NotifyOptions,
   SaveFileFilter,
   SaveFileResult,
+  HighlightMark,
   PickedFile,
   PickedFolder,
   Unsubscribe,

@@ -21,6 +21,24 @@ describe("Sheet Nesting panel", () => {
     expect(() => new Function(script)).not.toThrow();
     expect(PANEL_HTML).toContain("Nesting engine based on the Sheet Nesting Calculator by Oleksandr Borenko");
   });
+
+  it("escapes single quotes: nearly every attribute in the panel is written value='...', so an apostrophe in a file or part name must not end it", () => {
+    const script = /<script>([\s\S]*)<\/script>/.exec(PANEL_HTML)![1]!;
+    const src = /const esc = (\(s\) => [^\n]+);/.exec(script)![1]!;
+    const esc = new Function(`return ${src}`)() as (s: unknown) => string;
+    expect(esc(`O'Brien <b> & "x"`)).toBe("O&#39;Brien &lt;b&gt; &amp; &quot;x&quot;");
+  });
+
+  it("N-42: the post-processor editor posts its draft, with header lines split, and Delete names the selected profile", () => {
+    expect(PANEL_HTML).toContain("data-act='post-edit'");
+    expect(PANEL_HTML).toMatch(/post\(\{ type: "post-save", spec: Object\.assign\(\{\}, postDraft, \{ header: String\(postDraft\.header \|\| ""\)\.split\("\\n"\) \}\) \}\)/);
+    expect(PANEL_HTML).toContain('post({ type: "post-delete", id: V.postId })');
+  });
+
+  it("N-43: the Toolpath button asks the plugin for the selected sheet's preview", () => {
+    expect(PANEL_HTML).toContain("data-act='toolpath'");
+    expect(PANEL_HTML).toMatch(/a === "toolpath"\) post\(\{ type: "preview-toolpath", sheetIndex: Number\(\$\("gsheet"\)\.value\) \}\)/);
+  });
 });
 
 describe("loadDxfFile", () => {
@@ -159,5 +177,16 @@ describe("Open job", () => {
     expect(rec.area).toBeCloseTo(snap.parts[0]!.area, 6);
     // a truncated file is refused, not half-opened
     expect(parseJobFile(text.slice(0, text.length / 2))).toBeNull();
+  });
+});
+
+describe("a part exported in AutoCAD colour 7", () => {
+  it("comes in white (so the report has to ink it - see nestReport.test) and the panel offers machine speed fields", () => {
+    const white = { ...rect(100, 60), color: "#ffffff" };
+    const f = loadDxfFile("w", "0000000316.DXF", entitiesToDxf([white], 4, 1), null);
+    const rec = f.parts[0]!;
+    const outline = rec.outerSourceIds.map((id) => rec.lookup.get(id)!);
+    expect(outline.every((e) => "color" in e && e.color === "#ffffff")).toBe(true);
+    for (const id of ["data-pierce='1'", 'speedField("feed"', 'speedField("rapid"']) expect(PANEL_HTML).toContain(id);
   });
 });

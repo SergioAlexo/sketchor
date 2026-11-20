@@ -1,6 +1,11 @@
 # Sheet nesting rewrite — port of the "Sheet Nesting Calculator" — plan
 
-Status: plan only (2026-10-22). Item IDs `RN-xx` are stable — reference them in commits.
+Status: **Phases 1-5 shipped** (raster engine, part intake, job model, panel
+rewrite, output — every RN-xx item below through RN-43 has a row in the
+progress log). Phase 6 partial: **RN-50** (CNC router checks) shipped,
+**RN-51** (screenshot OCR) and **RN-52** (panel i18n) not started (open
+questions 3/4). **RN-90** (tidy/cleanup pass) not done. Item IDs `RN-xx` are
+stable — reference them in commits.
 
 Supersedes the panel part of `docs/sheet-metal-nesting-plan.md` (N-20) and
 NF-05/06/08 from `docs/polyline-and-nest-fixes-plan.md`. The raster engine
@@ -65,7 +70,7 @@ is listed under Later. The sheet calculator has four pieces:
 
 ## 4. Work items
 
-### Phase 1 — Engine (packages/plugin-nest/src/raster/)
+### Phase 1 — Engine (packages/plugin-nest/src/raster/) — ✅ done (RN-01..06, see progress log)
 
 - **RN-01 Port `NestEngine.nest` to TS** (`raster/engine.ts`). Typed input
   `{ parts:{polys, rots, qty, area}[], sheetTypes, extra, spacing, margin, clamp, cell, arcTol, timeMs, seed, crit }`,
@@ -97,7 +102,7 @@ is listed under Later. The sheet calculator has four pieces:
   as a reduced usable area. The 600-instance cap stays on True shape only and
   is reported up front, not as a failure. **M**
 
-### Phase 2 — Part intake
+### Phase 2 — Part intake — ✅ done (RN-10..14, see progress log)
 
 - **RN-10 Contour rules into `partExtraction.ts`:** duplicate-primitive
   removal, helper-line filter (bend / centerline layers and linetypes, reported
@@ -117,7 +122,7 @@ is listed under Later. The sheet calculator has four pieces:
   = file holds N pieces (need = ⌈qty/N⌉), then prefix + separator; never a
   "closest" guess; OCR look-alike repair only when the literal misses. **S**
 
-### Phase 3 — Job model
+### Phase 3 — Job model — ✅ done (RN-20..23, see progress log)
 
 - **RN-20 Job state + migration** (`nestJob.ts`): material, thickness+unit,
   machine, sheet source (standard | stock + buy-extra), parts[] or groups[],
@@ -133,7 +138,7 @@ is listed under Later. The sheet calculator has four pieces:
 - **RN-23 Length input parser** — fractions (`1 3/16`), ft-in, unit suffixes;
   reuse the command line's parser if it covers fractions, else extend it. **S**
 
-### Phase 4 — Panel (rewrite of `PANEL_HTML`)
+### Phase 4 — Panel (rewrite of `PANEL_HTML`) — ✅ done (RN-30..32, see progress log)
 
 - **RN-30 Manual mode:** Job card (material, sheet, thickness picker,
   machine), collapsible Cutting parameters, Parts table (thumb, size, holes,
@@ -148,7 +153,7 @@ is listed under Later. The sheet calculator has four pieces:
   per-sheet cards with identical sheets collapsed (signature = size + sorted
   placements), per-sheet DXF button. **S**
 
-### Phase 5 — Output
+### Phase 5 — Output — ✅ done (RN-40..43, see progress log)
 
 - **RN-40 Canvas result (= NF-07):** new tab, sheets side by side, existing
   four layers, identical sheets drawn once with "×N". **S**
@@ -163,7 +168,7 @@ is listed under Later. The sheet calculator has four pieces:
   existing `toolpath.ts` / `computeJobMetrics`; cut length + pierces now
   match the panel KPIs. **S**
 
-### Phase 6 — Extras
+### Phase 6 — Extras — 🟡 partial: RN-50 done, RN-51/52 not started
 
 - **RN-50 CNC router checks:** inscribed-circle Ø of every hole vs bit Ø,
   count of unreachable inside corners (> 40° turn), shown per part. **S**
@@ -172,7 +177,7 @@ is listed under Later. The sheet calculator has four pieces:
 - **RN-52 Panel i18n** — string table keyed like the reference
   (en, uk, pl, es, fr, ru). See Q4. **M**
 
-### Phase 9 — Cleanup
+### Phase 9 — Cleanup — ❌ not started
 
 - **RN-90 Tidy, don't delete:** remove only what neither engine uses any more
   (the old bbox `nest.ts`/`layout.ts` path if the panel no longer reaches it,
@@ -242,8 +247,10 @@ writer.
 3. Screenshot OCR — worth ~10 MB in the installer, or paste/CSV only?
 4. Panel languages — English only for now (strings in a table), or all six
    from the start?
-5. DXF layer names — switch defaults to CUT_OUTER / CUT_INNER, or keep
-   `Nest Parts` / `Nest Holes` and offer a preset?
+5. ~~DXF layer names — switch defaults to CUT_OUTER / CUT_INNER, or keep
+   `Nest Parts` / `Nest Holes` and offer a preset?~~ **Decided (RN-41):
+   CUT_OUTER/CUT_INNER (+ optional SHEET) is the default CAM preset; the old
+   canvas-layer names stay available via `preset: "nest"`.**
 
 ## 8. Progress log
 

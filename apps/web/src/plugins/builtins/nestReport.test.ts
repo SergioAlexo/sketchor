@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Entity } from "@sketchor/core";
 import type { JobMetrics, TrueNestResult, TrueNestSheet } from "@sketchor/plugin-nest";
-import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportWithJob, type LastNest, type LastNestPlacement } from "./nestReport";
+import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportWithJob, urgencyText, type LastNest, type LastNestPlacement } from "./nestReport";
 
 /**
  * The report is the deliverable a fabricator actually works from — a wrong
@@ -294,5 +294,75 @@ describe("NF-08 job name and notes", () => {
     expect(reportFileName("", at)).toBe("nest-2026-11-04_0905");
     expect(reportFileName("Smith / order #41!", at)).toBe("nest-2026-11-04_0905-Smith-order-41");
     expect(reportFileName("../../etc", at)).toBe("nest-2026-11-04_0905-etc");
+  });
+});
+
+describe("parts print in ink whatever colour their drawing gave them", () => {
+  it("a part drawn in AutoCAD colour 7 (white) or yellow still has its outline on the white page, in HTML and PDF", () => {
+    const n = lastNest();
+    n.placements[0]!.outerEntities = [{ ...rectEntity("w-outer", 10, 10, 30, 20), color: "#ffffff" }];
+    n.placements[1]!.holeEntities = [{ ...rectEntity("y-hole", 7, 7, 2, 2), color: "#ffff00" }];
+    const html = buildNestReportHtml(n);
+    expect(html).not.toMatch(/stroke="#ffffff"/i);
+    expect(html).not.toMatch(/stroke="#ffff00"/i);
+    // the outline itself is still there
+    expect((html.match(/<polygon|<path|<polyline/g) ?? []).length).toBeGreaterThan(2);
+    const pdf = String.fromCharCode(...buildNestReportPdf(n));
+    expect(pdf).not.toMatch(/(^|\s)1 1 1 RG/m);
+    // the placements themselves are left alone - the canvas layout still shows the file's colours
+    expect(n.placements[0]!.outerEntities[0]).toMatchObject({ color: "#ffffff" });
+  });
+});
+
+describe("cutting time KPI", () => {
+  const withTime = (sec: number | null | undefined): LastNest => ({
+    ...lastNest(),
+    summary: {
+      kpis: { sheets: 1, toPurchase: 0, showPurchase: false, utilisation: 0.31, placed: 26, required: 26, cutLengthMm: 26484, pierces: 41, unplaced: 0, ...(sec !== undefined ? { cuttingTimeSec: sec } : {}) },
+      stock: [],
+      groups: [],
+    },
+  });
+
+  it("is in the job summary of both the HTML and the PDF, in hours past an hour", () => {
+    expect(buildNestReportHtml(withTime(754))).toContain("12.6 min (est.)");
+    expect(buildNestReportHtml(withTime(5000))).toContain("1 h 23 min (est.)");
+    expect(String.fromCharCode(...buildNestReportPdf(withTime(754)))).toContain("Cutting time: 12.6 min \\(est.\\)"); // PDF string escapes the parentheses
+  });
+
+  it("shows the placeholder when there are no speeds, and no row at all for a caller that gives no time (the older panel)", () => {
+    expect(buildNestReportHtml(withTime(null))).toContain("Cutting time");
+    expect(buildNestReportHtml(withTime(undefined)).match(/Cutting time/g)?.length).toBe(1); // just the per-sheet column
+  });
+});
+
+describe("N-55 priority / due in the report", () => {
+  const withUrgency = (): LastNest => {
+    const n = lastNest();
+    n.placements[0] = { ...n.placements[0]!, priority: "high", due: "2026-11-25" };
+    n.ordered = n.ordered.map((o) => (o.key === "p-a" ? { ...o, priority: "high" as const, due: "2026-11-25" } : o));
+    return n;
+  };
+
+  it("shows a Priority / due column on the sheet pages and the parts summary, and the most urgent part per sheet", () => {
+    const html = buildNestReportHtml(withUrgency());
+    expect(html).toContain("<th>Priority / due</th>");
+    expect(html).toContain("<th>Most urgent</th>");
+    expect(html).toContain("High · due 2026-11-25");
+    const pdf = String.fromCharCode(...buildNestReportPdf(withUrgency()));
+    expect(pdf).toContain("Most urgent part: High");
+    expect(pdf).toContain("Priority / due");
+  });
+
+  it("adds nothing when no part has a priority or date (the older panel, plain jobs)", () => {
+    const html = buildNestReportHtml(lastNest());
+    expect(html).not.toContain("Priority / due");
+    expect(html).not.toContain("Most urgent");
+  });
+
+  it("urgencyText reads naturally", () => {
+    expect(urgencyText({})).toBe("");
+    expect(urgencyText({ priority: "low" })).toBe("Low");
+    expect(urgencyText({ due: "2026-12-01" })).toBe("due 2026-12-01");
   });
 });

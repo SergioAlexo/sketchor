@@ -4,7 +4,7 @@ import { hasCapability } from "@sketchor/core";
 import type { HostToWorker, WorkerToHost } from "../rpc/protocol";
 import { serializeError } from "../rpc/protocol";
 import { assertCapability } from "./capabilityGuard";
-import { dispatchCall, dispatchPost, dispatchSubscribe, type HostContext } from "./hostMethods";
+import { clearPluginHighlight, dispatchCall, dispatchPost, dispatchSubscribe, type HostContext } from "./hostMethods";
 
 export interface PluginHostOptions {
   /** Manifest id; namespaces storage and identifies the plugin. */
@@ -78,6 +78,7 @@ export class PluginHost {
     this.subs.clear();
     for (const pending of this.invokes.values()) pending.reject(new Error("plugin host disposed"));
     this.invokes.clear();
+    clearPluginHighlight(this.opts.pluginId);
     this.post({ kind: "deactivate" });
     // Give `deactivate` a moment to run before killing the worker.
     setTimeout(() => this.worker.terminate(), 500);

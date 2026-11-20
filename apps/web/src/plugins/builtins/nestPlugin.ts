@@ -13,6 +13,7 @@ import {
   cutTableRowFor,
   extractParts,
   extractPartsWithDiagnostics,
+  openChainMarks,
   groupIdenticalSheets,
   materializeInstance,
   nestTrueShapeSearch,
@@ -86,10 +87,11 @@ export interface PersistedState {
   /**
    * NF-03: how close two ends have to be (mm) for "Add selection" to treat
    * them as meeting — real DXFs routinely have a gap of a few hundredths to
-   * a few tenths of a millimetre where a part "should" close. Defaults to
-   * the engine's own near-exact tolerance (`undefined` — see
-   * `extractPartsWithDiagnostics`'s `joinTolerance` default) so existing
-   * jobs behave exactly as before until the user raises it.
+   * a few tenths of a millimetre where a part "should" close. `undefined`
+   * (blank in the panel) defers to `extractPartsWithDiagnostics`'s own
+   * default (N-47: `DEFAULT_JOIN_TOLERANCE`, 0.02mm — enough to absorb a
+   * DXF's own ASCII round-off, not a real open contour); raise it here only
+   * for a sloppier file whose real gaps are wider than that.
    */
   joinTolerance?: number;
 }
@@ -294,14 +296,20 @@ const plugin: PluginModule = {
       });
     };
 
+    // NF-03b: mark where a selected outline fails to close (the host only shows them while this panel is open).
+    const markOpenEnds = (openChains: OpenChainInfo[]) =>
+      void sketchor.ui.highlight(openChainMarks(openChains, (mm) => `${(mm * unit.perMm).toFixed(3)}${unit.label}`)).catch(() => undefined);
+
     const pushSelectionHint = async () => {
       const selection = await sketchor.selection.read();
       if (selection.length === 0) {
+        markOpenEnds([]);
         void sketchor.ui.postMessage({ type: "selection-hint", count: 0, openCount: 0 });
         return;
       }
       const model = await sketchor.document.read();
       const { parts, openChains } = extractPartsWithDiagnostics([...model.entities], new Set(selection), { joinTolerance: state.joinTolerance });
+      markOpenEnds(openChains);
       // NF-03: surface open chains even in the live hint (before the user
       // clicks Add) — "2 shapes selected, 1 doesn't close" is a much
       // earlier signal than only finding out after Add says "select closed
@@ -373,6 +381,7 @@ const plugin: PluginModule = {
         const [model, selection] = await Promise.all([sketchor.document.read(), sketchor.selection.read()]);
         const entities = [...model.entities];
         const { parts: extracted, openChains } = extractPartsWithDiagnostics(entities, new Set(selection), { joinTolerance: state.joinTolerance });
+        markOpenEnds(openChains);
         if (extracted.length === 0) {
           // NF-03: say *why* — a selection with nothing but open chains
           // used to get the same flat "select closed shapes first" as an

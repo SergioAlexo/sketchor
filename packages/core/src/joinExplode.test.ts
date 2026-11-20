@@ -5,6 +5,7 @@ import type { ArcEntity, Entity, LineEntity, PolylineEntity } from "./entities";
 import { polylineSegments } from "./entities";
 import { bulgeToArc, dist } from "./geometry";
 import { explodeCommands, explodePolyline, joinCommands, joinEntities, joinEntitiesExact, pointsAlong } from "./joinExplode";
+import { splitAt } from "./intersect";
 import type { SplineEntity } from "./entities";
 import { nurbsEval } from "./nurbs";
 import "./kinds/builtin";
@@ -138,5 +139,28 @@ describe("joinEntitiesExact (curves)", () => {
     const a = spline("a", [[0, 0], [1, 2], [2, 2], [3, 0]]);
     const chains = joinEntities([a, line("l", 3, 0, 8, 0)]);
     expect(chains[0].polyline.type).toBe("polyline");
+  });
+});
+
+describe("per-entity linetype scale survives the edits that rebuild an entity", () => {
+  // A dashed boundary whose scale was set so it reads at sheet size must not
+  // fall back to scale 1 (and so turn solid when zoomed out) after a split,
+  // an explode or a join.
+  it("explode keeps it on every piece", () => {
+    const pl: PolylineEntity = { id: "p", type: "polyline", points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], closed: false, linetype: "DASHED", linetypeScale: 8 };
+    const pieces = explodePolyline(pl);
+    expect(pieces.length).toBe(2);
+    for (const p of pieces) expect(p).toMatchObject({ linetype: "DASHED", linetypeScale: 8 });
+  });
+
+  it("split keeps it on both halves", () => {
+    const halves = splitAt({ ...line("a", 0, 0, 10, 0), linetype: "DASHED", linetypeScale: 3 }, { x: 4, y: 0 })!;
+    expect(halves).toHaveLength(2);
+    for (const h of halves) expect(h.linetypeScale).toBe(3);
+  });
+
+  it("join keeps a lone member's scale on the polyline it becomes", () => {
+    const [chain] = joinEntities([{ ...line("a", 0, 0, 10, 0), linetypeScale: 2 }, { ...line("b", 10, 0, 10, 10), linetypeScale: 2 }]);
+    expect(chain.polyline.linetypeScale).toBe(2);
   });
 });

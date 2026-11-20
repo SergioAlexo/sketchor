@@ -1,4 +1,4 @@
-import type { TextStyle } from "@sketchor/core";
+import type { HighlightMark, TextStyle } from "@sketchor/core";
 import { create } from "zustand";
 import { modeDefaults } from "../tools/drawingMode";
 import { newEntityId, type Group, type Constraint, type TableRecord, scaleBlockDefinition, scaleEntityKeepingInserts, setActiveBlocks, setActiveDimHost, blockEditChanges, blockEditDocument, getBlock, inPlaceBackdrop, instancesOf, type AttributeDef, type BlockDefinition, type DynamicSpec, dynamicSpecOf, specForSave } from "@sketchor/core";
@@ -1028,6 +1028,14 @@ interface AppState {
   crossingIssues: CrossingIssue[];
   setCrossingIssues: (issues: CrossingIssue[]) => void;
   /**
+   * NF-03b: each plugin's `ui.highlight` markers, bound to the tab that was
+   * active when they were set (world points mean nothing on another drawing).
+   * Ephemeral display state — never saved, never a command.
+   */
+  pluginHighlights: Record<string, { sessionId: string; marks: HighlightMark[] }>;
+  /** Replaces `pluginId`'s markers on the active tab; an empty list clears them. */
+  setPluginHighlight: (pluginId: string, marks: HighlightMark[]) => void;
+  /**
    * Outcome of the most recent save, surfaced in the status bar. Ctrl+S over
    * an already-chosen file writes with no dialog, so without this the app
    * gives no sign it did anything.
@@ -1172,6 +1180,12 @@ export const useApp = create<AppState>((set, get) => ({
   setDuplicateFocus: (p) => set({ duplicateFocus: p }),
   crossingIssues: [],
   setCrossingIssues: (crossingIssues) => set({ crossingIssues }),
+  pluginHighlights: {},
+  setPluginHighlight: (pluginId, marks) =>
+    set((s) => {
+      const { [pluginId]: _old, ...rest } = s.pluginHighlights;
+      return { pluginHighlights: marks.length > 0 ? { ...rest, [pluginId]: { sessionId: s.activeSessionId, marks } } : rest };
+    }),
   saveNotice: null,
   setSaveNotice: (saveNotice) => set({ saveNotice }),
   editLocked: false,

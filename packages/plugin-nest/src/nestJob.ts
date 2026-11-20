@@ -55,6 +55,30 @@ export interface JobPart {
   mirror: boolean;
   /** True shape only: raster fills holes automatically. */
   allowInHoles: boolean;
+  /** N-55: absent = normal. High-priority parts are nested first (earliest sheets); low ones last. */
+  priority?: "high" | "low";
+  /** N-55: due date, YYYY-MM-DD. Within a priority, earlier due dates are nested first; no date comes after every date. */
+  due?: string;
+}
+
+/** A YYYY-MM-DD date that exists, else null. */
+export function validDue(v: unknown): string | null {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  const t = Date.parse(`${v}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v ? v : null;
+}
+
+/**
+ * N-55: the part's placement tier - priority first (high, normal, low), then
+ * due date (earlier first, undated last). 0 for a normal part with no date,
+ * so a job without priorities nests exactly as before.
+ */
+export function partRank(p: Pick<JobPart, "priority" | "due">): number {
+  const tier = p.priority === "high" ? -1 : p.priority === "low" ? 1 : 0;
+  const due = validDue(p.due);
+  // Days since 1970, shifted negative so every date (up to the year 2500) sorts before "undated" (0) inside its tier.
+  const dueKey = due ? Math.round(Date.parse(`${due}T00:00:00Z`) / 86_400_000) - 200_000 : 0;
+  return tier * 1_000_000 + dueKey;
 }
 
 /** A BOM item in groups mode, before its file is resolved. */
@@ -104,6 +128,8 @@ export interface NestJob {
   /** N-53: G-code micro-joints per contour (0/absent = none) and their width in mm. */
   tabCount?: number;
   tabWidth?: number;
+  /** G-code lead-in shape; absent = straight line. */
+  leadIn?: "arc";
   /** N-42: G-code post-processor profile id (absent = the default, generic laser). Checked against the built-ins by the plugin. */
   postId?: string;
 }
@@ -178,8 +204,14 @@ function readParams(v: unknown, fallback: MachineParams): MachineParams {
     clamp: readLength(o.clamp, fallback.clamp),
     bedW: readLength(o.bedW, fallback.bedW),
     bedH: readLength(o.bedH, fallback.bedH),
+    ...(o.feed !== undefined ? { feed: readLength(o.feed, NO_SPEED) } : fallback.feed ? { feed: { ...fallback.feed } } : {}),
+    ...(o.rapid !== undefined ? { rapid: readLength(o.rapid, NO_SPEED) } : fallback.rapid ? { rapid: { ...fallback.rapid } } : {}),
+    ...(typeof o.pierce === "string" ? { pierce: o.pierce.slice(0, 20) } : typeof o.pierce === "number" && Number.isFinite(o.pierce) ? { pierce: String(o.pierce) } : fallback.pierce !== undefined ? { pierce: fallback.pierce } : {}),
   };
 }
+
+/** A blank speed field: use the built-in estimate. */
+const NO_SPEED: LengthField = { v: "", u: "in" };
 
 function readStockRow(v: unknown): StockRow | null {
   if (!isObj(v)) return null;
@@ -211,6 +243,8 @@ function readPart(v: unknown, material: string): JobPart | null {
     rotation: oneOf(v.rotation, ROTATION_CODES, defaultRotationFor(material)),
     mirror: !!v.mirror,
     allowInHoles: !!v.allowInHoles,
+    ...(v.priority === "high" || v.priority === "low" ? { priority: v.priority } : {}),
+    ...(validDue(v.due) ? { due: validDue(v.due)! } : {}),
   };
 }
 
@@ -265,6 +299,7 @@ export function parseNestJob(v: unknown): NestJob {
     ...(v.joinTolerance === undefined || v.joinTolerance === null ? {} : { joinTolerance: Math.max(0, Math.min(0.5, num(v.joinTolerance, 0))) }),
     ...(num(v.tabCount, 0) >= 1 ? { tabCount: Math.min(99, Math.floor(num(v.tabCount, 0))) } : {}),
     ...(num(v.tabWidth, 0) > 0 ? { tabWidth: Math.min(1000, num(v.tabWidth, 0)) } : {}),
+    ...(v.leadIn === "arc" ? { leadIn: "arc" as const } : {}),
     ...(typeof v.postId === "string" && /^[a-z0-9-]{1,40}$/.test(v.postId) ? { postId: v.postId } : {}),
   };
 }
@@ -406,6 +441,7 @@ export function jobParts(job: NestJob, geometry: ReadonlyMap<string, JobPartGeom
       quantity: p.qty,
       rotation: rotationSpecFor(p.rotation, p.mirror),
       allowInHoles: p.allowInHoles,
+      ...(partRank(p) !== 0 ? { rank: partRank(p) } : {}),
     };
     out.push({ ...base, angles: rotationAngles(p.rotation) });
   }

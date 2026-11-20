@@ -19,6 +19,7 @@ export function explodeDimension(e: DimensionEntity, host: DimHost | null = acti
     ...(e.color !== undefined ? { color: e.color } : {}),
     ...(e.linetype !== undefined ? { linetype: e.linetype } : {}),
     ...(e.lineweight !== undefined ? { lineweight: e.lineweight } : {}),
+    ...(e.linetypeScale !== undefined ? { linetypeScale: e.linetypeScale } : {}),
   };
   const out: Entity[] = [];
   let n = 0;

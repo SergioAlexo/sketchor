@@ -9,6 +9,9 @@ import {
   combineResults,
   computeJobMetrics,
   cutTableRowFor,
+  cutRowForThickness,
+  resolveCutSpeeds,
+  type CutSpeeds,
   defaultJob,
   defaultMachines,
   defaultRotationFor,
@@ -20,8 +23,12 @@ import {
   engineFor,
   engineHintLines,
   extractPartsWithDiagnostics,
+  openChainMarks,
+  type OpenChainInfo,
+  fmtDuration,
   fmtMm,
   fmtMm2,
+  fmtSpeed,
   groupIdenticalSheetsPerRun,
   problemHint,
   groupsFromRows,
@@ -34,6 +41,7 @@ import {
   jobReadiness,
   jobSheets,
   lengthMm,
+  validDue,
   makeZip,
   materializeInstance,
   MACHINES,
@@ -49,6 +57,7 @@ import {
   serializeJobFile,
   sheetDxfEntities,
   sheetDxfFileName,
+  sheetOutlineEntities,
   stackedSheetsDxfEntities,
   stockUsage,
   findRemnants,
@@ -75,15 +84,16 @@ import {
   type StockRow,
   type TrueNestSheet,
 } from "@sketchor/plugin-nest";
-import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, postProfileFromSpec, writeGcode, type GcodePlacement } from "@sketchor/plugin-gcode";
+import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, isCustomPostId, parseCustomPosts, postProfileFromSpec, removeCustomPost, resolvePost, cutTimeSec, toolpathPreview, toolpathPreviewScale, upsertCustomPost, writeGcode, type GcodePlacement, type PostProfileSpec } from "@sketchor/plugin-gcode";
 
 /** N-53: tab width used when a job asks for tabs but never set one. */
 const DEFAULT_TAB_WIDTH_MM = 3;
 import { entitiesToDxf, entityPoints, MM_PER_INSUNIT, parseDxf, scaleEntityKeepingInserts, textWidth, type Entity } from "@sketchor/core";
-import { type DisplayUnitInfo, type PickedFolder, type PluginModule } from "@sketchor/plugin-sdk";
+import { add, type DisplayUnitInfo, type PickedFolder, type PluginModule } from "@sketchor/plugin-sdk";
 import { displayUnitToDxfCode, factorFromMm } from "../../units";
 import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportWithJob, type LastNest, type LastNestPlacement } from "./nestReport";
 import { SHEET_NESTING_PANEL_HTML } from "./sheetNestingPanel";
+import { applyCanvasEdits, type LayoutSheetRef } from "./nestCanvasEdits";
 
 /**
  * "Sheet Nesting" (RN-30/31/32): the raster-first nesting panel, a separate
@@ -115,18 +125,24 @@ const CUT_TABLE: CutTableRow[] = [
   { material: "Mild Steel", thickness: 1, feedRateMmPerMin: 6000, pierceTimeSec: 0.3, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 7850 },
   { material: "Mild Steel", thickness: 3, feedRateMmPerMin: 3500, pierceTimeSec: 0.6, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 7850 },
   { material: "Mild Steel", thickness: 6, feedRateMmPerMin: 1800, pierceTimeSec: 1.2, rapidMmPerMin: 12000, estimated: true, densityKgPerM3: 7850 },
+  { material: "Mild Steel", thickness: 10, feedRateMmPerMin: 1000, pierceTimeSec: 2.5, rapidMmPerMin: 12000, estimated: true, densityKgPerM3: 7850 },
+  { material: "Stainless Steel", thickness: 1, feedRateMmPerMin: 9000, pierceTimeSec: 0.3, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 8000 },
   { material: "Stainless Steel", thickness: 3, feedRateMmPerMin: 2800, pierceTimeSec: 0.8, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 8000 },
+  { material: "Stainless Steel", thickness: 6, feedRateMmPerMin: 1000, pierceTimeSec: 1.8, rapidMmPerMin: 12000, estimated: true, densityKgPerM3: 8000 },
+  { material: "Aluminum", thickness: 1, feedRateMmPerMin: 10000, pierceTimeSec: 0.2, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 2700 },
   { material: "Aluminum", thickness: 3, feedRateMmPerMin: 4500, pierceTimeSec: 0.4, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 2700 },
+  { material: "Aluminum", thickness: 6, feedRateMmPerMin: 1500, pierceTimeSec: 1.2, rapidMmPerMin: 12000, estimated: true, densityKgPerM3: 2700 },
 ];
 
 const CUT_MATERIAL_NAME: Partial<Record<MaterialId, string>> = { al5052: "Aluminum", al6061: "Aluminum", cs: "Mild Steel", ss: "Stainless Steel" };
 
 type Pt = { x: number; y: number };
 
-/** User-owned catalog edits: custom sheet sizes per material and the last-used machine parameters. */
+/** User-owned catalog edits: custom sheet sizes per material, the last-used machine parameters, and the user's own G-code post-processors (N-42). */
 export interface Custom {
   sheets: Partial<Record<MaterialId, SheetSize[]>>;
   machines: Partial<Record<MachineId, MachineParams>>;
+  posts: PostProfileSpec[];
 }
 
 /** A part ready to nest: geometry plus the entities its output is materialised from. */
@@ -173,6 +189,9 @@ const num = (v: unknown, fb = 0): number => {
 const LENGTH_UNITS = ["in", "ft", "mm", "cm", "m"] as const;
 const readField = (v: unknown, fb: LengthField): LengthField =>
   isObj(v) ? { v: typeof v.v === "string" ? v.v : typeof v.v === "number" ? String(v.v) : fb.v, u: (LENGTH_UNITS as readonly string[]).includes(str(v.u)) ? (v.u as LengthField["u"]) : fb.u } : fb;
+
+/** A blank machine-speed field: the cutting-time estimate uses the built-in table instead. */
+const NO_SPEED: LengthField = { v: "", u: "in" };
 
 export function stableKey(sourceIds: string[]): string {
   return [...sourceIds].sort().join(",");
@@ -264,8 +283,10 @@ const plugin: PluginModule = {
 
     let job: NestJob = parseNestJob(await sketchor.storage.get(KEY_JOB).catch(() => undefined));
     const customRaw = await sketchor.storage.get(KEY_CUSTOM).catch(() => undefined);
-    const custom: Custom = { sheets: {}, machines: {} };
+    const custom: Custom = { sheets: {}, machines: {}, posts: [] };
     if (isObj(customRaw)) {
+      // Untrusted on the way back in (storage can be edited outside the app): re-validated like a fresh edit.
+      custom.posts = parseCustomPosts(customRaw.posts);
       if (isObj(customRaw.sheets)) {
         for (const m of MATERIALS) {
           const list = (customRaw.sheets as Record<string, unknown>)[m.id];
@@ -277,7 +298,7 @@ const plugin: PluginModule = {
           const mp = (customRaw.machines as Record<string, unknown>)[m];
           if (isObj(mp)) {
             const d = defaultMachines().machines[m];
-            custom.machines[m] = { kerf: readField(mp.kerf, d.kerf), web: readField(mp.web, d.web), margin: readField(mp.margin, d.margin), clamp: readField(mp.clamp, d.clamp), bedW: readField(mp.bedW, d.bedW), bedH: readField(mp.bedH, d.bedH) };
+            custom.machines[m] = { kerf: readField(mp.kerf, d.kerf), web: readField(mp.web, d.web), margin: readField(mp.margin, d.margin), clamp: readField(mp.clamp, d.clamp), bedW: readField(mp.bedW, d.bedW), bedH: readField(mp.bedH, d.bedH), ...(isObj(mp.feed) ? { feed: readField(mp.feed, NO_SPEED) } : {}), ...(isObj(mp.rapid) ? { rapid: readField(mp.rapid, NO_SPEED) } : {}), ...(typeof mp.pierce === "string" ? { pierce: mp.pierce.slice(0, 20) } : {}) };
           }
         }
       }
@@ -293,6 +314,9 @@ const plugin: PluginModule = {
     }
 
     let lastNest: LastNest | null = null;
+    /** NF-08: where each drawn sheet's outline went on the layout tab, and each placement's identity across identical sheets. */
+    let lastLayoutRefs: LayoutSheetRef[] = [];
+    let lastPlacementKeys = new Map<string, string>();
     let lastView: ResultView | null = null;
     /** Effective stock rows (with material / thickness) of the last result, for the G-code feed-rate lookup. */
     let lastStock: StockRow[] = [];
@@ -468,6 +492,28 @@ const plugin: PluginModule = {
 
     const geometryMap = (recs: Map<string, PartRec>) => new Map([...recs].map(([k, r]) => [k, { id: k, name: r.name, outer: r.outer, holes: r.holes }]));
 
+    /** A sheet's cutting speeds: its stock row's material / thickness against the cut table, with the machine's own values over that. */
+    const speedsForStock = (row: StockRow | undefined): CutSpeeds | null => resolveCutSpeeds(job.machine, job.params, cutTableRowFor(row, CUT_TABLE));
+
+    /** The built-in estimate for the job as set up now, shown greyed in the blank speed fields so the user sees what "blank" means. */
+    const speedAutoView = () => {
+      const material = CUT_MATERIAL_NAME[job.material];
+      const row = material ? cutRowForThickness(material, lengthMm(job.thickness), CUT_TABLE) : undefined;
+      const auto = resolveCutSpeeds(job.machine, { ...job.params, feed: undefined, rapid: undefined, pierce: undefined }, row);
+      return auto
+        ? { feedMm: auto.feedRateMmPerMin, rapidMm: auto.rapidMmPerMin, pierce: String(Math.round(auto.pierceTimeSec * 100) / 100) }
+        : { feedMm: 0, rapidMm: 0, pierce: "", none: job.machine === "laser" ? "No built-in speeds for this material - enter your machine's feed rate for a cutting time." : "Enter your machine's feed rate for a cutting time." };
+    };
+
+    /** Report header row: the speeds the cutting time was worked out from (single-material jobs; groups mixes materials). */
+    const speedDetails = (result: RasterNestResult, grouped: boolean): [string, string][] => {
+      if (grouped || result.sheets.length === 0) return [];
+      const speeds = speedsForStock(result.stock[result.sheets[0]!.stockIndex]);
+      if (!speeds) return [["Cut speeds", "not set - enter the machine's feed rate for a cutting time"]];
+      const u = job.outputUnit;
+      return [["Cut speeds", `feed ${fmtSpeed(speeds.feedRateMmPerMin, u)}, pierce ${Math.round(speeds.pierceTimeSec * 100) / 100} s, rapid ${fmtSpeed(speeds.rapidMmPerMin, u)} (${speeds.source === "machine" ? "machine values" : "built-in estimate"})`]];
+    };
+
     const buildView = async (): Promise<Record<string, unknown>> => {
       const { recs, missing } = await resolveParts();
       const p = jobParamsMm(job);
@@ -501,6 +547,8 @@ const plugin: PluginModule = {
           rotation: jp.rotation,
           mirror: jp.mirror,
           allowInHoles: jp.allowInHoles,
+          priority: jp.priority ?? "normal",
+          due: jp.due ?? "",
           thumb: thumbOf(r.outer),
           file: f ? { key: f.key, unit: f.unit, usedUnit: f.usedUnit } : undefined,
         };
@@ -522,8 +570,10 @@ const plugin: PluginModule = {
         sheetOptions: sheetsFor(job.material).map((s) => ({ w: s.size.w, h: s.size.h, custom: s.custom, label: `${fmtMm(s.size.w * MM_PER_IN, job.outputUnit)} × ${fmtMm(s.size.h * MM_PER_IN, job.outputUnit)}` })),
         thicknessOptions: thicknessesFor(job.material).map((t) => ({ value: t.value, label: t.label ? `${t.value}" · ${t.label}` : `${t.value}"` })),
         materials: MATERIALS.map((m) => m.id),
-        posts: BUILTIN_POSTS.map((p) => ({ id: p.id, name: p.name })),
-        postId: builtinPost(job.postId ?? "") ? job.postId : DEFAULT_POST_ID,
+        posts: [...BUILTIN_POSTS, ...custom.posts].map((p) => ({ id: p.id, name: p.name, custom: isCustomPostId(p.id) })),
+        postId: resolvePost(job.postId, custom.posts).id,
+        speedAuto: speedAutoView(),
+        postSpec: resolvePost(job.postId, custom.posts),
         stockRows: job.stock.map((s) => ({ name: s.size.name, w: num3(s.size.width), h: num3(s.size.height), qty: s.qty === null ? "" : String(s.qty), thickness: s.thickness })),
         bareUnit: bareUnitFor(job.outputUnit),
         credit: NEST_CREDIT,
@@ -552,6 +602,8 @@ const plugin: PluginModule = {
       if (isObj(patch.params)) {
         const p = { ...next.params };
         for (const k of ["kerf", "web", "margin", "clamp", "bedW", "bedH"] as const) if (patch.params[k] !== undefined) p[k] = readField(patch.params[k], p[k]);
+        for (const k of ["feed", "rapid"] as const) if (patch.params[k] !== undefined) p[k] = readField(patch.params[k], p[k] ?? NO_SPEED);
+        if (typeof patch.params.pierce === "string") p.pierce = patch.params.pierce.slice(0, 20);
         next.params = p;
         custom.machines[next.machine] = p;
         persistCustom();
@@ -572,7 +624,9 @@ const plugin: PluginModule = {
       if (patch.tabCount !== undefined) { const n = Math.max(0, Math.min(99, Math.floor(num(patch.tabCount)))); if (n >= 1) next.tabCount = n; else delete next.tabCount; }
       if (patch.tabWidth !== undefined) { const w = Math.max(0, Math.min(1000, num(patch.tabWidth))); if (w > 0) next.tabWidth = w; else delete next.tabWidth; }
       if (patch.searchLevel === "quick" || patch.searchLevel === "normal" || patch.searchLevel === "thorough") next.searchLevel = patch.searchLevel;
-      if (typeof patch.postId === "string" && builtinPost(patch.postId)) {
+      if (patch.leadIn === "arc") next.leadIn = "arc";
+      else if (patch.leadIn === "line") delete next.leadIn;
+      if (typeof patch.postId === "string" && (builtinPost(patch.postId) || custom.posts.some((p) => p.id === patch.postId))) {
         if (patch.postId === DEFAULT_POST_ID) delete next.postId;
         else next.postId = patch.postId;
       }
@@ -591,11 +645,17 @@ const plugin: PluginModule = {
     void sketchor.app.onDisplayUnitChange((info) => {
       unit = info;
     });
+    // NF-03b: mark where a selected outline fails to close (the host only shows them while this panel is open).
+    const markOpenEnds = (openChains: OpenChainInfo[]) => void sketchor.ui.highlight(openChainMarks(openChains, (mm) => fmtMm(mm, job.outputUnit))).catch(() => undefined);
     void sketchor.selection.onChange(async () => {
       const selection = await sketchor.selection.read();
-      if (selection.length === 0) return post({ type: "selection-hint", count: 0, openCount: 0 });
+      if (selection.length === 0) {
+        markOpenEnds([]);
+        return post({ type: "selection-hint", count: 0, openCount: 0 });
+      }
       const model = await sketchor.document.read();
       const { parts, openChains } = extractPartsWithDiagnostics([...model.entities], new Set(selection), { joinTolerance: job.joinTolerance });
+      markOpenEnds(openChains);
       post({ type: "selection-hint", count: parts.length, openCount: openChains.length });
     });
 
@@ -682,7 +742,7 @@ const plugin: PluginModule = {
 
     const presentResult = async (runs: Run[], result: RasterNestResult, sheetRun: number[], unsupported: { option: string; reason: string }[], stopped: boolean) => {
       const recByKey = new Map<string, PartRec>();
-      const orderedMap = new Map<string, { key: string; name: string; quantity: number }>();
+      const orderedMap = new Map<string, { key: string; name: string; quantity: number; priority?: "high" | "low"; due?: string }>();
       runs.forEach((run) => {
         for (const jp of run.job.parts) {
           const r = run.recs.get(jp.key);
@@ -690,7 +750,7 @@ const plugin: PluginModule = {
           recByKey.set(jp.key, r);
           const cur = orderedMap.get(jp.key);
           if (cur) cur.quantity += jp.qty;
-          else orderedMap.set(jp.key, { key: jp.key, name: r.name, quantity: jp.qty });
+          else orderedMap.set(jp.key, { key: jp.key, name: r.name, quantity: jp.qty, ...(jp.priority ? { priority: jp.priority } : {}), ...(jp.due ? { due: jp.due } : {}) });
         }
       });
 
@@ -722,6 +782,8 @@ const plugin: PluginModule = {
           rotationDeg: pl.rotationDeg,
           mirrored: pl.mirrored,
           area: p.area,
+          ...(orderedMap.get(pl.partId)?.priority ? { priority: orderedMap.get(pl.partId)!.priority } : {}),
+          ...(orderedMap.get(pl.partId)?.due ? { due: orderedMap.get(pl.partId)!.due } : {}),
         });
       }
 
@@ -733,12 +795,28 @@ const plugin: PluginModule = {
       const sheetLabels = result.sheets.map((s, i) => sheetLabel(s, i));
       const groups = groupIdenticalSheetsPerRun(result.sheets, result.placed, sheetRun);
       const clamp = runs[0] ? lengthMm(effectiveClamp(runs[0].job)) : 0;
-      const layout = buildSideBySideLayout(result.sheets, placements, groups, sheetLabel, { clamp });
+      const outlineAt = new Map<number, { id: string; origin: { x: number; y: number } }>();
+      const layout = buildSideBySideLayout(result.sheets, placements, groups, sheetLabel, { clamp, onSheet: (i, id, origin) => outlineAt.set(i, { id, origin }) });
+      lastLayoutRefs = groups.flatMap((g) => {
+        const o = outlineAt.get(g.indices[0]!);
+        return o ? [{ sheet: g.indices[0]!, indices: g.indices, outlineId: o.id, origin: o.origin }] : [];
+      });
+      const r3 = (v: number) => Math.round(v * 1000) / 1000;
+      lastPlacementKeys = new Map(placements.map((p) => {
+        const pl = result.placed[Number(p.id)]!;
+        return [p.id, `${pl.partId}|${pl.rotationDeg}|${pl.mirrored ? 1 : 0}|${r3(pl.translation.x)}|${r3(pl.translation.y)}`];
+      }));
       await sketchor.app.openDocumentTab(`Nest – ${result.placed.length} part${result.placed.length === 1 ? "" : "s"}, ${result.sheets.length} sheet${result.sheets.length === 1 ? "" : "s"}`, layout);
 
       const geoMap = new Map([...recByKey].map(([k, r]) => [k, { outer: r.outer, holes: r.holes }]));
       const cutMap = new Map([...recByKey].map(([k, r]) => [k, { cutLength: r.cutLength, pierceCount: r.pierceCount }]));
       const metrics: JobMetrics = computeJobMetrics(result, geoMap, result.stock, CUT_TABLE, { gravity: job.gravity, cut: cutMap });
+      // Cutting time from the real cut plan (lead-ins, tab restarts, the actual rapids) at the machine's speeds - the same walk the G-code makes.
+      result.sheets.forEach((sh, i) => {
+        const speeds = speedsForStock(result.stock[sh.stockIndex]);
+        metrics.sheets[i]!.cuttingTimeSec = speeds ? cutTimeSec(toolpathPreview(sheetCutPlan(placements, i).features).stats, speeds) : null;
+      });
+      metrics.totalCuttingTimeSec = metrics.sheets.length > 0 && metrics.sheets.every((m) => m.cuttingTimeSec !== null) ? metrics.sheets.reduce((n, m) => n + (m.cuttingTimeSec ?? 0), 0) : null;
       const required = [...orderedMap.values()].reduce((n, o) => n + o.quantity, 0);
       const source = runs[0]?.job.sheetSource ?? job.sheetSource;
       const kpis = resultKpis(result, source, required, {
@@ -770,7 +848,7 @@ const plugin: PluginModule = {
         title: "Sheet Nesting Report",
         format: { len: fmt, area: (mm2) => fmtMm2(mm2, job.outputUnit) },
         fitPage: true,
-        details: reportDetails(grouped),
+        details: [...reportDetails(grouped), ...speedDetails(result, grouped)],
         groupSections: grouped
           ? runs.map((run, ri) => ({
               title: `${run.label} - sheet ${fmt(run.job.sheet.w * MM_PER_IN)} × ${fmt(run.job.sheet.h * MM_PER_IN)}`,
@@ -784,7 +862,7 @@ const plugin: PluginModule = {
             }))
           : undefined,
         summary: {
-          kpis,
+          kpis: { ...kpis, cuttingTimeSec: metrics.totalCuttingTimeSec },
           stock: usage.map((u) => ({ ...u, size: `${fmt(u.width)} × ${fmt(u.height)}` })),
           groups: grouped ? runs.map((r) => r.label) : [],
         },
@@ -794,7 +872,7 @@ const plugin: PluginModule = {
         .map((u) => ({ name: recByKey.get(u.partId)?.name ?? u.partId, count: u.count }))
         .filter((u) => u.count > 0);
       lastView = {
-        kpis: { ...kpis, cutLength: fmt(kpis.cutLengthMm) },
+        kpis: { ...kpis, cutLength: fmt(kpis.cutLengthMm), cutTime: metrics.totalCuttingTimeSec !== null ? fmtDuration(metrics.totalCuttingTimeSec) : "" },
         stock: usage.map((u) => ({ name: u.name, size: `${fmt(u.width)} × ${fmt(u.height)}`, used: u.used, purchased: u.purchased, available: u.available })),
         unplaced,
         remnants: lastRemnants.map((r) => ({ sheet: r.rem.sheet + 1, size: `${fmt(r.rem.width)} × ${fmt(r.rem.height)}` })),
@@ -843,8 +921,40 @@ const plugin: PluginModule = {
 
     // ---------- export ----------
 
-    const exportDxf = async (msg: Record<string, unknown>) => {
+    /**
+     * NF-08: the last nest with every part where it now is on the layout tab,
+     * so the report, DXF, G-code and toolpath show and cut what the user sees
+     * after dragging or rotating parts. Cutting times are worked out again for
+     * the moved parts. The active tab must be the nest layout; otherwise (or
+     * with nothing moved) this is the nest as calculated.
+     */
+    const currentNest = async (): Promise<LastNest | null> => {
       const ln = lastNest;
+      if (!ln || lastLayoutRefs.length === 0) return ln;
+      const model = await sketchor.document.read();
+      const doc = new Map(model.entities.map((e) => [e.id, e] as const));
+      const { placements, moved, found } = applyCanvasEdits(ln.placements, lastLayoutRefs, doc, (p) => lastPlacementKeys.get(p.id) ?? p.id);
+      if (!found) {
+        notify("The nest layout tab isn't the active tab - using the nest as calculated. Switch to it to include parts you moved there.");
+        return ln;
+      }
+      if (moved === 0) return ln;
+      notify(`Using ${moved} part${moved === 1 ? "" : "s"} as moved on the canvas.`);
+      const sheets = ln.metrics.sheets.map((m, i) => {
+        const speeds = speedsForStock(lastStock[ln.sheets[i]!.stockIndex] as StockRow | undefined);
+        return { ...m, cuttingTimeSec: speeds ? cutTimeSec(toolpathPreview(sheetCutPlan(placements, i).features).stats, speeds) : null };
+      });
+      const total = sheets.length > 0 && sheets.every((m) => m.cuttingTimeSec !== null) ? sheets.reduce((n, m) => n + (m.cuttingTimeSec ?? 0), 0) : null;
+      return {
+        ...ln,
+        placements,
+        metrics: { ...ln.metrics, sheets, totalCuttingTimeSec: total },
+        summary: ln.summary ? { ...ln.summary, kpis: { ...ln.summary.kpis, cuttingTimeSec: total } } : ln.summary,
+      };
+    };
+
+    const exportDxf = async (msg: Record<string, unknown>) => {
+      const ln = await currentNest();
       if (!ln) return fail("Nothing to export - nest some parts first.");
       const sheetIndex = typeof msg.sheetIndex === "number" ? msg.sheetIndex : -1;
       if (sheetIndex >= ln.sheets.length) return fail("That sheet no longer exists - nest again.");
@@ -871,28 +981,50 @@ const plugin: PluginModule = {
       if (res.saved) notify(`Saved ${res.name ?? "nest-sheets.zip"} (${ln.sheets.length} sheets).`);
     };
 
+    /** One sheet's cut plan — the G-code export and the toolpath preview must agree, so both build it here. */
+    const sheetCutPlan = (placements: LastNestPlacement[], sheetIndex: number) => {
+      const gp: GcodePlacement[] = placements
+        .filter((p) => p.sheet === sheetIndex)
+        .map((p) => ({ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }));
+      return buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined, leadIn: job.leadIn ?? "line" });
+    };
+
+    /** N-43: one sheet's cut order, pierces and dashed rapids, in a tab of its own so the result drawing is never touched. */
+    const previewToolpath = async (msg: Record<string, unknown>) => {
+      const ln = await currentNest();
+      if (!ln) return fail("Nothing to preview - nest some parts first.");
+      const sheetIndex = typeof msg.sheetIndex === "number" ? msg.sheetIndex : 0;
+      if (sheetIndex < 0 || sheetIndex >= ln.sheets.length) return fail("That sheet no longer exists - nest again.");
+      const plan = sheetCutPlan(ln.placements, sheetIndex);
+      for (const w of plan.warnings) notify(w, true);
+      const sheet = ln.sheets[sheetIndex]!;
+      const label = ln.sheetLabels[sheetIndex]!;
+      const { outline, title } = sheetOutlineEntities(sheet, label);
+      const { entities, stats } = toolpathPreview(plan.features, toolpathPreviewScale(sheet.width, sheet.height));
+      await sketchor.app.openDocumentTab(`Toolpath – ${label}`, [outline, title, ...entities].map((e) => add(e)));
+      const fmt = (mm: number) => fmtMm(mm, job.outputUnit);
+      notify(`${label}: ${stats.contours} cut${stats.contours === 1 ? "" : "s"}, ${stats.pierces} pierce${stats.pierces === 1 ? "" : "s"} - ${fmt(stats.cutLength)} cut, ${fmt(stats.rapidLength)} of rapids.`);
+    };
+
     const exportGcode = async (msg: Record<string, unknown>) => {
-      const ln = lastNest;
+      const ln = await currentNest();
       if (!ln) return fail("Nothing to export - nest some parts first.");
       const sheetIndex = typeof msg.sheetIndex === "number" ? msg.sheetIndex : 0;
       if (sheetIndex < 0 || sheetIndex >= ln.sheets.length) return fail("That sheet no longer exists - nest again.");
-      const gp: GcodePlacement[] = ln.placements
-        .filter((p) => p.sheet === sheetIndex)
-        .map((p) => ({ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }));
-      const plan = buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined });
+      const plan = sheetCutPlan(ln.placements, sheetIndex);
       for (const w of plan.warnings) notify(w, true);
-      const cutRow = cutTableRowFor(lastStock[ln.sheets[sheetIndex]!.stockIndex] as StockRow | undefined, CUT_TABLE);
-      if (!cutRow) notify("No cut-table match for this sheet's material/thickness - using a default feed rate; check it before running the program.", true);
+      const speeds = speedsForStock(lastStock[ln.sheets[sheetIndex]!.stockIndex] as StockRow | undefined);
+      if (!speeds) notify("No feed rate for this sheet's material/thickness - using a default; enter your machine's feed rate under Cutting parameters before running the program.", true);
       const gunit = unit.unit === "in" ? "in" : "mm";
       const gcode = writeGcode(plan.features, {
         unit: gunit,
         scale: gunit === "in" ? factorFromMm("in") : 1,
-        feedRateMmPerMin: cutRow?.feedRateMmPerMin ?? 2000,
-        pierceTimeSec: cutRow?.pierceTimeSec ?? 0.5,
+        feedRateMmPerMin: speeds?.feedRateMmPerMin ?? 2000,
+        pierceTimeSec: speeds?.pierceTimeSec ?? 0.5,
         sheetLabel: ln.sheetLabels[sheetIndex],
         title: "Sheet Nesting",
         // N-42: the job's post-processor; an unknown id (an older job, a removed profile) falls back to the default.
-        profile: postProfileFromSpec(builtinPost(job.postId ?? DEFAULT_POST_ID) ?? builtinPost(DEFAULT_POST_ID)!),
+        profile: postProfileFromSpec(resolvePost(job.postId, custom.posts)),
       });
       const name = `nest-sheet-${sheetIndex + 1}.nc`;
       const res = await sketchor.ui.saveFile(name, gcode, [{ description: "G-code", accept: { "text/plain": [".nc", ".gcode", ".tap"] } }]);
@@ -927,8 +1059,9 @@ const plugin: PluginModule = {
         const [model, selection] = await Promise.all([sketchor.document.read(), sketchor.selection.read()]);
         const entities = [...model.entities];
         const { parts, openChains } = extractPartsWithDiagnostics(entities, new Set(selection), { joinTolerance: job.joinTolerance });
+        markOpenEnds(openChains);
         if (parts.length === 0) {
-          return fail(openChains.length > 0 ? `No closed shape found: ${openChains.length} shape(s) are open - close the gap in the drawing.` : "Select one or more closed shapes first.");
+          return fail(openChains.length > 0 ? `No closed shape found: ${openChains.length} shape(s) are open - the gaps are marked on the drawing.` : "Select one or more closed shapes first.");
         }
         let added = 0;
         const next = [...job.parts];
@@ -969,6 +1102,19 @@ const plugin: PluginModule = {
                   ...(typeof patch.mirror === "boolean" ? { mirror: patch.mirror } : {}),
                   ...(typeof patch.allowInHoles === "boolean" ? { allowInHoles: patch.allowInHoles } : {}),
                 },
+          ).map((p) => {
+            if (p.key !== key) return p;
+            // N-55: "normal" / an empty date clear the field.
+            const next = { ...p };
+            if (patch.priority === "high" || patch.priority === "low") next.priority = patch.priority;
+            else if (patch.priority !== undefined) delete next.priority;
+            if (patch.due !== undefined) {
+              const d = validDue(patch.due);
+              if (d) next.due = d;
+              else delete next.due;
+            }
+            return next;
+          },
           ),
         };
         persistJob();
@@ -1083,6 +1229,7 @@ const plugin: PluginModule = {
         job = { ...job, parts: [], groups: [] };
         files.clear();
         lastNest = null;
+        lastLayoutRefs = [];
         lastView = null;
         persistJob();
         persistFiles();
@@ -1208,11 +1355,38 @@ const plugin: PluginModule = {
 
       if (type === "export-dxf") return void (await exportDxf(msg));
       if (type === "export-gcode") return void (await exportGcode(msg));
+      if (type === "preview-toolpath") return void (await previewToolpath(msg));
+      if (type === "post-save") {
+        // N-42: the panel's profile editor. A built-in is saved as a custom copy; the user's own is replaced.
+        const r = upsertCustomPost(custom.posts, msg.spec);
+        if (!r.ok) return fail(`Post-processor not saved: ${r.errors.join("; ")}.`);
+        custom.posts = r.list;
+        persistCustom();
+        job = r.id === DEFAULT_POST_ID ? job : { ...job, postId: r.id };
+        persistJob();
+        post({ type: "post-saved" });
+        await pushView();
+        return notify(`Saved post-processor "${custom.posts.find((p) => p.id === r.id)?.name ?? r.id}".`);
+      }
+      if (type === "post-delete") {
+        const id = typeof msg.id === "string" ? msg.id : "";
+        if (!isCustomPostId(id)) return fail("Only your own post-processors can be deleted.");
+        custom.posts = removeCustomPost(custom.posts, id);
+        persistCustom();
+        if (job.postId === id) {
+          const { postId: _gone, ...rest } = job;
+          job = rest;
+          persistJob();
+        }
+        await pushView();
+        return notify("Post-processor deleted.");
+      }
 
       if (type === "print") {
-        if (!lastNest) return fail("Nothing to print - nest some parts first.");
+        const ln = await currentNest();
+        if (!ln) return fail("Nothing to print - nest some parts first.");
         const jobName = typeof msg.jobName === "string" ? msg.jobName : "";
-        const report = reportWithJob(lastNest, jobName, typeof msg.notes === "string" ? msg.notes : "");
+        const report = reportWithJob(ln, jobName, typeof msg.notes === "string" ? msg.notes : "");
         sketchor.ui.print(buildNestReportHtml(report), { fileName: reportFileName(jobName), pdf: buildNestReportPdf(report) });
         return;
       }
@@ -1231,6 +1405,7 @@ const plugin: PluginModule = {
         files.clear();
         for (const f of jf.files) files.set(f.key, loadDxfFile(f.key, f.name, f.text, f.unit, job.joinTolerance));
         lastNest = null;
+        lastLayoutRefs = [];
         lastView = null;
         persistJob();
         persistFiles();
