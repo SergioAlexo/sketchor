@@ -1,5 +1,7 @@
-import type { Command, Entity, LineEntity, Point, PolylineEntity } from "@sketchor/core";
+import type { Command, Constraint, Entity, LineEntity, Point, PolylineEntity, TrimReplacement } from "@sketchor/core";
 import {
+  newConstraintId,
+  trimConstraints,
   alignTransform,
   applyAlign,
   chamferLines,
@@ -87,14 +89,38 @@ function pointToSegment(p: Point, a: Point, b: Point): number {
   return dist(p, { x: a.x + dx * t, y: a.y + dy * t });
 }
 
-/** Replaces `original` with `pieces` (fresh ids, names left to the sketch code) in one undo step. */
-function replaceWith(ctx: ToolContext, original: Entity, pieces: Entity[]): void {
-  const commands: Command[] = [{ type: "delete-entities", ids: [original.id] }];
-  for (const p of pieces) {
-    const { name: _dropped, ...rest } = p;
-    commands.push({ type: "add-entity", entity: { ...rest, id: newEntityId() } as Entity });
+/**
+ * Replaces each original with its pieces (fresh ids, names left to the sketch
+ * code) in one undo step. In Sketch mode (T-46) the originals' constraints
+ * move onto the pieces and each new cut end is tied to the edge that cut it;
+ * `extra` may add more once the pieces have their final ids.
+ */
+function replaceAll(
+  ctx: ToolContext,
+  replacements: readonly TrimReplacement[],
+  extra?: (finals: TrimReplacement[]) => Constraint[],
+): void {
+  const finals: TrimReplacement[] = replacements.map(({ original, pieces }) => ({
+    original,
+    pieces: pieces.map((p) => {
+      const { name: _dropped, ...rest } = p;
+      return { ...rest, id: newEntityId() } as Entity;
+    }),
+  }));
+  const commands: Command[] = [{ type: "delete-entities", ids: finals.map((r) => r.original.id) }];
+  for (const r of finals) for (const entity of r.pieces) commands.push({ type: "add-entity", entity });
+  if (associativeOn()) {
+    const gone = new Set(finals.map((r) => r.original.id));
+    const after = [...visible(ctx).filter((e) => !gone.has(e.id)), ...finals.flatMap((r) => r.pieces)];
+    const changes = trimConstraints(finals, ctx.doc.constraints(), after);
+    for (const id of changes.remove) commands.push({ type: "remove-constraint", id });
+    for (const constraint of [...changes.add, ...(extra?.(finals) ?? [])]) commands.push({ type: "add-constraint", constraint });
   }
   ctx.commit(commands);
+}
+
+function replaceWith(ctx: ToolContext, original: Entity, pieces: Entity[], extra?: (finals: TrimReplacement[]) => Constraint[]): void {
+  replaceAll(ctx, [{ original, pieces }], extra);
 }
 
 /* ------------------------------ trim / extend ----------------------------- */
@@ -129,12 +155,12 @@ export class TrimTool implements Tool {
       this.message = "The stroke didn't cross anything that a cutting edge bounds — drag across the pieces to remove";
       return;
     }
-    const commands: Command[] = [{ type: "delete-entities", ids: r.remove }];
-    for (const piece of r.add) {
-      const { name: _dropped, ...rest } = piece;
-      commands.push({ type: "add-entity", entity: { ...rest, id: newEntityId() } as Entity });
-    }
-    ctx.commit(commands);
+    // Pieces carry placeholder ids `<original>#n`; group them back under their original.
+    const replacements: TrimReplacement[] = r.remove.flatMap((id) => {
+      const original = ctx.doc.get(id);
+      return original ? [{ original, pieces: r.add.filter((p) => p.id.startsWith(`${id}#`)) }] : [];
+    });
+    replaceAll(ctx, replacements);
   }
 
   pick(ctx: ToolContext, p: Pick): void {
@@ -192,7 +218,12 @@ export class SplitTool implements Tool {
     if (!target) return;
     const pieces = splitAt(target, p.point);
     if (!pieces) return;
-    replaceWith(ctx, target, pieces);
+    // Sketch mode: the two halves of an open split stay joined where they were cut.
+    replaceWith(ctx, target, pieces, ([r]) =>
+      r.pieces.length === 2
+        ? [{ id: newConstraintId(), type: "coincident", a: { entityId: r.pieces[0].id, point: "b" }, b: { entityId: r.pieces[1].id, point: "a" } }]
+        : [],
+    );
   }
   preview(): Entity[] {
     return [];

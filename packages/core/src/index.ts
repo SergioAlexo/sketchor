@@ -4,6 +4,7 @@ export * from "./mirror";
 export * from "./associative";
 export * from "./intersect";
 export * from "./trimFence";
+export * from "./trimConstraints";
 export * from "./fillet";
 export * from "./offset";
 export * from "./clipboard";
