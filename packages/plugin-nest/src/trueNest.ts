@@ -24,6 +24,8 @@ export interface TrueNestPart {
   rotation: PartRotationSpec;
   /** N-12: try this part inside an already-placed part's hole before the open sheet area. */
   allowInHoles?: boolean;
+  /** N-55: placement order tier - lower ranks are placed first, whatever `order` says within a tier. Absent = 0. */
+  rank?: number;
 }
 
 /** Which sheet corner placement gravitates toward. Default "bottom-left". */
@@ -294,6 +296,8 @@ export function nestTrueShape(parts: TrueNestPart[], stock: StockRow[], opts: Tr
   } else {
     instances.sort((a, b) => b.area - a.area);
   }
+  // N-55: priority / due date tiers first; the sort is stable, so `order` still decides within a tier.
+  if (instances.some((i) => (i.part.rank ?? 0) !== 0)) instances.sort((a, b) => (a.part.rank ?? 0) - (b.part.rank ?? 0));
 
   const minHoleArea = opts.minHoleArea ?? 0;
 

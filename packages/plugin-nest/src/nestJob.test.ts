@@ -5,7 +5,7 @@
  * not lose a user's stock list or per-part settings (the pre-RN panel's data).
  */
 import { describe, expect, it } from "vitest";
-import { defaultJob, jobFromLegacyState, jobParamsMm, jobParts, jobSheets, lengthMm, parseNestJob, rotationCodeFromLegacy, rotationSpecFor } from "./nestJob";
+import { defaultJob, jobFromLegacyState, jobParamsMm, jobParts, jobSheets, lengthMm, parseNestJob, partRank, rotationCodeFromLegacy, rotationSpecFor, validDue } from "./nestJob";
 
 const garbage: unknown[] = [undefined, null, 0, "", "{", "text", [], [1, 2], true, { engine: 5 }, { material: "gold", machine: "laser2", parts: "x", stock: 3 }, { params: { kerf: "no" }, thickness: 7, timeMs: -5 }];
 
@@ -152,5 +152,40 @@ describe("lead-in shape in a saved job", () => {
     expect(parseNestJob({ ...defaultJob(), leadIn: "arc" }).leadIn).toBe("arc");
     expect(parseNestJob({ ...defaultJob(), leadIn: "spiral" }).leadIn).toBeUndefined();
     expect(parseNestJob(JSON.parse(JSON.stringify(defaultJob()))).leadIn).toBeUndefined();
+  });
+});
+
+describe("N-55: part priority and due date", () => {
+  it("rank: high before normal before low; within a priority earlier dates first, undated last; a plain part is 0", () => {
+    const r = (priority?: "high" | "low", due?: string) => partRank({ priority, due });
+    expect(r()).toBe(0);
+    expect(r("high")).toBeLessThan(r());
+    expect(r()).toBeLessThan(r("low"));
+    expect(r(undefined, "2026-11-25")).toBeLessThan(r(undefined, "2026-12-01"));
+    expect(r(undefined, "2026-12-01")).toBeLessThan(r());
+    expect(r("high", "2027-06-01")).toBeLessThan(r(undefined, "2026-01-01")); // priority beats date
+    expect(r("low", "2026-01-01")).toBeGreaterThan(r());
+  });
+
+  it("only real dates count", () => {
+    expect(validDue("2026-11-25")).toBe("2026-11-25");
+    expect(validDue("2026-02-30")).toBeNull();
+    expect(validDue("25/11/2026")).toBeNull();
+    expect(validDue(20261125)).toBeNull();
+  });
+
+  it("is saved with the job and reaches the engines as a rank; a normal undated part carries none", () => {
+    const job = { ...defaultJob(), parts: [
+      { key: "a", sourceIds: [], qty: 1, rotation: "r90" as const, mirror: false, allowInHoles: true, priority: "high" as const, due: "2026-11-25" },
+      { key: "b", sourceIds: [], qty: 1, rotation: "r90" as const, mirror: false, allowInHoles: true, priority: "urgent" as never, due: "soon" },
+    ] };
+    const back = parseNestJob(JSON.parse(JSON.stringify(job)));
+    expect(back.parts[0]).toMatchObject({ priority: "high", due: "2026-11-25" });
+    expect(back.parts[1]!.priority).toBeUndefined();
+    expect(back.parts[1]!.due).toBeUndefined();
+    const sq = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+    const parts = jobParts(back, new Map([["a", { name: "a", outer: sq, holes: [] }], ["b", { name: "b", outer: sq, holes: [] }]]));
+    expect(parts[0]!.rank).toBe(partRank({ priority: "high", due: "2026-11-25" }));
+    expect(parts[1]!.rank).toBeUndefined();
   });
 });
