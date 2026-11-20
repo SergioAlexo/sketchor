@@ -81,9 +81,12 @@ N-54 (save/reopen job file) is already done in the Sheet Nesting plugin (RN-42, 
 
 **N-52** lives in the Sheet Nesting plugin (it owns the Stock on hand model): `packages/plugin-nest/src/remnants.ts` finds the largest rectangle clear of every placed part bounding box per sheet (min side 100 mm, min area 25000 mm2), and "Save offcuts as stock" adds them as qty-1 `Remnant W x H` rows (material/thickness carried, identical ones merged) and takes the inventory sheets the job used out of the list.
 
-Remaining: N-42/43 deferrals above (other post profiles, a canvas toolpath
-preview with dashed rapids), and a real algorithmic improvement if jobs need more
-than ~600 instances sharing one sheet.
+**N-42** (`packages/plugin-gcode/src/posts.ts`, commit `58f7720`): post profiles are data (`PostProfileSpec`) with built-ins for generic laser (the old output), generic plasma, LinuxCNC, Mach3/4 and GRBL laser, each round-tripped through `gcodeToEntities`; the Sheet Nesting panel has a Post-processor picker carried on the job. Open: a custom-profile editor, and the older Sheet Metal Nest panel still always uses the default.
+
+**N-43** (`packages/plugin-gcode/src/preview.ts`): `toolpathPreview(plan.features)` draws a sheet's cut plan as geometry on three layers — `Toolpath Cut` (lead-ins + contours, holes blue, outer profiles green), `Toolpath Rapid` (beam-off travel, red `DASHED`) and `Toolpath Order` (a numbered marker at every pierce) — walking the features exactly as `writeGcode` emits them, so the test runs the real writer and reader and demands the same cut and rapid length. The Sheet Nesting panel's **Toolpath** button (next to G-code, same sheet picker) opens it in a tab of its own (`Toolpath – <sheet>`), so the result drawing is never edited, and reports cuts, pierces, cut length and rapid length. Rapids stay dashed with a whole sheet in view because they carry a per-entity linetype scale sized to the sheet (`toolpathPreviewScale`): the new `linetypeScale` entity field (DXF group 48, AutoCAD's "Linetype scale" property — read from AC1032/other writers, written by the AC1032 writer, editable in Properties, honoured by the canvas, SVG, PDF and EPS). Open: the older Sheet Metal Nest panel has no preview button (new functionality ships in Sheet Nesting, raster plan decision 5), and the preview isn't animated.
+
+Remaining: arc lead-ins, the N-42 custom-profile editor, and a real algorithmic
+improvement if jobs need more than ~2000 instances sharing one sheet.
 
 Goal: select parts, enter quantities, nest them true-shape onto any number of sheets drawn from a library of standard sizes, with per-part rotation freedom (locked / 90° / any), part-in-part filling of large cut-outs, and output as a printed/PDF report (cutting time, utilisation, scrap), DXF, and G-code.
 

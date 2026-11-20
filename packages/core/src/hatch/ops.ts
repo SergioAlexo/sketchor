@@ -12,12 +12,13 @@ import { hatchFill } from "./fillLines";
 
 const TAU = Math.PI * 2;
 
-function common(h: HatchEntity): { layer?: string; color?: string; linetype?: string; lineweight?: number } {
+function common(h: HatchEntity): { layer?: string; color?: string; linetype?: string; lineweight?: number; linetypeScale?: number } {
   return {
     ...(h.layer ? { layer: h.layer } : {}),
     ...(h.color ? { color: h.color } : {}),
     ...(h.linetype ? { linetype: h.linetype } : {}),
     ...(h.lineweight !== undefined ? { lineweight: h.lineweight } : {}),
+    ...(h.linetypeScale !== undefined ? { linetypeScale: h.linetypeScale } : {}),
   };
 }
 

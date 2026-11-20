@@ -306,6 +306,13 @@ describe("Z-04: linetype and lineweight", () => {
     expect(back.lineweight).toBeCloseTo(0.5, 9);
   });
 
+  it("never writes a per-entity linetype scale (group 48): R12 predates it, and a CAM reader may choke on it", () => {
+    const text = entitiesToDxf([{ ...line(), linetype: "DASHED", linetypeScale: 5 }]);
+    const entitySection = text.slice(text.indexOf("0\nLINE"));
+    expect(entitySection).toContain("6\nDASHED\n");
+    expect(entitySection).not.toMatch(/\n48\n/);
+  });
+
   it("writes nothing (BYLAYER) for an entity with no explicit linetype/lineweight", () => {
     const text = entitiesToDxf([line()]);
     const entitySection = text.slice(text.indexOf("0\nLINE"));

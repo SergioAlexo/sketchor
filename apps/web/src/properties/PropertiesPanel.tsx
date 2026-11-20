@@ -41,7 +41,7 @@ export function PropertiesPanel({ onClose }: { onClose: () => void }) {
     useApp.getState().syncLayersFromDoc?.();
   };
 
-  const common = (key: "layer" | "color" | "construction" | "linetype" | "lineweight") => {
+  const common = (key: "layer" | "color" | "construction" | "linetype" | "lineweight" | "linetypeScale") => {
     const values = new Set(entities.map((e) => (key === "layer" ? layerOf(e) : String(e[key] ?? ""))));
     return values.size === 1 ? [...values][0] : null;
   };
@@ -124,6 +124,17 @@ export function PropertiesPanel({ onClose }: { onClose: () => void }) {
                 }}
               />
             </Row>
+            <Row label="Linetype scale">
+              <TextField
+                value={common("linetypeScale") ?? ""}
+                placeholder={common("linetypeScale") === null ? "(varies)" : "1"}
+                testId="prop-linetype-scale"
+                onCommit={(v) => {
+                  const n = v.trim() === "" ? null : Number(v);
+                  applyAll((en) => (n !== null && Number.isFinite(n) && n > 0 && n !== 1 ? { ...en, linetypeScale: n } : stripKey(en, "linetypeScale")));
+                }}
+              />
+            </Row>
             <Row label="Construction">
               <input
                 type="checkbox"
@@ -146,7 +157,7 @@ export function PropertiesPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function stripKey(e: Entity, key: "layer" | "color" | "construction" | "linetype" | "lineweight" | "style" | "halign" | "valign" | "widthFactor" | "oblique"): Entity {
+function stripKey(e: Entity, key: "layer" | "color" | "construction" | "linetype" | "lineweight" | "linetypeScale" | "style" | "halign" | "valign" | "widthFactor" | "oblique"): Entity {
   const copy = { ...e } as Record<string, unknown>;
   delete copy[key];
   return copy as unknown as Entity;

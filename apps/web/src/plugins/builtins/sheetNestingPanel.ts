@@ -96,7 +96,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         calculate: "Calculate", stop: "Stop", clear: "Clear", check: "Check nest", saveJob: "Save job", openJob: "Open job",
         fillIn: "Fill in the orange fields", ready: "Ready to calculate", gone: "Drawing no longer found", bedWarn: "The sheet is larger than the machine bed.",
         results: "Results", kpi: { sheets: "Sheets", sheetsUsed: "Sheets used", toBuy: "To purchase", util: "Utilisation", placed: "Parts placed", cut: "Cut length", pierce: "Pierces" },
-        stockUsage: "Stock usage", offcuts: "Usable offcuts", saveOffcuts: "Save offcuts as stock", notPlaced: "Not placed", dxf: "DXF", allZip: "All as ZIP", gcode: "G-code",
+        stockUsage: "Stock usage", offcuts: "Usable offcuts", saveOffcuts: "Save offcuts as stock", notPlaced: "Not placed", dxf: "DXF", allZip: "All as ZIP", gcode: "G-code", toolpath: "Toolpath", toolpathTip: "Open the cut order, pierces and rapids for this sheet in a new tab",
         manual: "Manual", groupsMode: "Groups from a list", bomHint: "Paste the parts list here (part number, quantity, material)...", loadCsv: "Load CSV", chooseFolder: "Choose folder", makeGroups: "Groups from the list",
         noFolder: "No drawing folder chosen - part numbers are looked up as DXF files in it.", noGroups: "No groups yet - paste a parts list and click Groups from the list.", group: "Group", of: "of",
         credit: "Nesting engine based on the Sheet Nesting Calculator by Oleksandr Borenko",
@@ -290,7 +290,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         h += "<h4 style='margin-top:8px'>Sheets</h4>" + R.cards.map((c) =>
           "<div class='scard'><div><b>" + esc(c.title) + "</b>" + (c.group ? " <span class='muted'>" + esc(c.group) + "</span>" : "") + "<div class='pdim'>" + esc(c.size) + " &middot; " + c.parts + " parts &middot; " + Math.round(c.utilisation * 100) + "%</div></div>" +
           "<button class='ghost sm' data-act='dxf' data-i='" + c.index + "'>" + T.dxf + "</button></div>").join("");
-        h += "<div class='row' style='margin-top:8px'><button class='ghost sm' data-act='dxf-all'>" + T.allZip + "</button><select id='gsheet' style='width:auto;margin:0'>" + R.sheetLabels.map((l, i) => "<option value='" + i + "'>" + esc(l) + "</option>").join("") + "</select><button class='ghost sm' data-act='gcode'>" + T.gcode + "</button><button class='ghost sm' data-act='print'>Print report</button></div>" + reportCard();
+        h += "<div class='row' style='margin-top:8px'><button class='ghost sm' data-act='dxf-all'>" + T.allZip + "</button><select id='gsheet' style='width:auto;margin:0'>" + R.sheetLabels.map((l, i) => "<option value='" + i + "'>" + esc(l) + "</option>").join("") + "</select><button class='ghost sm' data-act='toolpath' title='" + esc(T.toolpathTip) + "'>" + T.toolpath + "</button><button class='ghost sm' data-act='gcode'>" + T.gcode + "</button><button class='ghost sm' data-act='print'>Print report</button></div>" + reportCard();
         return h + "</div>";
       }
 
@@ -373,6 +373,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         else if (a === "dxf") post({ type: "export-dxf", sheetIndex: Number(b.dataset.i) });
         else if (a === "dxf-all") post({ type: "export-dxf", sheetIndex: -1 });
         else if (a === "gcode") post({ type: "export-gcode", sheetIndex: Number($("gsheet").value) });
+        else if (a === "toolpath") post({ type: "preview-toolpath", sheetIndex: Number($("gsheet").value) });
         else if (a === "pick-print-folder") post({ type: "pick-print-folder" });
         else if (a === "print") post({ type: "print", jobName, notes: jobNotes });
       });

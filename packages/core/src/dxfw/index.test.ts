@@ -202,3 +202,54 @@ describe("X-04: linetype and lineweight", () => {
     expect(text).toContain("2\nCONTINUOUS\n");
   });
 });
+
+describe("per-entity linetype scale (DXF group 48)", () => {
+  /** The common AcDbEntity head of the first LINE record — where group 48 belongs. */
+  const lineHead = (text: string): string => {
+    const rec = text.slice(text.indexOf("0\nLINE"));
+    return rec.slice(0, rec.indexOf("100\nAcDbLine\n"));
+  };
+
+  it("writes group 48 in the AcDbEntity head and round-trips it, alongside a linetype", () => {
+    const e: LineEntity = { ...line(), linetype: "DASHED", linetypeScale: 2.5 };
+    const text = entitiesToDxf2018([e]);
+    expect(lineHead(text)).toContain("48\n2.5\n");
+    const [back] = parseDxf(text).entities as LineEntity[];
+    expect(back.linetype).toBe("DASHED");
+    expect(back.linetypeScale).toBeCloseTo(2.5, 9);
+  });
+
+  it("writes no group 48 for the default scale, and an entity read back without one has no field at all", () => {
+    for (const e of [line(), { ...line(), linetypeScale: 1 }]) {
+      const text = entitiesToDxf2018([e]);
+      expect(lineHead(text)).not.toMatch(/\n48\n/);
+      expect((parseDxf(text).entities[0] as LineEntity).linetypeScale).toBeUndefined();
+    }
+  });
+
+  it("keeps the scale through every entity type that carries a linetype", () => {
+    const back = reimport([
+      { ...circle(), linetypeScale: 4 },
+      { ...arcCcw(), linetypeScale: 0.5 },
+      { ...bulgedClosed(), linetypeScale: 3 },
+    ]);
+    expect(back.map((e) => e.linetypeScale)).toEqual([4, 0.5, 3]);
+  });
+});
+
+describe("reading group 48 from other writers", () => {
+  const dxfWith = (lineRecord: string): string => `0\nSECTION\n2\nENTITIES\n${lineRecord}0\nENDSEC\n0\nEOF\n`;
+
+  it("reads it from the AcDbEntity subclass, and ignores a group 48 that belongs to another subclass", () => {
+    const own = dxfWith("0\nLINE\n5\n2A\n100\nAcDbEntity\n8\n0\n6\nDASHED\n48\n3.0\n100\nAcDbLine\n10\n0\n20\n0\n30\n0\n11\n10\n21\n0\n31\n0\n");
+    expect((parseDxf(own).entities[0] as LineEntity).linetypeScale).toBe(3);
+    const elsewhere = dxfWith("0\nLINE\n5\n2A\n100\nAcDbEntity\n8\n0\n100\nAcDbLine\n48\n7.0\n10\n0\n20\n0\n30\n0\n11\n10\n21\n0\n31\n0\n");
+    expect((parseDxf(elsewhere).entities[0] as LineEntity).linetypeScale).toBeUndefined();
+  });
+
+  it("reads it from a marker-less (R12-style) record, and drops a non-positive or garbage value", () => {
+    const r12 = (v: string) => dxfWith(`0\nLINE\n8\n0\n48\n${v}\n10\n0\n20\n0\n11\n10\n21\n0\n`);
+    expect((parseDxf(r12("0.25")).entities[0] as LineEntity).linetypeScale).toBe(0.25);
+    for (const bad of ["0", "-2", "abc"]) expect((parseDxf(r12(bad)).entities[0] as LineEntity).linetypeScale).toBeUndefined();
+  });
+});

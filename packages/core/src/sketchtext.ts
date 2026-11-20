@@ -984,6 +984,7 @@ export function diffToCommands(doc: SketchDocument, parsed: ParsedEntity[]): Com
         if ("fill" in existing && existing.fill !== undefined) updated.fill = existing.fill;
         if (existing.linetype !== undefined) updated.linetype = existing.linetype;
         if (existing.lineweight !== undefined) updated.lineweight = existing.lineweight;
+        if (existing.linetypeScale !== undefined) updated.linetypeScale = existing.linetypeScale;
         if (existing.construction !== undefined) updated.construction = existing.construction;
         // D-08: the annotative flag and its scale list have no code word.
         if ("annotative" in existing && existing.annotative && "annotative" in updated) {

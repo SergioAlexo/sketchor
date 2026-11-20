@@ -24,6 +24,8 @@ export interface LineEntity {
   linetype?: string;
   /** Plot/display line weight in mm (the DXF standard set: 0, 0.05, 0.09, ... up to 2.11). Absent = BYLAYER, same inheritance as {@link linetype}. */
   lineweight?: number;
+  /** AutoCAD's per-entity "Linetype scale" (DXF group 48), multiplied with the drawing's `$LTSCALE`. Absent = 1. */
+  linetypeScale?: number;
   /**
    * A construction/guide entity: visible but excluded from export weight —
    * BOM/measure/nest and similar tools treat it as a reference, not real
@@ -62,6 +64,8 @@ export interface CircleEntity {
   linetype?: string;
   /** Plot/display line weight in mm (the DXF standard set: 0, 0.05, 0.09, ... up to 2.11). Absent = BYLAYER, same inheritance as {@link linetype}. */
   lineweight?: number;
+  /** AutoCAD's per-entity "Linetype scale" (DXF group 48), multiplied with the drawing's `$LTSCALE`. Absent = 1. */
+  linetypeScale?: number;
   /**
    * A construction/guide entity: visible but excluded from export weight —
    * BOM/measure/nest and similar tools treat it as a reference, not real
@@ -94,6 +98,8 @@ export interface ArcEntity {
   linetype?: string;
   /** Plot/display line weight in mm (the DXF standard set: 0, 0.05, 0.09, ... up to 2.11). Absent = BYLAYER, same inheritance as {@link linetype}. */
   lineweight?: number;
+  /** AutoCAD's per-entity "Linetype scale" (DXF group 48), multiplied with the drawing's `$LTSCALE`. Absent = 1. */
+  linetypeScale?: number;
   /**
    * A construction/guide entity: visible but excluded from export weight —
    * BOM/measure/nest and similar tools treat it as a reference, not real
@@ -131,6 +137,8 @@ export interface PointEntity {
   linetype?: string;
   /** Plot/display line weight in mm (the DXF standard set: 0, 0.05, 0.09, ... up to 2.11). Absent = BYLAYER, same inheritance as {@link linetype}. */
   lineweight?: number;
+  /** AutoCAD's per-entity "Linetype scale" (DXF group 48), multiplied with the drawing's `$LTSCALE`. Absent = 1. */
+  linetypeScale?: number;
   /**
    * A construction/guide entity: visible but excluded from export weight —
    * BOM/measure/nest and similar tools treat it as a reference, not real
@@ -162,6 +170,8 @@ export interface EllipseEntity {
   linetype?: string;
   /** Plot/display line weight in mm (the DXF standard set: 0, 0.05, 0.09, ... up to 2.11). Absent = BYLAYER, same inheritance as {@link linetype}. */
   lineweight?: number;
+  /** AutoCAD's per-entity "Linetype scale" (DXF group 48), multiplied with the drawing's `$LTSCALE`. Absent = 1. */
+  linetypeScale?: number;
   /**
    * A construction/guide entity: visible but excluded from export weight —
    * BOM/measure/nest and similar tools treat it as a reference, not real
@@ -208,6 +218,8 @@ export interface SplineEntity {
   linetype?: string;
   /** Plot/display line weight in mm (the DXF standard set: 0, 0.05, 0.09, ... up to 2.11). Absent = BYLAYER, same inheritance as {@link linetype}. */
   lineweight?: number;
+  /** AutoCAD's per-entity "Linetype scale" (DXF group 48), multiplied with the drawing's `$LTSCALE`. Absent = 1. */
+  linetypeScale?: number;
   /**
    * A construction/guide entity: visible but excluded from export weight —
    * BOM/measure/nest and similar tools treat it as a reference, not real
@@ -260,6 +272,8 @@ export interface PolylineEntity {
   linetype?: string;
   /** Plot/display line weight in mm (the DXF standard set: 0, 0.05, 0.09, ... up to 2.11). Absent = BYLAYER, same inheritance as {@link linetype}. */
   lineweight?: number;
+  /** AutoCAD's per-entity "Linetype scale" (DXF group 48), multiplied with the drawing's `$LTSCALE`. Absent = 1. */
+  linetypeScale?: number;
   /**
    * A construction/guide entity: visible but excluded from export weight —
    * BOM/measure/nest and similar tools treat it as a reference, not real
@@ -312,6 +326,7 @@ export interface TextEntity extends AnnotativeFields {
   linetype?: string;
   /** Ignored for text — present only so every entity shares one shape. */
   lineweight?: number;
+  linetypeScale?: number;
   /** Ignored for text — present only so every entity shares one shape. */
   construction?: boolean;
   at: Point;
@@ -354,6 +369,7 @@ export interface ImageEntity {
   linetype?: string;
   /** Ignored for image — present only so every entity shares one shape. */
   lineweight?: number;
+  linetypeScale?: number;
   /** Ignored for image — present only so every entity shares one shape. */
   construction?: boolean;
   insert: Point;
@@ -434,6 +450,7 @@ export interface HatchEntity extends AnnotativeFields {
   color?: string;
   linetype?: string;
   lineweight?: number;
+  linetypeScale?: number;
   construction?: boolean;
   /** Never set: keeps `entity.fill` (a colour on closed shapes) readable on the whole union. */
   fill?: undefined;
@@ -479,6 +496,7 @@ export interface InsertEntity extends AnnotativeFields {
   color?: string;
   linetype?: string;
   lineweight?: number;
+  linetypeScale?: number;
   construction?: boolean;
   /** Never set: keeps `entity.fill` (a colour on closed shapes) readable on the whole union. */
   fill?: undefined;
@@ -513,6 +531,7 @@ export interface ViewportEntity {
   color?: string;
   linetype?: string;
   lineweight?: number;
+  linetypeScale?: number;
   construction?: boolean;
   fill?: undefined;
   /** The layout this viewport is on (see layouts/types.ts). */
@@ -570,6 +589,7 @@ export interface DimensionEntity extends AnnotativeFields {
   fill?: string;
   linetype?: string;
   lineweight?: number;
+  linetypeScale?: number;
   construction?: boolean;
   kind: DimKind;
   defPoints: Point[];
@@ -635,6 +655,7 @@ export interface MTextEntity extends AnnotativeFields {
   fill?: string;
   linetype?: string;
   lineweight?: number;
+  linetypeScale?: number;
   construction?: boolean;
   at: Point;
   width: number;

@@ -106,6 +106,7 @@ export const TRACKED_BUTTONS: Record<string, string> = {
   "prop-dashed": "properties.construction",
   "prop-linetype": "properties.linetype",
   "prop-lineweight": "properties.lineweight",
+  "prop-linetype-scale": "properties.linetypeScale",
   "prop-reverse": "properties.reverse",
   "prop-vertices-toggle": "properties.vertices",
   "layer-add": "layers.add",

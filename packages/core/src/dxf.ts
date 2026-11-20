@@ -392,6 +392,25 @@ function rawLineweight(raw: RawEntity): number | undefined {
   return Number.isFinite(n) && n >= 0 ? n / 100 : undefined;
 }
 
+/**
+ * The entity's own linetype scale (group 48), or undefined for the default 1.
+ * Group 48 only means this inside the `AcDbEntity` subclass, so a record with
+ * subclass markers is read there and nowhere else; a marker-less (R12-style)
+ * record has no other use for 48. Unit-less, so it is never rescaled with
+ * the drawing's units.
+ */
+function rawLinetypeScale(raw: RawEntity): number | undefined {
+  let inEntity = !raw.pairs.some((p) => p.code === 100);
+  for (const p of raw.pairs) {
+    if (p.code === 100) inEntity = p.value.trim() === "AcDbEntity";
+    else if (p.code === 48 && inEntity) {
+      const k = parseFloat(p.value);
+      return Number.isFinite(k) && k > 0 && Math.abs(k - 1) > 1e-9 ? k : undefined;
+    }
+  }
+  return undefined;
+}
+
 function line(a: Point, b: Point, layer?: string): Entity {
   return { id: newEntityId(), type: "line", a, b, ...(layer ? { layer } : {}) };
 }
@@ -1265,6 +1284,8 @@ function convertRecords(raws: RawEntity[], ctx: ConvertContext): Entity[] {
       if (linetype) entities[entities.length - 1].linetype = linetype;
       const lineweight = rawLineweight(raw);
       if (lineweight !== undefined) entities[entities.length - 1].lineweight = lineweight;
+      const linetypeScale = rawLinetypeScale(raw);
+      if (linetypeScale !== undefined) entities[entities.length - 1].linetypeScale = linetypeScale;
     }
   }
 

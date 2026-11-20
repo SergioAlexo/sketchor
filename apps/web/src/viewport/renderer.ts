@@ -15,6 +15,7 @@ import {
   polylineSegments,
   resolveLinetype,
   screenDashPattern,
+  effectiveLtscale,
   transformed,
   translated,
   drawOrderOf,
@@ -961,7 +962,7 @@ function drawEntity(
 
   // Infinite construction lines always draw dashed, regardless of linetype — they're a drawing aid, not real geometry.
   ctx.setLineDash(
-    entity.type === "line" && entity.infinite ? [6, 4] : screenDashPattern(builtinLinetype(linetypeName).pattern, ltscale, view.scale),
+    entity.type === "line" && entity.infinite ? [6, 4] : screenDashPattern(builtinLinetype(linetypeName).pattern, effectiveLtscale(ltscale, entity), view.scale),
   );
   ctx.beginPath();
   if (entity.type === "line") {

@@ -53,3 +53,9 @@ export function screenDashPattern(pattern: readonly number[], ltscale: number, p
   const period = px.reduce((a, b) => a + b, 0);
   return period < 6 ? [] : px;
 }
+
+/** The scale a pattern is drawn at: the drawing's `$LTSCALE` times the entity's own `linetypeScale` (a missing, non-finite or non-positive one counts as 1, as AutoCAD reads group 48). */
+export function effectiveLtscale(drawingLtscale: number, entity: { linetypeScale?: number }): number {
+  const own = entity.linetypeScale;
+  return drawingLtscale * (typeof own === "number" && Number.isFinite(own) && own > 0 ? own : 1);
+}
