@@ -86,10 +86,11 @@ export interface PersistedState {
   /**
    * NF-03: how close two ends have to be (mm) for "Add selection" to treat
    * them as meeting — real DXFs routinely have a gap of a few hundredths to
-   * a few tenths of a millimetre where a part "should" close. Defaults to
-   * the engine's own near-exact tolerance (`undefined` — see
-   * `extractPartsWithDiagnostics`'s `joinTolerance` default) so existing
-   * jobs behave exactly as before until the user raises it.
+   * a few tenths of a millimetre where a part "should" close. `undefined`
+   * (blank in the panel) defers to `extractPartsWithDiagnostics`'s own
+   * default (N-47: `DEFAULT_JOIN_TOLERANCE`, 0.02mm — enough to absorb a
+   * DXF's own ASCII round-off, not a real open contour); raise it here only
+   * for a sloppier file whose real gaps are wider than that.
    */
   joinTolerance?: number;
 }

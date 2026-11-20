@@ -47,9 +47,25 @@ export type ExtractNote =
   | { kind: "gap-closed"; maxGap: number }
   | { kind: "multi-outer"; count: number };
 
+/**
+ * N-47: default join/close tolerance (mm). A DXF is ASCII text with a fixed
+ * number of decimal digits, so an outline's own endpoints routinely land a
+ * few hundredths of a millimetre apart even when the CAD program that wrote
+ * it drew them coincident (confirmed on a real part file: an arc endpoint
+ * computed as 2.308032 round-tripped through the file as 2.308031). `1e-6`
+ * ("exact") rejected joins like that, so a chain of lines/arcs almost never
+ * closed and only already-closed entities (circles, closed polylines) came
+ * back as parts — "it only imports the holes" is this tolerance being too
+ * tight, not a missing outline. `0.02` is 10x that worst observed gap and
+ * still far under the "few hundredths to a few tenths of a millimetre"
+ * real gaps this module's own docs describe, so a genuinely open contour
+ * still gets reported.
+ */
+export const DEFAULT_JOIN_TOLERANCE = 0.02;
+
 export interface ExtractOptions {
   chordTolerance?: number;
-  /** Endpoints this close count as touching exactly (default 1e-6). */
+  /** Endpoints this close count as touching exactly (default {@link DEFAULT_JOIN_TOLERANCE}). */
   joinTolerance?: number;
   /** A chain whose free ends are within this closes anyway and reports a `gap-closed` note. Default: `joinTolerance`. */
   closeTolerance?: number;
@@ -164,7 +180,7 @@ export function extractPartsWithDiagnostics(
       });
     });
   const notes: ExtractNote[] = [];
-  const joinTol = opts.joinTolerance ?? 1e-6;
+  const joinTol = opts.joinTolerance ?? DEFAULT_JOIN_TOLERANCE;
   const closeTol = Math.max(opts.closeTolerance ?? joinTol, joinTol);
 
   // RN-10: helper lines (bends, centre lines, construction) are never cut outlines.
