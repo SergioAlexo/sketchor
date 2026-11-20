@@ -141,15 +141,15 @@ export function placementTransform(
 }
 
 /**
- * Hard cap so a pathological quantity can't hang the plugin worker (mirrors
- * `nest.ts`'s own guard, raised: N-14's perf test measured this engine's
- * per-candidate NFP checks scale roughly cubically with how many instances
- * end up sharing one sheet — the pathological case is one huge quantity
- * that all fits on a single large sheet, not spread across many. 600 was
- * chosen because that adversarial case measured ~9s on a dev machine at
- * this size; the perf test pins a generous bound above that for slower CI.
+ * Hard cap so a pathological quantity can't hang the plugin worker. The
+ * worst case is one huge quantity that all fits on a single large sheet.
+ * With the forbidden-loop grid (ForbiddenIndex) a placement costs about
+ * O(n) in the pieces already on the sheet instead of O(n^2), so the cap went
+ * from 600 to 2000: that adversarial fill measured ~5 s on a slow machine
+ * (600: 0.5 s, 1200: 1.6 s, 3000: 12 s). The perf test pins a bound above it.
  */
-const MAX_INSTANCES = 600;
+export const TRUE_NEST_MAX_INSTANCES = 2000;
+const MAX_INSTANCES = TRUE_NEST_MAX_INSTANCES;
 
 /** Deterministic Mulberry32 shuffle — `order: <seed>` uses this to give `nestTrueShapeSearch` reproducible alternate orderings to try. */
 function seededShuffle<T>(items: T[], seed: number): T[] {

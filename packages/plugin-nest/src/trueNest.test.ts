@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ForbiddenIndex, localFrame, nestTrueShape, placementTransform, type TrueNestPart } from "./trueNest";
+import { ForbiddenIndex, localFrame, nestTrueShape, TRUE_NEST_MAX_INSTANCES, placementTransform, type TrueNestPart } from "./trueNest";
 import type { StockRow } from "./stock";
 import { bounds, normalize, polygonsClash, rotate, translate, insideSheet, pointInPolygon } from "./geometry";
 import type { Point } from "./types";
@@ -268,29 +268,23 @@ describe("nestTrueShape — N-14 instance ordering", () => {
 });
 
 describe("nestTrueShape — N-14 instance cap", () => {
-  it("caps total instances and reports the rest unplaced instead of hanging", () => {
-    const parts: TrueNestPart[] = [{ id: "p", name: "p", outer: rect(10, 10), holes: [], quantity: 700, rotation: { mode: "locked" } }];
-    const stock: StockRow[] = [{ size: { name: "sheet", width: 5000, height: 5000 }, qty: null }];
-    const result = nestTrueShape(parts, stock, { spacing: 1 });
-    const unplacedCount = result.unplaced.find((u) => u.partId === "p")?.count ?? 0;
-    expect(result.placed.length).toBeLessThanOrEqual(600);
-    expect(result.placed.length + unplacedCount).toBe(700);
-    expect(unplacedCount).toBeGreaterThan(0);
-  });
-
-  it("perf: an adversarial single-sheet fill at the cap completes well within a worker-friendly bound", () => {
-    const parts: TrueNestPart[] = [{ id: "p", name: "p", outer: rect(40, 30), holes: [], quantity: 600, rotation: { mode: "quarter" } }];
+  it("perf + cap: an adversarial single-sheet fill places exactly the cap, reports the rest, and finishes in bound", () => {
+    // Everything fits on the one sheet, so every placement competes with
+    // every piece already placed: the worst case for the candidate search.
+    const extra = 50;
+    const parts: TrueNestPart[] = [{ id: "p", name: "p", outer: rect(40, 30), holes: [], quantity: TRUE_NEST_MAX_INSTANCES + extra, rotation: { mode: "quarter" } }];
     const stock: StockRow[] = [{ size: { name: "sheet", width: 3000, height: 3000 }, qty: null }];
     const t0 = Date.now();
     const result = nestTrueShape(parts, stock, { spacing: 2, edgeMargin: 5 });
     const elapsed = Date.now() - t0;
-    expect(result.placed).toHaveLength(600);
-    // ~1s since the forbidden-loop grid (it was 25-33s with a scan of every
-    // NFP per candidate, O(n^3) over a fill). The bound is several times the
-    // measurement so slow CI passes, and still fails loudly if scaling
-    // regresses back toward cubic rather than the cap silently shrinking.
-    expect(elapsed).toBeLessThan(8000);
-  }, 25000);
+    expect(result.placed).toHaveLength(TRUE_NEST_MAX_INSTANCES);
+    expect(result.sheets).toHaveLength(1);
+    expect(result.unplaced.find((u) => u.partId === "p")?.count).toBe(extra);
+    // ~5 s at 2000 on a slow machine (the scan before ForbiddenIndex took
+    // 25-33 s for just 600). The bound leaves room for slow CI and still
+    // fails loudly if scaling regresses toward cubic.
+    expect(elapsed).toBeLessThan(25000);
+  }, 60000);
 });
 
 describe("ForbiddenIndex", () => {

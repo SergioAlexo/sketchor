@@ -3,7 +3,7 @@ import { nestRasterMmAsync, type RasterNestPart, type RasterNestResult } from ".
 import { DEFAULT_SIMPLIFY_TOLERANCE, simplifyParts } from "./simplifyParts";
 import { LEVEL_BUDGET_MS, nestTrueShapeSearch } from "./search";
 import type { StockRow } from "./stock";
-import type { TrueNestPlacement, TrueNestSheet } from "./trueNest";
+import { TRUE_NEST_MAX_INSTANCES, type TrueNestPlacement, type TrueNestSheet } from "./trueNest";
 
 /**
  * One interface over both nesting engines (RN-06): "raster" (default, fast,
@@ -58,8 +58,8 @@ export interface NestEngine {
   run(req: NestRequest, hooks?: EngineHooks): Promise<RasterNestResult>;
 }
 
-/** The True-shape engine places at most this many pieces per run (`trueNest.ts` MAX_INSTANCES). */
-export const TRUE_SHAPE_MAX_INSTANCES = 600;
+/** The True-shape engine places at most this many pieces per run. */
+export const TRUE_SHAPE_MAX_INSTANCES = TRUE_NEST_MAX_INSTANCES;
 
 const totalPieces = (parts: RasterNestPart[]) => parts.reduce((n, p) => n + Math.max(0, p.quantity), 0);
 
