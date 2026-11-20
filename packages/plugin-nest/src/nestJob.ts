@@ -104,6 +104,8 @@ export interface NestJob {
   /** N-53: G-code micro-joints per contour (0/absent = none) and their width in mm. */
   tabCount?: number;
   tabWidth?: number;
+  /** G-code lead-in shape; absent = straight line. */
+  leadIn?: "arc";
   /** N-42: G-code post-processor profile id (absent = the default, generic laser). Checked against the built-ins by the plugin. */
   postId?: string;
 }
@@ -271,6 +273,7 @@ export function parseNestJob(v: unknown): NestJob {
     ...(v.joinTolerance === undefined || v.joinTolerance === null ? {} : { joinTolerance: Math.max(0, Math.min(0.5, num(v.joinTolerance, 0))) }),
     ...(num(v.tabCount, 0) >= 1 ? { tabCount: Math.min(99, Math.floor(num(v.tabCount, 0))) } : {}),
     ...(num(v.tabWidth, 0) > 0 ? { tabWidth: Math.min(1000, num(v.tabWidth, 0)) } : {}),
+    ...(v.leadIn === "arc" ? { leadIn: "arc" as const } : {}),
     ...(typeof v.postId === "string" && /^[a-z0-9-]{1,40}$/.test(v.postId) ? { postId: v.postId } : {}),
   };
 }

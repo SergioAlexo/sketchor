@@ -146,3 +146,11 @@ describe("machine speeds in a saved job", () => {
     expect(old.params.pierce).toBeUndefined();
   });
 });
+
+describe("lead-in shape in a saved job", () => {
+  it("keeps arc, and anything else reads as the straight default", () => {
+    expect(parseNestJob({ ...defaultJob(), leadIn: "arc" }).leadIn).toBe("arc");
+    expect(parseNestJob({ ...defaultJob(), leadIn: "spiral" }).leadIn).toBeUndefined();
+    expect(parseNestJob(JSON.parse(JSON.stringify(defaultJob()))).leadIn).toBeUndefined();
+  });
+});

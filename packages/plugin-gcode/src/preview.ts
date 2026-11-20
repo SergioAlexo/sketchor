@@ -115,7 +115,16 @@ export function toolpathPreview(features: CutFeature[], opts: ToolpathPreviewOpt
     entities.push({ id: newEntityId(), type: "text", layer: TOOLPATH_ORDER_LAYER, at: { x: f.pierce.x + lh * 0.35, y: f.pierce.y + lh * 0.35 }, text: String(i + 1), height: lh, rotation: 0 });
 
     const leadIn = dist(f.pierce, f.leadIn);
-    if (leadIn > EPS) {
+    if (f.leadInArc && leadIn > EPS) {
+      const c = f.leadInArc.center;
+      const radius = dist(c, f.pierce);
+      const startAngle = Math.atan2(f.pierce.y - c.y, f.pierce.x - c.x);
+      const endAngle = Math.atan2(f.leadIn.y - c.y, f.leadIn.x - c.x);
+      entities.push({ id: newEntityId(), type: "arc", layer: TOOLPATH_CUT_LAYER, color, center: c, radius, startAngle, endAngle, ccw: f.leadInArc.ccw });
+      let sweep = f.leadInArc.ccw ? endAngle - startAngle : startAngle - endAngle;
+      while (sweep <= 0) sweep += Math.PI * 2;
+      stats.cutLength += radius * sweep;
+    } else if (leadIn > EPS) {
       entities.push({ id: newEntityId(), type: "line", layer: TOOLPATH_CUT_LAYER, color, a: f.pierce, b: f.leadIn });
       stats.cutLength += leadIn;
     }

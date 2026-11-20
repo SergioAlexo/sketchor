@@ -73,7 +73,9 @@ export function writeGcode(features: CutFeature[], opts: GcodeWriteOptions): str
     lines.push(`G0 X${fmt(feature.pierce.x)} Y${fmt(feature.pierce.y)}`);
     lines.push(profile.laserOnCode);
     lines.push(profile.pierceDwell(opts.pierceTimeSec));
-    lines.push(`G1 X${fmt(feature.leadIn.x)} Y${fmt(feature.leadIn.y)} F${feed}`);
+    const arc = feature.leadInArc;
+    if (arc) lines.push(`${arc.ccw ? "G3" : "G2"} X${fmt(feature.leadIn.x)} Y${fmt(feature.leadIn.y)} I${fmt(arc.center.x - feature.pierce.x)} J${fmt(arc.center.y - feature.pierce.y)} F${feed}`);
+    else lines.push(`G1 X${fmt(feature.leadIn.x)} Y${fmt(feature.leadIn.y)} F${feed}`);
     const emitCurves = (curves: CutFeature["loop"]) => {
       for (const curve of curves) {
         if (curve.kind === "segment") {
