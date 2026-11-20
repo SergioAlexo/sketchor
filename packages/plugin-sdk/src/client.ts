@@ -7,6 +7,7 @@ import type {
   EntityId,
   ExporterHandler,
   GeneratorHandler,
+  HighlightMark,
   ImporterHandler,
   NotifyOptions,
   PluginFetchInit,
@@ -81,6 +82,7 @@ export function createClient(transport: RpcTransport): PluginHostApi {
       pickFolder: () => transport.call("ui.pickFolder", []) as Promise<PickedFolder | null>,
       readPickedFile: (relPath: string, as?: "text" | "bytes") =>
         transport.call("ui.readPickedFile", [relPath, as]) as Promise<string | Uint8Array>,
+      highlight: (marks: HighlightMark[] | null) => transport.call("ui.highlight", [marks ?? []]) as Promise<void>,
     },
 
     app: {

@@ -1,6 +1,7 @@
 import type { Command } from "../commands";
 import type { EntityId } from "../entities";
 import type { DocumentReadModel } from "./readModel";
+import type { HighlightMark } from "./highlight";
 
 /**
  * The Plugin Host API — the contract between a plugin (running in a sandbox)
@@ -185,6 +186,16 @@ export interface UiApi {
    * escapes the folder, or the file can no longer be read.
    */
   readPickedFile(relPath: string, as?: "text" | "bytes"): Promise<string | Uint8Array>;
+  /**
+   * Replaces this plugin's markers on the drawing that is open now: ringed
+   * points in world units (mm), optionally labelled — e.g. where an outline
+   * fails to close (NF-03b). Ephemeral: never saved, not undoable, drawn only on
+   * the tab that was active when they were set, and only while this plugin's
+   * panel is open — a call with the panel closed places nothing, and closing the
+   * panel or unloading the plugin clears them. `null` or `[]` clears them. The
+   * host drops non-finite points and keeps at most `MAX_HIGHLIGHT_MARKS`.
+   */
+  highlight(marks: HighlightMark[] | null): Promise<void>;
 }
 
 /** One file of a {@link PickedFolder}. */
@@ -344,5 +355,7 @@ export interface ImporterContext {
  * `.sketchor` block libraries listed in the Blocks panel) — additive. 0.12.0
  * added the data-only `contributes.layoutTemplates` contribution point (L-09:
  * `.dxf` / `.sketchor` sheet templates offered by "Layout from model") — additive.
+ * 0.13.0 added `ui.highlight(marks)`, ephemeral labelled markers a plugin puts
+ * on the open drawing (NF-03b: the nest panels mark open contour ends) — additive.
  */
-export const HOST_API_VERSION = "0.12.0";
+export const HOST_API_VERSION = "0.13.0";

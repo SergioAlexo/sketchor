@@ -21,6 +21,7 @@ import {
   drawOrderOf,
   spaceOf,
   kindBounds,
+  type HighlightMark,
   type LayoutRecord,
   type ViewportEntity,
   viewportOutline,
@@ -90,6 +91,8 @@ export interface RenderUiState {
   duplicateMarkers: readonly Point[];
   /** World locations of current line-crossing findings (read-only — see crossings.ts). */
   crossingMarkers: readonly Point[];
+  /** NF-03b: markers plugins put on this drawing through `ui.highlight` (e.g. open contour ends). */
+  pluginMarkers: readonly HighlightMark[];
   /** Dashed bbox + rotate handle shown when the selection is exactly one whole group. */
   groupHandle: { bounds: Bounds; pivot: Point } | null;
   /** While a grip is being dragged: the entity as it will be, drawn dashed over the original. */
@@ -270,6 +273,7 @@ export function render(
   for (const p of ui.healMarkers) drawHealMarker(ctx, view, p);
   for (const p of ui.duplicateMarkers) drawHealMarker(ctx, view, p, COLORS.duplicateMarker);
   for (const p of ui.crossingMarkers) drawHealMarker(ctx, view, p, COLORS.crossingMarker);
+  for (const m of ui.pluginMarkers) drawPluginMarker(ctx, view, m);
 
   if (ui.snap) drawSnapMarker(ctx, view, ui.snap);
 
@@ -495,6 +499,18 @@ function drawHealMarker(ctx: CanvasRenderingContext2D, view: View, p: Point, col
   ctx.moveTo(s.x + 4, s.y - 4);
   ctx.lineTo(s.x - 4, s.y + 4);
   ctx.stroke();
+}
+
+/** A plugin's `ui.highlight` marker: the crossings detector's violet ring, plus its label beside it. */
+function drawPluginMarker(ctx: CanvasRenderingContext2D, view: View, m: HighlightMark): void {
+  drawHealMarker(ctx, view, m.at, COLORS.crossingMarker);
+  if (!m.label) return;
+  const s = worldToScreen(view, m.at);
+  ctx.font = "12px 'Segoe UI', system-ui, sans-serif";
+  ctx.fillStyle = COLORS.crossingMarker;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "bottom";
+  ctx.fillText(m.label, s.x + 10, s.y - 8);
 }
 
 function drawMeasurement(

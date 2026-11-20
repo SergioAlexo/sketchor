@@ -1,4 +1,4 @@
-import { curveEnd, curveLength, curveStart, curvesToPolylines, dist, insertContents, joinEntities, pathOf, type Entity } from "@sketchor/core";
+import { curveEnd, curveLength, curveStart, curvesToPolylines, dist, insertContents, joinEntities, pathOf, type Entity, type HighlightMark } from "@sketchor/core";
 import { area as polygonArea, polygonContainsPolygon } from "./geometry";
 import { DEFAULT_CHORD_TOLERANCE, flattenCircle, flattenClosedPolyline } from "./flatten";
 import type { Point } from "./types";
@@ -129,6 +129,19 @@ export interface OpenChainInfo {
   start: Point;
   end: Point;
   gap: number;
+}
+
+/**
+ * NF-03b: canvas markers for open chains (`ui.highlight`). Both free ends are
+ * marked; the first carries the label — "gap 0.21 mm" for a chain that almost
+ * closed, "not connected" for a lone piece that never met anything — so the
+ * user can see where to fix the drawing instead of hunting for it.
+ */
+export function openChainMarks(chains: OpenChainInfo[], fmt: (mm: number) => string): HighlightMark[] {
+  return chains.flatMap((c) => {
+    const label = c.entityIds.length > 1 ? `gap ${fmt(c.gap)}` : "not connected";
+    return dist(c.start, c.end) < 1e-9 ? [{ at: c.start, label }] : [{ at: c.start, label }, { at: c.end }];
+  });
 }
 
 export interface ExtractResult {

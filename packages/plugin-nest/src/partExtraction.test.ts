@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity } from "@sketchor/core";
-import { extractParts, extractPartsWithDiagnostics } from "./partExtraction";
+import { extractParts, extractPartsWithDiagnostics, openChainMarks } from "./partExtraction";
 
 /**
  * N-01: the panel's part list has to reflect what a laser actually cuts —
@@ -307,5 +307,42 @@ describe("N-47: DXF round-off doesn't lose the outline", () => {
     expect(parts[0].holes).toHaveLength(1);
     expect(parts[0].outerSourceIds.slice().sort()).toEqual(["bl", "bottom", "br", "left", "right", "tl", "top", "tr"]);
     expect(parts[0].holeSourceIds).toEqual([["hole"]]);
+  });
+});
+
+/**
+ * NF-03b: the canvas markers for open contours. The label is the whole point —
+ * a near-miss and a lone unconnected piece need different fixes, so they must
+ * read differently on the drawing.
+ */
+describe("openChainMarks (NF-03b)", () => {
+  const fmt = (mm: number) => `${mm.toFixed(2)} mm`;
+  const square = (gapAt: number): LineEntity[] => [
+    { id: "l1", type: "line", a: { x: 0, y: 0 }, b: { x: 20, y: 0 } },
+    { id: "l2", type: "line", a: { x: 20, y: 0 }, b: { x: 20, y: 20 } },
+    { id: "l3", type: "line", a: { x: 20, y: 20 }, b: { x: 0, y: 20 } },
+    { id: "l4", type: "line", a: { x: 0, y: 20 }, b: { x: 0, y: gapAt } },
+  ];
+
+  it("marks both free ends of a near-miss and labels the gap", () => {
+    const lines = square(0.2);
+    const { openChains } = extractPartsWithDiagnostics(lines, allIds(lines));
+    const marks = openChainMarks(openChains, fmt);
+    expect(marks).toHaveLength(2);
+    expect(marks[0].label).toBe("gap 0.20 mm");
+    expect(marks[1].label).toBeUndefined();
+    const ends = marks.map((m) => `${m.at.x.toFixed(1)},${m.at.y.toFixed(1)}`).sort();
+    expect(ends).toEqual(["0.0,0.0", "0.0,0.2"]);
+  });
+
+  it("calls a lone piece 'not connected' rather than reporting its own length as a gap", () => {
+    const stray: LineEntity = { id: "s", type: "line", a: { x: 100, y: 100 }, b: { x: 160, y: 100 } };
+    const { openChains } = extractPartsWithDiagnostics([stray], allIds([stray]));
+    expect(openChainMarks(openChains, fmt)[0]).toMatchObject({ at: { x: 100, y: 100 }, label: "not connected" });
+  });
+
+  it("marks nothing once the outline closes", () => {
+    const lines = square(0);
+    expect(openChainMarks(extractPartsWithDiagnostics(lines, allIds(lines)).openChains, fmt)).toEqual([]);
   });
 });
