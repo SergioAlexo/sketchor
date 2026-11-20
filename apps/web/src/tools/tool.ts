@@ -52,6 +52,8 @@ export interface ToolContext {
   displayUnit(): DisplayUnit;
   /** Frames a world-space box (the zoom-window tool). */
   zoomTo(minX: number, minY: number, maxX: number, maxY: number): void;
+  /** K-03: Sketch (dimensions drive by default) or Drafting; absent in tests means Drafting. */
+  drawingMode?(): "sketch" | "drafting";
 }
 
 /** What the select tool needs from the viewport; see ToolContext.select. */

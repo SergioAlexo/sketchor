@@ -15,6 +15,16 @@ import {
   gripMenuLabel,
   quickEditCommands,
   quickEditTarget,
+  cannotDrive,
+  dimEditValue,
+  dimValueKind,
+  drivingCheck,
+  layoutOf,
+  paramEnv,
+  parseDimValue,
+  withDimValue,
+  PARAMS_TABLE,
+  type DimensionEntity,
   gripsOf,
   type Grip,
   explodeCommands,
@@ -83,7 +93,7 @@ import { downloadText } from "../blocks/download";
 import { useDimStyleUi } from "../dimstyles/dimStyleUi";
 import { matchesBinding, matchesModifier } from "../keybindings";
 import { printDrawing } from "../print/printDrawing";
-import { formatArea, formatLength } from "../units";
+import { factorFromMm, formatArea, formatLength } from "../units";
 import { CONSTRAINT_GLYPH_OFFSET, CONSTRAINT_GLYPH_SIZE, render } from "./renderer";
 import { CONSTRAINT_GLYPHS } from "../constraints/ConstraintPanel";
 import { setImageDecodeCallback } from "./imageCache";
@@ -100,6 +110,7 @@ import { COMMAND_LINE_ACTIONS } from "../metrics/actions";
 import { track } from "../metrics/metrics";
 import { CommandBar, type CommandEcho } from "../tools/CommandBar";
 import { QuickEditBox } from "../tools/QuickEditBox";
+import { DimValueBox } from "../tools/DimValueBox";
 import type { GripMenuTarget } from "../tools";
 import { parseLength } from "../tools/typedInput";
 import { useTheme } from "../theme/themeStore";
@@ -328,6 +339,14 @@ export function Viewport() {
     quickEditRef.current = q;
     setQuickEditState(q);
   };
+  // D-02b: the double-click value editor on a dimension; `over` holds a value that would over-define the sketch while the box asks what to do.
+  type DimEditState = { id: EntityId; screen: Point; over?: { message: string; value: number; expression?: string } };
+  const [dimEdit, setDimEditState] = useState<DimEditState | null>(null);
+  const dimEditRef = useRef<DimEditState | null>(null);
+  const setDimEdit = (d: DimEditState | null) => {
+    dimEditRef.current = d;
+    setDimEditState(d);
+  };
   /**
    * The relative zero (T-08, LibreCAD's): the last point any tool placed.
    * `@dx,dy` measures from the tool's own anchor while it has one, and
@@ -507,6 +526,39 @@ export function Viewport() {
     return true;
   };
 
+  /** D-02b: opens the value editor on a dimension, beside its text. */
+  const openDimEdit = (dim: DimensionEntity) => {
+    const at = layoutOf(dim).text?.at ?? dim.defPoints[dim.defPoints.length - 1];
+    if (at) setDimEdit({ id: dim.id, screen: worldToScreen(viewRef.current, at) });
+  };
+
+  /** Applies a typed dimension value: driving and moving the geometry, or — when it would over-define the sketch — asks first. Returns an error message, or null. */
+  const applyDimEditText = (text: string): string | null => {
+    const d = dimEditRef.current;
+    const dim = d ? doc.get(d.id) : undefined;
+    if (!d || !dim || dim.type !== "dimension") return "The dimension is gone";
+    const lookup = (id: EntityId) => doc.get(id);
+    const why = cannotDrive(dim, lookup);
+    if (why) return why;
+    const unit = useApp.getState().displayUnit;
+    const parsed = parseDimValue(text, dimValueKind(dim), paramEnv(doc.records(PARAMS_TABLE)), 1 / factorFromMm(unit));
+    if (!parsed.ok) return parsed.error;
+    const check = drivingCheck(dim, parsed.value, doc.all(), doc.solverConstraints());
+    if (!check.ok) {
+      if (check.reason === "cannot") return check.message;
+      setDimEdit({ ...d, over: { message: check.message, value: parsed.value, expression: parsed.expression } });
+      return null;
+    }
+    finishDimEdit(dim, parsed.value, parsed.expression, true);
+    return null;
+  };
+
+  const finishDimEdit = (dim: DimensionEntity, value: number, expression: string | undefined, driving: boolean) => {
+    bus.execute({ type: "update-entity", entity: withDimValue(dim, value, expression, (id) => doc.get(id), driving) });
+    setDimEdit(null);
+    redraw();
+  };
+
   /** What a framework tool may touch (see ../tools/tool.ts). Stable for the component's life. */
   const toolCtxRef = useRef<ToolContext | null>(null);
   if (!toolCtxRef.current) {
@@ -522,6 +574,7 @@ export function Viewport() {
         offerQuickEdit(commands);
       },
       activeLayer: () => useApp.getState().activeLayer,
+      drawingMode: () => useApp.getState().drawingMode,
       redraw: () => redraw(),
       setTool: (id) => useApp.getState().setTool(id),
       selection: () => useApp.getState().selection,
@@ -710,6 +763,7 @@ export function Viewport() {
       prevToolRef.current = tool;
       setTyped(null);
       setQuickEdit(null);
+      setDimEdit(null);
     }
     trackingRayRef.current = null;
     trackRaysRef.current = [];
@@ -1320,6 +1374,7 @@ export function Viewport() {
     const world = screenToWorld(view, screen);
     const app = useApp.getState();
     if (quickEditRef.current) setQuickEdit(null);
+    if (dimEditRef.current) setDimEdit(null);
     setGripMenu(null);
 
     // Middle/right-drag pans from any tool, and explicitly preserves a
@@ -1793,6 +1848,13 @@ export function Viewport() {
       return;
     }
 
+    // D-02b: double-click a dimension to edit its value (a reference one becomes driving).
+    const dblDim = hit ? doc.get(hit) : null;
+    if (dblDim && dblDim.type === "dimension" && app.tool === "select" && !["leader", "tolerance", "centermark", "centerline"].includes(dblDim.kind)) {
+      openDimEdit(dblDim);
+      return;
+    }
+
     // Double-click any text to edit it (from select or the text tool).
     const dblEntity = hit ? doc.get(hit) : null;
     if (dblEntity && dblEntity.type === "text" && (app.tool === "select" || app.tool === "text")) {
@@ -1914,6 +1976,30 @@ export function Viewport() {
             screen={quickEdit.screen}
             onCommit={applyQuickEditText}
             onCancel={() => setQuickEdit(null)}
+          />
+        );
+      })()}
+      {dimEdit && (() => {
+        const dim = doc.get(dimEdit.id);
+        if (!dim || dim.type !== "dimension") return null;
+        const lookup = (id: EntityId) => doc.get(id);
+        const angle = dimValueKind(dim) === "angle";
+        const v = dimEditValue(dim, lookup);
+        const initial = dim.expression ?? (angle ? String(Math.round(((v * 180) / Math.PI) * 1e6) / 1e6) : formatLength(v, useApp.getState().displayUnit));
+        const why = cannotDrive(dim, lookup);
+        const hint = why ?? (dim.driving ? "Driving · Enter applies · Esc cancels" : "Reference · Enter makes it driving");
+        return (
+          <DimValueBox
+            key={dimEdit.id}
+            label={angle ? "Angle" : "Dimension value"}
+            hint={hint}
+            initial={initial}
+            screen={dimEdit.screen}
+            over={dimEdit.over?.message ?? null}
+            onCommit={applyDimEditText}
+            onMakeReference={() => dimEdit.over && finishDimEdit(dim, dimEdit.over.value, dimEdit.over.expression, false)}
+            onDriveAnyway={() => dimEdit.over && finishDimEdit(dim, dimEdit.over.value, dimEdit.over.expression, true)}
+            onCancel={() => setDimEdit(null)}
           />
         );
       })()}

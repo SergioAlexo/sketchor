@@ -1,5 +1,6 @@
 import type { DimensionEntity, Entity, LineEntity, Point, PointRef } from "@sketchor/core";
 import {
+  asNewDrivingAll,
   chainDimension,
   dimAngle3,
   dimBetweenPoints,
@@ -90,8 +91,18 @@ export class DimTool implements Tool {
     return undefined;
   }
 
+  /** Why the last dimension placed in Sketch mode stayed a reference; shown in the prompt until the next one. */
+  private note: string | null = null;
+
   private commit(ctx: ToolContext, dims: DimensionEntity[]): void {
     if (!dims.length) return;
+    // K-03 / D-02b: in Sketch mode a new dimension drives at what it measures, unless that would over-define the sketch.
+    this.note = null;
+    if (ctx.drawingMode?.() === "sketch") {
+      const r = asNewDrivingAll(dims, ctx.doc.all(), ctx.doc.solverConstraints());
+      dims = r.dims;
+      this.note = r.note ?? null;
+    }
     // Names count what is already in the drawing, so number the batch ourselves.
     const cmds = dims.map((d, i) => ({ type: "add-entity" as const, entity: { ...d, name: d.name ?? (i === 0 ? nextEntityName(ctx.doc, "dimension") : undefined) } }));
     if (cmds.length === 1) ctx.execute(cmds[0]);
@@ -109,6 +120,7 @@ export class DimTool implements Tool {
     const s = this.st;
     switch (s.s) {
       case "first":
+        if (this.note) return `${this.note} - click the next object`;
         switch (this.mode) {
           case "smart": return "Dimension: click a line, circle, arc or point (click a second line for the angle between them)";
           case "linear": case "aligned": return "Dimension: click the first point, or a line to dimension its length";
@@ -150,6 +162,7 @@ export class DimTool implements Tool {
 
   cancel(): void {
     this.st = { s: "first" };
+    this.note = null;
   }
 
   pick(ctx: ToolContext, p: Pick): void {
