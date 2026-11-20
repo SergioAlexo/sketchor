@@ -180,6 +180,15 @@ body {
   bottom: 1px;
   font-size: 8px;
   color: var(--text-dim);
+  /* Shortcut letters stay out of the way until you point at (or tab to) the button. */
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.tool:hover .keyhint,
+.tool:focus-visible .keyhint {
+  opacity: 1;
 }
 
 .stage {
