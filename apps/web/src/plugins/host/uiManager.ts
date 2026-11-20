@@ -62,6 +62,10 @@ export function showPanel(pluginId: string, html: string, options: UiShowOptions
   emitChange();
 }
 
+export function isPanelOpen(pluginId: string): boolean {
+  return panels.has(pluginId);
+}
+
 export function hidePanel(pluginId: string): void {
   if (panels.delete(pluginId)) emitChange();
 }

@@ -481,6 +481,9 @@ export function Viewport() {
       healMarkers: state.healIssues.map((i) => i.location),
       duplicateMarkers: state.duplicateIssues.map((i) => i.location),
       crossingMarkers: state.crossingIssues.map((i) => i.location),
+      pluginMarkers: Object.values(state.pluginHighlights)
+        .filter((h) => h.sessionId === state.activeSessionId)
+        .flatMap((h) => h.marks),
       groupHandle: groupBounds && groupPivot ? { bounds: groupBounds, pivot: groupPivot } : null,
       gripPreview: overlay?.gripPreview ?? [],
       freeEndpointIds: state.showConnectivityHint ? freeEndpointEntityIds(doc) : null,
@@ -904,6 +907,7 @@ export function Viewport() {
   const healIssues = useApp((s) => s.healIssues);
   const duplicateIssues = useApp((s) => s.duplicateIssues);
   const crossingIssues = useApp((s) => s.crossingIssues);
+  const pluginHighlights = useApp((s) => s.pluginHighlights);
   const healFocus = useApp((s) => s.healFocus);
   const showConnectivityHint = useApp((s) => s.showConnectivityHint);
   const showClosedRegions = useApp((s) => s.showClosedRegions);
@@ -933,6 +937,7 @@ export function Viewport() {
     healIssues,
     duplicateIssues,
     crossingIssues,
+    pluginHighlights,
     showConnectivityHint,
     showClosedRegions,
     showSplineCvs,

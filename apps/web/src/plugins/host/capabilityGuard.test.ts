@@ -38,6 +38,8 @@ describe("assertCapability", () => {
   it("allows permission-free UI methods with no grants at all", () => {
     expect(() => assertCapability("ui.notify", grant())).not.toThrow();
     expect(() => assertCapability("ui.show", grant())).not.toThrow();
+    // NF-03b: throwaway markers over the drawing read and write nothing.
+    expect(() => assertCapability("ui.highlight", grant())).not.toThrow();
   });
 
   it("does not let one permission stand in for another", () => {

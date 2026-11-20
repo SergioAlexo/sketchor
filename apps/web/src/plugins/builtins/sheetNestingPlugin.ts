@@ -20,6 +20,8 @@ import {
   engineFor,
   engineHintLines,
   extractPartsWithDiagnostics,
+  openChainMarks,
+  type OpenChainInfo,
   fmtMm,
   fmtMm2,
   groupIdenticalSheetsPerRun,
@@ -592,11 +594,17 @@ const plugin: PluginModule = {
     void sketchor.app.onDisplayUnitChange((info) => {
       unit = info;
     });
+    // NF-03b: mark where a selected outline fails to close (the host only shows them while this panel is open).
+    const markOpenEnds = (openChains: OpenChainInfo[]) => void sketchor.ui.highlight(openChainMarks(openChains, (mm) => fmtMm(mm, job.outputUnit))).catch(() => undefined);
     void sketchor.selection.onChange(async () => {
       const selection = await sketchor.selection.read();
-      if (selection.length === 0) return post({ type: "selection-hint", count: 0, openCount: 0 });
+      if (selection.length === 0) {
+        markOpenEnds([]);
+        return post({ type: "selection-hint", count: 0, openCount: 0 });
+      }
       const model = await sketchor.document.read();
       const { parts, openChains } = extractPartsWithDiagnostics([...model.entities], new Set(selection), { joinTolerance: job.joinTolerance });
+      markOpenEnds(openChains);
       post({ type: "selection-hint", count: parts.length, openCount: openChains.length });
     });
 
@@ -950,8 +958,9 @@ const plugin: PluginModule = {
         const [model, selection] = await Promise.all([sketchor.document.read(), sketchor.selection.read()]);
         const entities = [...model.entities];
         const { parts, openChains } = extractPartsWithDiagnostics(entities, new Set(selection), { joinTolerance: job.joinTolerance });
+        markOpenEnds(openChains);
         if (parts.length === 0) {
-          return fail(openChains.length > 0 ? `No closed shape found: ${openChains.length} shape(s) are open - close the gap in the drawing.` : "Select one or more closed shapes first.");
+          return fail(openChains.length > 0 ? `No closed shape found: ${openChains.length} shape(s) are open - the gaps are marked on the drawing.` : "Select one or more closed shapes first.");
         }
         let added = 0;
         const next = [...job.parts];

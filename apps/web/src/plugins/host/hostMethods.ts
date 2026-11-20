@@ -1,5 +1,6 @@
 import {
   projectDocument,
+  sanitizeHighlightMarks,
   type Command,
   type DisplayUnitInfo,
   type PickedFolder,
@@ -10,7 +11,7 @@ import {
 } from "@sketchor/core";
 import { bus, doc, openNamedTab, useApp } from "../../state/store";
 import { factorFromMm, type DisplayUnit } from "../../units";
-import { hidePanel, postToPanel, showPanel, subscribeToPanel } from "./uiManager";
+import { hidePanel, isPanelOpen, onPanelsChange, postToPanel, showPanel, subscribeToPanel } from "./uiManager";
 import { printHtml } from "../../print/printHtml";
 import { listDirectory, readPickedFile, type DirHandleLike } from "./pickedFolder";
 import { autosaveEnabled, autosaveFolderLabel, pickAutosaveFolder, setAutosaveEnabled, supportsAutosave } from "../../io/autosaveFolder";
@@ -117,6 +118,23 @@ function currentDisplayUnit(): DisplayUnitInfo {
  * reached *after* {@link ../host/capabilityGuard.assertCapability} has passed.
  */
 
+/** A plugin's `ui.highlight` markers go with it when it unloads. */
+export function clearPluginHighlight(pluginId: string): void {
+  useApp.getState().setPluginHighlight(pluginId, []);
+}
+
+// Markers belong to a plugin's open panel (the UiApi is the panel's API): closing
+// the panel - its own ✕ or `ui.hide` - takes them off the drawing. Registered on
+// the first `ui.highlight`, not at import, so nothing runs for plugins that never use it.
+let pruningPanels = false;
+function prunePluginHighlightsWithPanels(): void {
+  if (pruningPanels) return;
+  pruningPanels = true;
+  onPanelsChange(() => {
+    for (const id of Object.keys(useApp.getState().pluginHighlights)) if (!isPanelOpen(id)) clearPluginHighlight(id);
+  });
+}
+
 export interface HostContext {
   /** Manifest id — namespaces this plugin's storage. */
   readonly pluginId: string;
@@ -221,6 +239,11 @@ export async function dispatchCall(ctx: HostContext, method: string, args: unkno
       if (!root) throw new Error("No folder picked - call ui.pickFolder first");
       return readPickedFile(root, String(args[0]), args[1] === "bytes" ? "bytes" : "text");
     }
+    case "ui.highlight":
+      prunePluginHighlightsWithPanels();
+      // With its panel closed a plugin has nothing on screen to explain markers, so it can't place any.
+      useApp.getState().setPluginHighlight(ctx.pluginId, isPanelOpen(ctx.pluginId) ? sanitizeHighlightMarks(args[0]) : []);
+      return undefined;
 
     case "app.displayUnit":
       return currentDisplayUnit();
