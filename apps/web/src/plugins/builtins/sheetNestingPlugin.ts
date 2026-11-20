@@ -92,6 +92,7 @@ import { add, type DisplayUnitInfo, type PickedFolder, type PluginModule } from 
 import { displayUnitToDxfCode, factorFromMm } from "../../units";
 import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportWithJob, type LastNest, type LastNestPlacement } from "./nestReport";
 import { SHEET_NESTING_PANEL_HTML } from "./sheetNestingPanel";
+import { applyCanvasEdits, type LayoutSheetRef } from "./nestCanvasEdits";
 
 /**
  * "Sheet Nesting" (RN-30/31/32): the raster-first nesting panel, a separate
@@ -312,6 +313,9 @@ const plugin: PluginModule = {
     }
 
     let lastNest: LastNest | null = null;
+    /** NF-08: where each drawn sheet's outline went on the layout tab, and each placement's identity across identical sheets. */
+    let lastLayoutRefs: LayoutSheetRef[] = [];
+    let lastPlacementKeys = new Map<string, string>();
     let lastView: ResultView | null = null;
     /** Effective stock rows (with material / thickness) of the last result, for the G-code feed-rate lookup. */
     let lastStock: StockRow[] = [];
@@ -784,7 +788,17 @@ const plugin: PluginModule = {
       const sheetLabels = result.sheets.map((s, i) => sheetLabel(s, i));
       const groups = groupIdenticalSheetsPerRun(result.sheets, result.placed, sheetRun);
       const clamp = runs[0] ? lengthMm(effectiveClamp(runs[0].job)) : 0;
-      const layout = buildSideBySideLayout(result.sheets, placements, groups, sheetLabel, { clamp });
+      const outlineAt = new Map<number, { id: string; origin: { x: number; y: number } }>();
+      const layout = buildSideBySideLayout(result.sheets, placements, groups, sheetLabel, { clamp, onSheet: (i, id, origin) => outlineAt.set(i, { id, origin }) });
+      lastLayoutRefs = groups.flatMap((g) => {
+        const o = outlineAt.get(g.indices[0]!);
+        return o ? [{ sheet: g.indices[0]!, indices: g.indices, outlineId: o.id, origin: o.origin }] : [];
+      });
+      const r3 = (v: number) => Math.round(v * 1000) / 1000;
+      lastPlacementKeys = new Map(placements.map((p) => {
+        const pl = result.placed[Number(p.id)]!;
+        return [p.id, `${pl.partId}|${pl.rotationDeg}|${pl.mirrored ? 1 : 0}|${r3(pl.translation.x)}|${r3(pl.translation.y)}`];
+      }));
       await sketchor.app.openDocumentTab(`Nest – ${result.placed.length} part${result.placed.length === 1 ? "" : "s"}, ${result.sheets.length} sheet${result.sheets.length === 1 ? "" : "s"}`, layout);
 
       const geoMap = new Map([...recByKey].map(([k, r]) => [k, { outer: r.outer, holes: r.holes }]));
@@ -900,8 +914,40 @@ const plugin: PluginModule = {
 
     // ---------- export ----------
 
-    const exportDxf = async (msg: Record<string, unknown>) => {
+    /**
+     * NF-08: the last nest with every part where it now is on the layout tab,
+     * so the report, DXF, G-code and toolpath show and cut what the user sees
+     * after dragging or rotating parts. Cutting times are worked out again for
+     * the moved parts. The active tab must be the nest layout; otherwise (or
+     * with nothing moved) this is the nest as calculated.
+     */
+    const currentNest = async (): Promise<LastNest | null> => {
       const ln = lastNest;
+      if (!ln || lastLayoutRefs.length === 0) return ln;
+      const model = await sketchor.document.read();
+      const doc = new Map(model.entities.map((e) => [e.id, e] as const));
+      const { placements, moved, found } = applyCanvasEdits(ln.placements, lastLayoutRefs, doc, (p) => lastPlacementKeys.get(p.id) ?? p.id);
+      if (!found) {
+        notify("The nest layout tab isn't the active tab - using the nest as calculated. Switch to it to include parts you moved there.");
+        return ln;
+      }
+      if (moved === 0) return ln;
+      notify(`Using ${moved} part${moved === 1 ? "" : "s"} as moved on the canvas.`);
+      const sheets = ln.metrics.sheets.map((m, i) => {
+        const speeds = speedsForStock(lastStock[ln.sheets[i]!.stockIndex] as StockRow | undefined);
+        return { ...m, cuttingTimeSec: speeds ? cutTimeSec(toolpathPreview(sheetCutPlan(placements, i).features).stats, speeds) : null };
+      });
+      const total = sheets.length > 0 && sheets.every((m) => m.cuttingTimeSec !== null) ? sheets.reduce((n, m) => n + (m.cuttingTimeSec ?? 0), 0) : null;
+      return {
+        ...ln,
+        placements,
+        metrics: { ...ln.metrics, sheets, totalCuttingTimeSec: total },
+        summary: ln.summary ? { ...ln.summary, kpis: { ...ln.summary.kpis, cuttingTimeSec: total } } : ln.summary,
+      };
+    };
+
+    const exportDxf = async (msg: Record<string, unknown>) => {
+      const ln = await currentNest();
       if (!ln) return fail("Nothing to export - nest some parts first.");
       const sheetIndex = typeof msg.sheetIndex === "number" ? msg.sheetIndex : -1;
       if (sheetIndex >= ln.sheets.length) return fail("That sheet no longer exists - nest again.");
@@ -938,7 +984,7 @@ const plugin: PluginModule = {
 
     /** N-43: one sheet's cut order, pierces and dashed rapids, in a tab of its own so the result drawing is never touched. */
     const previewToolpath = async (msg: Record<string, unknown>) => {
-      const ln = lastNest;
+      const ln = await currentNest();
       if (!ln) return fail("Nothing to preview - nest some parts first.");
       const sheetIndex = typeof msg.sheetIndex === "number" ? msg.sheetIndex : 0;
       if (sheetIndex < 0 || sheetIndex >= ln.sheets.length) return fail("That sheet no longer exists - nest again.");
@@ -954,7 +1000,7 @@ const plugin: PluginModule = {
     };
 
     const exportGcode = async (msg: Record<string, unknown>) => {
-      const ln = lastNest;
+      const ln = await currentNest();
       if (!ln) return fail("Nothing to export - nest some parts first.");
       const sheetIndex = typeof msg.sheetIndex === "number" ? msg.sheetIndex : 0;
       if (sheetIndex < 0 || sheetIndex >= ln.sheets.length) return fail("That sheet no longer exists - nest again.");
@@ -1163,6 +1209,7 @@ const plugin: PluginModule = {
         job = { ...job, parts: [], groups: [] };
         files.clear();
         lastNest = null;
+        lastLayoutRefs = [];
         lastView = null;
         persistJob();
         persistFiles();
@@ -1316,9 +1363,10 @@ const plugin: PluginModule = {
       }
 
       if (type === "print") {
-        if (!lastNest) return fail("Nothing to print - nest some parts first.");
+        const ln = await currentNest();
+        if (!ln) return fail("Nothing to print - nest some parts first.");
         const jobName = typeof msg.jobName === "string" ? msg.jobName : "";
-        const report = reportWithJob(lastNest, jobName, typeof msg.notes === "string" ? msg.notes : "");
+        const report = reportWithJob(ln, jobName, typeof msg.notes === "string" ? msg.notes : "");
         sketchor.ui.print(buildNestReportHtml(report), { fileName: reportFileName(jobName), pdf: buildNestReportPdf(report) });
         return;
       }
@@ -1337,6 +1385,7 @@ const plugin: PluginModule = {
         files.clear();
         for (const f of jf.files) files.set(f.key, loadDxfFile(f.key, f.name, f.text, f.unit, job.joinTolerance));
         lastNest = null;
+        lastLayoutRefs = [];
         lastView = null;
         persistJob();
         persistFiles();
