@@ -73,13 +73,48 @@ function netArea(part: PartGeometry): number {
 /** Exported for N-40 (the G-code writer): the same material/thickness match the cutting-time estimate uses, so feed rate and pierce time never disagree between the report and the emitted program. */
 export function cutTableRowFor(stockRow: StockRow | undefined, cutTable: CutTableRow[]): CutTableRow | undefined {
   if (!stockRow?.material || stockRow.thickness === undefined) return undefined;
-  // Case/whitespace-insensitive material match and a small thickness
-  // tolerance — a user's stock row is free-typed text and a converted unit
-  // ("3.175mm" from "1/8 in"), not guaranteed to hit a cut-table row exactly.
-  const material = stockRow.material.trim().toLowerCase();
-  return cutTable.find(
-    (r) => r.material.trim().toLowerCase() === material && Math.abs(r.thickness - stockRow.thickness!) < 0.05,
-  );
+  return cutRowForThickness(stockRow.material, stockRow.thickness, cutTable);
+}
+
+/**
+ * The cut-table row for `material` at `thicknessMm`. Case/whitespace-
+ * insensitive material match; a row within 0.05 mm is used as is (a user's
+ * stock row is free-typed text and a converted unit - "3.175mm" from
+ * "1/8 in" - not guaranteed to hit a row exactly). Any other thickness is
+ * estimated from the material's rows rather than dropped: the table has a
+ * handful of seed thicknesses and real jobs are in gauges between them, so
+ * an exact-only match left almost every inch job with no cutting time.
+ * Between two rows the feed rate is interpolated on a log scale (it falls
+ * roughly exponentially with thickness) and the pierce time linearly; past
+ * the thickest row the feed falls and the pierce grows in proportion to
+ * thickness; below the thinnest row the thinnest row's (slower, so
+ * conservative) values are used. A material with no rows gets nothing.
+ */
+export function cutRowForThickness(material: string, thicknessMm: number, cutTable: CutTableRow[]): CutTableRow | undefined {
+  const m = material.trim().toLowerCase();
+  const rows = cutTable.filter((r) => r.material.trim().toLowerCase() === m).sort((a, b) => a.thickness - b.thickness);
+  if (rows.length === 0 || !(thicknessMm > 0)) return undefined;
+  const exact = rows.find((r) => Math.abs(r.thickness - thicknessMm) < 0.05);
+  if (exact) return exact;
+  const first = rows[0]!;
+  const last = rows[rows.length - 1]!;
+  if (thicknessMm < first.thickness) return { ...first, thickness: thicknessMm, estimated: true };
+  if (thicknessMm > last.thickness) {
+    const k = thicknessMm / last.thickness;
+    return { ...last, thickness: thicknessMm, feedRateMmPerMin: last.feedRateMmPerMin / k, pierceTimeSec: last.pierceTimeSec * k, estimated: true };
+  }
+  const hi = rows.findIndex((r) => r.thickness > thicknessMm);
+  const a = rows[hi - 1]!;
+  const b = rows[hi]!;
+  const t = (thicknessMm - a.thickness) / (b.thickness - a.thickness);
+  return {
+    ...a,
+    thickness: thicknessMm,
+    feedRateMmPerMin: Math.exp(Math.log(a.feedRateMmPerMin) + t * (Math.log(b.feedRateMmPerMin) - Math.log(a.feedRateMmPerMin))),
+    pierceTimeSec: a.pierceTimeSec + t * (b.pierceTimeSec - a.pierceTimeSec),
+    rapidMmPerMin: a.rapidMmPerMin + t * (b.rapidMmPerMin - a.rapidMmPerMin),
+    estimated: true,
+  };
 }
 
 /** A rough, placement-order nearest-hop travel estimate — a stand-in until N-40's real toolpath ordering exists. */

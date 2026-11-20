@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeJobMetrics, type CutTableRow, type PartGeometry } from "./metrics";
+import { computeJobMetrics, cutRowForThickness, type CutTableRow, type PartGeometry } from "./metrics";
 import type { TrueNestResult } from "./trueNest";
 import type { StockRow } from "./stock";
 
@@ -120,5 +120,56 @@ describe("computeJobMetrics", () => {
     expect(metrics.totalUtilisation).toBe(0);
     expect(metrics.totalCuttingTimeSec).toBeNull();
     expect(metrics.totalCost).toBeNull();
+  });
+});
+
+describe("cutRowForThickness", () => {
+  const table: CutTableRow[] = [
+    { material: "Aluminum", thickness: 1, feedRateMmPerMin: 10000, pierceTimeSec: 0.2, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 2700 },
+    { material: "Aluminum", thickness: 3, feedRateMmPerMin: 4500, pierceTimeSec: 0.4, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 2700 },
+    { material: "Aluminum", thickness: 6, feedRateMmPerMin: 1500, pierceTimeSec: 1.2, rapidMmPerMin: 12000, estimated: false, densityKgPerM3: 2700 },
+  ];
+
+  it("uses a row within 0.05 mm as is", () => {
+    expect(cutRowForThickness(" aluminum ", 3.03, table)).toBe(table[1]);
+  });
+
+  it("estimates 1/8 in (3.175 mm) between the 3 and 6 mm rows instead of giving up - the reported missing cutting time", () => {
+    const r = cutRowForThickness("Aluminum", 3.175, table)!;
+    expect(r.feedRateMmPerMin).toBeLessThan(4500);
+    expect(r.feedRateMmPerMin).toBeGreaterThan(1500);
+    // log interpolation: at the geometric midpoint of feed for t half-way
+    expect(cutRowForThickness("Aluminum", 4.5, table)!.feedRateMmPerMin).toBeCloseTo(Math.sqrt(4500 * 1500), 6);
+    expect(cutRowForThickness("Aluminum", 4.5, table)!.pierceTimeSec).toBeCloseTo(0.8, 9);
+    expect(r.estimated).toBe(true);
+    expect(r.densityKgPerM3).toBe(2700);
+  });
+
+  it("slows down in proportion past the thickest row and stays at the thinnest row's (conservative) speed below it", () => {
+    const thick = cutRowForThickness("Aluminum", 12, table)!;
+    expect(thick.feedRateMmPerMin).toBeCloseTo(750, 9);
+    expect(thick.pierceTimeSec).toBeCloseTo(2.4, 9);
+    expect(thick.estimated).toBe(true);
+    expect(cutRowForThickness("Aluminum", 0.5, table)!.feedRateMmPerMin).toBe(10000);
+  });
+
+  it("gives nothing for a material with no rows or no thickness", () => {
+    expect(cutRowForThickness("Plywood", 3, table)).toBeUndefined();
+    expect(cutRowForThickness("Aluminum", 0, table)).toBeUndefined();
+    expect(cutRowForThickness("Aluminum", Number.NaN, table)).toBeUndefined();
+  });
+
+  it("gives a cutting time for a gauge thickness that matches no row exactly", () => {
+    const geo: PartGeometry = { outer: rect(100, 100), holes: [] };
+    const result: TrueNestResult = {
+      sheets: [{ stockIndex: 0, width: 200, height: 200 }],
+      placed: [{ partId: "p", sheet: 0, rotationDeg: 0, mirrored: false, translation: { x: 0, y: 0 } }],
+      unplaced: [],
+      utilisation: 0,
+    };
+    const stock: StockRow[] = [{ size: { name: "s", width: 200, height: 200 }, material: "Aluminum", thickness: 3.175, qty: 1 }];
+    const m = computeJobMetrics(result, new Map([["p", geo]]), stock, table);
+    expect(m.sheets[0].cuttingTimeSec).toBeGreaterThan(0);
+    expect(m.sheets[0].weightKg).toBeCloseTo((10000 / 1e6) * (3.175 / 1000) * 2700, 9);
   });
 });

@@ -3,7 +3,7 @@ import { curveLength, pathOf, type Entity, type LineEntity, type TextEntity } fr
 import { buildCutPlan, type GcodePlacement } from "./toolpath";
 import { writeGcode } from "./write";
 import { gcodeToEntities } from "./parse";
-import { TOOLPATH_COLORS, TOOLPATH_CUT_LAYER, TOOLPATH_ORDER_LAYER, TOOLPATH_RAPID_LAYER, toolpathPreview, toolpathPreviewScale } from "./preview";
+import { cutTimeSec, TOOLPATH_COLORS, TOOLPATH_CUT_LAYER, TOOLPATH_ORDER_LAYER, TOOLPATH_RAPID_LAYER, toolpathPreview, toolpathPreviewScale } from "./preview";
 
 /**
  * N-43: the preview is how an operator checks a sheet before burning it — a
@@ -122,5 +122,22 @@ describe("toolpathPreviewScale", () => {
     expect(toolpathPreviewScale(100, 50).rapidLinetypeScale).toBe(1);
     expect(toolpathPreviewScale(100, 50).labelHeight).toBe(3);
     expect(toolpathPreviewScale(20000, 9000).labelHeight).toBe(30);
+  });
+});
+
+describe("cutTimeSec", () => {
+  it("is cut length at the feed, plus a dwell per pierce, plus rapids at the rapid rate - from the same walk as the preview", () => {
+    const { stats } = toolpathPreview(buildCutPlan([plate("a", 1, 10), plate("b", 2, 130)]).features);
+    const speeds = { feedRateMmPerMin: 3000, pierceTimeSec: 0.5, rapidMmPerMin: 12000 };
+    expect(cutTimeSec(stats, speeds)).toBeCloseTo((stats.cutLength / 3000) * 60 + stats.pierces * 0.5 + (stats.rapidLength / 12000) * 60, 9);
+    // tabs restart the beam: more pierces, so more time at the same speeds
+    const tabbed = toolpathPreview(buildCutPlan([plate("a", 1, 10), plate("b", 2, 130)], { tabs: { count: 3, width: 4 } }).features).stats;
+    expect(cutTimeSec(tabbed, speeds)).toBeGreaterThan(cutTimeSec(stats, speeds) - 1e-9);
+  });
+
+  it("never divides by zero or goes negative on a nonsense speed", () => {
+    const stats = { cutLength: 100, pierces: 2, rapidLength: 50 };
+    expect(cutTimeSec(stats, { feedRateMmPerMin: 0, pierceTimeSec: -1, rapidMmPerMin: 0 })).toBe(0);
+    expect(cutTimeSec({ cutLength: 0, pierces: 0, rapidLength: 0 }, { feedRateMmPerMin: 1000, pierceTimeSec: 1, rapidMmPerMin: 1000 })).toBe(0);
   });
 });

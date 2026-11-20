@@ -133,3 +133,16 @@ describe("N-42 post-processor on the job", () => {
     expect(parseNestJob(defaultJob()).postId).toBeUndefined();
   });
 });
+
+describe("machine speeds in a saved job", () => {
+  it("round-trip, and a job saved before they existed loads with them absent (blank = built-in estimate)", () => {
+    const job = { ...defaultJob(), params: { ...defaultJob().params, feed: { v: "180", u: "in" as const }, rapid: { v: "15000", u: "mm" as const }, pierce: "0.6" } };
+    const back = parseNestJob(JSON.parse(JSON.stringify(job)));
+    expect(back.params.feed).toEqual({ v: "180", u: "in" });
+    expect(back.params.rapid).toEqual({ v: "15000", u: "mm" });
+    expect(back.params.pierce).toBe("0.6");
+    const old = parseNestJob(JSON.parse(JSON.stringify(defaultJob())));
+    expect(old.params.feed).toBeUndefined();
+    expect(old.params.pierce).toBeUndefined();
+  });
+});

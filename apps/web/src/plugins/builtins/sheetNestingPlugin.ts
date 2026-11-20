@@ -9,6 +9,9 @@ import {
   combineResults,
   computeJobMetrics,
   cutTableRowFor,
+  cutRowForThickness,
+  resolveCutSpeeds,
+  type CutSpeeds,
   defaultJob,
   defaultMachines,
   defaultRotationFor,
@@ -22,8 +25,10 @@ import {
   extractPartsWithDiagnostics,
   openChainMarks,
   type OpenChainInfo,
+  fmtDuration,
   fmtMm,
   fmtMm2,
+  fmtSpeed,
   groupIdenticalSheetsPerRun,
   problemHint,
   groupsFromRows,
@@ -78,7 +83,7 @@ import {
   type StockRow,
   type TrueNestSheet,
 } from "@sketchor/plugin-nest";
-import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, isCustomPostId, parseCustomPosts, postProfileFromSpec, removeCustomPost, resolvePost, toolpathPreview, toolpathPreviewScale, upsertCustomPost, writeGcode, type GcodePlacement, type PostProfileSpec } from "@sketchor/plugin-gcode";
+import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, isCustomPostId, parseCustomPosts, postProfileFromSpec, removeCustomPost, resolvePost, cutTimeSec, toolpathPreview, toolpathPreviewScale, upsertCustomPost, writeGcode, type GcodePlacement, type PostProfileSpec } from "@sketchor/plugin-gcode";
 
 /** N-53: tab width used when a job asks for tabs but never set one. */
 const DEFAULT_TAB_WIDTH_MM = 3;
@@ -118,8 +123,13 @@ const CUT_TABLE: CutTableRow[] = [
   { material: "Mild Steel", thickness: 1, feedRateMmPerMin: 6000, pierceTimeSec: 0.3, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 7850 },
   { material: "Mild Steel", thickness: 3, feedRateMmPerMin: 3500, pierceTimeSec: 0.6, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 7850 },
   { material: "Mild Steel", thickness: 6, feedRateMmPerMin: 1800, pierceTimeSec: 1.2, rapidMmPerMin: 12000, estimated: true, densityKgPerM3: 7850 },
+  { material: "Mild Steel", thickness: 10, feedRateMmPerMin: 1000, pierceTimeSec: 2.5, rapidMmPerMin: 12000, estimated: true, densityKgPerM3: 7850 },
+  { material: "Stainless Steel", thickness: 1, feedRateMmPerMin: 9000, pierceTimeSec: 0.3, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 8000 },
   { material: "Stainless Steel", thickness: 3, feedRateMmPerMin: 2800, pierceTimeSec: 0.8, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 8000 },
+  { material: "Stainless Steel", thickness: 6, feedRateMmPerMin: 1000, pierceTimeSec: 1.8, rapidMmPerMin: 12000, estimated: true, densityKgPerM3: 8000 },
+  { material: "Aluminum", thickness: 1, feedRateMmPerMin: 10000, pierceTimeSec: 0.2, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 2700 },
   { material: "Aluminum", thickness: 3, feedRateMmPerMin: 4500, pierceTimeSec: 0.4, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 2700 },
+  { material: "Aluminum", thickness: 6, feedRateMmPerMin: 1500, pierceTimeSec: 1.2, rapidMmPerMin: 12000, estimated: true, densityKgPerM3: 2700 },
 ];
 
 const CUT_MATERIAL_NAME: Partial<Record<MaterialId, string>> = { al5052: "Aluminum", al6061: "Aluminum", cs: "Mild Steel", ss: "Stainless Steel" };
@@ -177,6 +187,9 @@ const num = (v: unknown, fb = 0): number => {
 const LENGTH_UNITS = ["in", "ft", "mm", "cm", "m"] as const;
 const readField = (v: unknown, fb: LengthField): LengthField =>
   isObj(v) ? { v: typeof v.v === "string" ? v.v : typeof v.v === "number" ? String(v.v) : fb.v, u: (LENGTH_UNITS as readonly string[]).includes(str(v.u)) ? (v.u as LengthField["u"]) : fb.u } : fb;
+
+/** A blank machine-speed field: the cutting-time estimate uses the built-in table instead. */
+const NO_SPEED: LengthField = { v: "", u: "in" };
 
 export function stableKey(sourceIds: string[]): string {
   return [...sourceIds].sort().join(",");
@@ -283,7 +296,7 @@ const plugin: PluginModule = {
           const mp = (customRaw.machines as Record<string, unknown>)[m];
           if (isObj(mp)) {
             const d = defaultMachines().machines[m];
-            custom.machines[m] = { kerf: readField(mp.kerf, d.kerf), web: readField(mp.web, d.web), margin: readField(mp.margin, d.margin), clamp: readField(mp.clamp, d.clamp), bedW: readField(mp.bedW, d.bedW), bedH: readField(mp.bedH, d.bedH) };
+            custom.machines[m] = { kerf: readField(mp.kerf, d.kerf), web: readField(mp.web, d.web), margin: readField(mp.margin, d.margin), clamp: readField(mp.clamp, d.clamp), bedW: readField(mp.bedW, d.bedW), bedH: readField(mp.bedH, d.bedH), ...(isObj(mp.feed) ? { feed: readField(mp.feed, NO_SPEED) } : {}), ...(isObj(mp.rapid) ? { rapid: readField(mp.rapid, NO_SPEED) } : {}), ...(typeof mp.pierce === "string" ? { pierce: mp.pierce.slice(0, 20) } : {}) };
           }
         }
       }
@@ -474,6 +487,28 @@ const plugin: PluginModule = {
 
     const geometryMap = (recs: Map<string, PartRec>) => new Map([...recs].map(([k, r]) => [k, { id: k, name: r.name, outer: r.outer, holes: r.holes }]));
 
+    /** A sheet's cutting speeds: its stock row's material / thickness against the cut table, with the machine's own values over that. */
+    const speedsForStock = (row: StockRow | undefined): CutSpeeds | null => resolveCutSpeeds(job.machine, job.params, cutTableRowFor(row, CUT_TABLE));
+
+    /** The built-in estimate for the job as set up now, shown greyed in the blank speed fields so the user sees what "blank" means. */
+    const speedAutoView = () => {
+      const material = CUT_MATERIAL_NAME[job.material];
+      const row = material ? cutRowForThickness(material, lengthMm(job.thickness), CUT_TABLE) : undefined;
+      const auto = resolveCutSpeeds(job.machine, { ...job.params, feed: undefined, rapid: undefined, pierce: undefined }, row);
+      return auto
+        ? { feedMm: auto.feedRateMmPerMin, rapidMm: auto.rapidMmPerMin, pierce: String(Math.round(auto.pierceTimeSec * 100) / 100) }
+        : { feedMm: 0, rapidMm: 0, pierce: "", none: job.machine === "laser" ? "No built-in speeds for this material - enter your machine's feed rate for a cutting time." : "Enter your machine's feed rate for a cutting time." };
+    };
+
+    /** Report header row: the speeds the cutting time was worked out from (single-material jobs; groups mixes materials). */
+    const speedDetails = (result: RasterNestResult, grouped: boolean): [string, string][] => {
+      if (grouped || result.sheets.length === 0) return [];
+      const speeds = speedsForStock(result.stock[result.sheets[0]!.stockIndex]);
+      if (!speeds) return [["Cut speeds", "not set - enter the machine's feed rate for a cutting time"]];
+      const u = job.outputUnit;
+      return [["Cut speeds", `feed ${fmtSpeed(speeds.feedRateMmPerMin, u)}, pierce ${Math.round(speeds.pierceTimeSec * 100) / 100} s, rapid ${fmtSpeed(speeds.rapidMmPerMin, u)} (${speeds.source === "machine" ? "machine values" : "built-in estimate"})`]];
+    };
+
     const buildView = async (): Promise<Record<string, unknown>> => {
       const { recs, missing } = await resolveParts();
       const p = jobParamsMm(job);
@@ -530,6 +565,7 @@ const plugin: PluginModule = {
         materials: MATERIALS.map((m) => m.id),
         posts: [...BUILTIN_POSTS, ...custom.posts].map((p) => ({ id: p.id, name: p.name, custom: isCustomPostId(p.id) })),
         postId: resolvePost(job.postId, custom.posts).id,
+        speedAuto: speedAutoView(),
         postSpec: resolvePost(job.postId, custom.posts),
         stockRows: job.stock.map((s) => ({ name: s.size.name, w: num3(s.size.width), h: num3(s.size.height), qty: s.qty === null ? "" : String(s.qty), thickness: s.thickness })),
         bareUnit: bareUnitFor(job.outputUnit),
@@ -559,6 +595,8 @@ const plugin: PluginModule = {
       if (isObj(patch.params)) {
         const p = { ...next.params };
         for (const k of ["kerf", "web", "margin", "clamp", "bedW", "bedH"] as const) if (patch.params[k] !== undefined) p[k] = readField(patch.params[k], p[k]);
+        for (const k of ["feed", "rapid"] as const) if (patch.params[k] !== undefined) p[k] = readField(patch.params[k], p[k] ?? NO_SPEED);
+        if (typeof patch.params.pierce === "string") p.pierce = patch.params.pierce.slice(0, 20);
         next.params = p;
         custom.machines[next.machine] = p;
         persistCustom();
@@ -752,6 +790,12 @@ const plugin: PluginModule = {
       const geoMap = new Map([...recByKey].map(([k, r]) => [k, { outer: r.outer, holes: r.holes }]));
       const cutMap = new Map([...recByKey].map(([k, r]) => [k, { cutLength: r.cutLength, pierceCount: r.pierceCount }]));
       const metrics: JobMetrics = computeJobMetrics(result, geoMap, result.stock, CUT_TABLE, { gravity: job.gravity, cut: cutMap });
+      // Cutting time from the real cut plan (lead-ins, tab restarts, the actual rapids) at the machine's speeds - the same walk the G-code makes.
+      result.sheets.forEach((sh, i) => {
+        const speeds = speedsForStock(result.stock[sh.stockIndex]);
+        metrics.sheets[i]!.cuttingTimeSec = speeds ? cutTimeSec(toolpathPreview(sheetCutPlan(placements, i).features).stats, speeds) : null;
+      });
+      metrics.totalCuttingTimeSec = metrics.sheets.length > 0 && metrics.sheets.every((m) => m.cuttingTimeSec !== null) ? metrics.sheets.reduce((n, m) => n + (m.cuttingTimeSec ?? 0), 0) : null;
       const required = [...orderedMap.values()].reduce((n, o) => n + o.quantity, 0);
       const source = runs[0]?.job.sheetSource ?? job.sheetSource;
       const kpis = resultKpis(result, source, required, {
@@ -783,7 +827,7 @@ const plugin: PluginModule = {
         title: "Sheet Nesting Report",
         format: { len: fmt, area: (mm2) => fmtMm2(mm2, job.outputUnit) },
         fitPage: true,
-        details: reportDetails(grouped),
+        details: [...reportDetails(grouped), ...speedDetails(result, grouped)],
         groupSections: grouped
           ? runs.map((run, ri) => ({
               title: `${run.label} - sheet ${fmt(run.job.sheet.w * MM_PER_IN)} × ${fmt(run.job.sheet.h * MM_PER_IN)}`,
@@ -797,7 +841,7 @@ const plugin: PluginModule = {
             }))
           : undefined,
         summary: {
-          kpis,
+          kpis: { ...kpis, cuttingTimeSec: metrics.totalCuttingTimeSec },
           stock: usage.map((u) => ({ ...u, size: `${fmt(u.width)} × ${fmt(u.height)}` })),
           groups: grouped ? runs.map((r) => r.label) : [],
         },
@@ -807,7 +851,7 @@ const plugin: PluginModule = {
         .map((u) => ({ name: recByKey.get(u.partId)?.name ?? u.partId, count: u.count }))
         .filter((u) => u.count > 0);
       lastView = {
-        kpis: { ...kpis, cutLength: fmt(kpis.cutLengthMm) },
+        kpis: { ...kpis, cutLength: fmt(kpis.cutLengthMm), cutTime: metrics.totalCuttingTimeSec !== null ? fmtDuration(metrics.totalCuttingTimeSec) : "" },
         stock: usage.map((u) => ({ name: u.name, size: `${fmt(u.width)} × ${fmt(u.height)}`, used: u.used, purchased: u.purchased, available: u.available })),
         unplaced,
         remnants: lastRemnants.map((r) => ({ sheet: r.rem.sheet + 1, size: `${fmt(r.rem.width)} × ${fmt(r.rem.height)}` })),
@@ -885,8 +929,8 @@ const plugin: PluginModule = {
     };
 
     /** One sheet's cut plan — the G-code export and the toolpath preview must agree, so both build it here. */
-    const sheetCutPlan = (ln: LastNest, sheetIndex: number) => {
-      const gp: GcodePlacement[] = ln.placements
+    const sheetCutPlan = (placements: LastNestPlacement[], sheetIndex: number) => {
+      const gp: GcodePlacement[] = placements
         .filter((p) => p.sheet === sheetIndex)
         .map((p) => ({ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }));
       return buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined });
@@ -898,7 +942,7 @@ const plugin: PluginModule = {
       if (!ln) return fail("Nothing to preview - nest some parts first.");
       const sheetIndex = typeof msg.sheetIndex === "number" ? msg.sheetIndex : 0;
       if (sheetIndex < 0 || sheetIndex >= ln.sheets.length) return fail("That sheet no longer exists - nest again.");
-      const plan = sheetCutPlan(ln, sheetIndex);
+      const plan = sheetCutPlan(ln.placements, sheetIndex);
       for (const w of plan.warnings) notify(w, true);
       const sheet = ln.sheets[sheetIndex]!;
       const label = ln.sheetLabels[sheetIndex]!;
@@ -914,16 +958,16 @@ const plugin: PluginModule = {
       if (!ln) return fail("Nothing to export - nest some parts first.");
       const sheetIndex = typeof msg.sheetIndex === "number" ? msg.sheetIndex : 0;
       if (sheetIndex < 0 || sheetIndex >= ln.sheets.length) return fail("That sheet no longer exists - nest again.");
-      const plan = sheetCutPlan(ln, sheetIndex);
+      const plan = sheetCutPlan(ln.placements, sheetIndex);
       for (const w of plan.warnings) notify(w, true);
-      const cutRow = cutTableRowFor(lastStock[ln.sheets[sheetIndex]!.stockIndex] as StockRow | undefined, CUT_TABLE);
-      if (!cutRow) notify("No cut-table match for this sheet's material/thickness - using a default feed rate; check it before running the program.", true);
+      const speeds = speedsForStock(lastStock[ln.sheets[sheetIndex]!.stockIndex] as StockRow | undefined);
+      if (!speeds) notify("No feed rate for this sheet's material/thickness - using a default; enter your machine's feed rate under Cutting parameters before running the program.", true);
       const gunit = unit.unit === "in" ? "in" : "mm";
       const gcode = writeGcode(plan.features, {
         unit: gunit,
         scale: gunit === "in" ? factorFromMm("in") : 1,
-        feedRateMmPerMin: cutRow?.feedRateMmPerMin ?? 2000,
-        pierceTimeSec: cutRow?.pierceTimeSec ?? 0.5,
+        feedRateMmPerMin: speeds?.feedRateMmPerMin ?? 2000,
+        pierceTimeSec: speeds?.pierceTimeSec ?? 0.5,
         sheetLabel: ln.sheetLabels[sheetIndex],
         title: "Sheet Nesting",
         // N-42: the job's post-processor; an unknown id (an older job, a removed profile) falls back to the default.

@@ -296,3 +296,42 @@ describe("NF-08 job name and notes", () => {
     expect(reportFileName("../../etc", at)).toBe("nest-2026-11-04_0905-etc");
   });
 });
+
+describe("parts print in ink whatever colour their drawing gave them", () => {
+  it("a part drawn in AutoCAD colour 7 (white) or yellow still has its outline on the white page, in HTML and PDF", () => {
+    const n = lastNest();
+    n.placements[0]!.outerEntities = [{ ...rectEntity("w-outer", 10, 10, 30, 20), color: "#ffffff" }];
+    n.placements[1]!.holeEntities = [{ ...rectEntity("y-hole", 7, 7, 2, 2), color: "#ffff00" }];
+    const html = buildNestReportHtml(n);
+    expect(html).not.toMatch(/stroke="#ffffff"/i);
+    expect(html).not.toMatch(/stroke="#ffff00"/i);
+    // the outline itself is still there
+    expect((html.match(/<polygon|<path|<polyline/g) ?? []).length).toBeGreaterThan(2);
+    const pdf = String.fromCharCode(...buildNestReportPdf(n));
+    expect(pdf).not.toMatch(/(^|\s)1 1 1 RG/m);
+    // the placements themselves are left alone - the canvas layout still shows the file's colours
+    expect(n.placements[0]!.outerEntities[0]).toMatchObject({ color: "#ffffff" });
+  });
+});
+
+describe("cutting time KPI", () => {
+  const withTime = (sec: number | null | undefined): LastNest => ({
+    ...lastNest(),
+    summary: {
+      kpis: { sheets: 1, toPurchase: 0, showPurchase: false, utilisation: 0.31, placed: 26, required: 26, cutLengthMm: 26484, pierces: 41, unplaced: 0, ...(sec !== undefined ? { cuttingTimeSec: sec } : {}) },
+      stock: [],
+      groups: [],
+    },
+  });
+
+  it("is in the job summary of both the HTML and the PDF, in hours past an hour", () => {
+    expect(buildNestReportHtml(withTime(754))).toContain("12.6 min (est.)");
+    expect(buildNestReportHtml(withTime(5000))).toContain("1 h 23 min (est.)");
+    expect(String.fromCharCode(...buildNestReportPdf(withTime(754)))).toContain("Cutting time: 12.6 min \\(est.\\)"); // PDF string escapes the parentheses
+  });
+
+  it("shows the placeholder when there are no speeds, and no row at all for a caller that gives no time (the older panel)", () => {
+    expect(buildNestReportHtml(withTime(null))).toContain("Cutting time");
+    expect(buildNestReportHtml(withTime(undefined)).match(/Cutting time/g)?.length).toBe(1); // just the per-sheet column
+  });
+});

@@ -86,7 +86,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         thickness: "Thickness", gauge: "Gauge...", machine: "Machine", machines: { laser: "Laser", waterjet: "Waterjet", router: "CNC router", other: "Other" },
         engine: "Engine", raster: "Raster (fast)", trueShape: "True shape (exact)",
         engineHint: "Raster: default - fast, handles any quantity. True shape: pick for few large parts with tight kerf, or when you need exact clearance or mirroring.",
-        cutting: "Cutting parameters", estimate: "Estimates - set your machine's values.", kerf: "Kerf", web: "Web (gap)", margin: "Edge margin", clamp: "Clamp strip", bedW: "Bed width", bedH: "Bed height",
+        cutting: "Cutting parameters", estimate: "Estimates - set your machine's values.", kerf: "Kerf", web: "Web (gap)", margin: "Edge margin", clamp: "Clamp strip", bedW: "Bed width", bedH: "Bed height", speeds: "Cutting speeds", speedsHint: "For the cutting-time estimate and the G-code feed. Leave blank to use the built-in laser estimate shown in grey.", feed: "Feed rate (per min)", rapid: "Rapid (per min)", pierce: "Pierce time (s)",
         accuracy: "Accuracy", acc: { fast: "Fast", normal: "Normal", precise: "Precise" }, time: "Optimise for", times: { 0: "First result", 10000: "10 s", 30000: "30 s", 120000: "2 min" },
         units: "Display units", unitNames: { in: "Inches (fractions)", indec: "Inches (decimal)", ftin: "Feet-inches", mm: "mm", cm: "cm", m: "m" },
         trueOpts: "True shape options", gravity: "Gravity", minHole: "Min hole size", tabCount: "Tabs per contour", tabWidth: "Tab width", gcodeOpts: "G-code", post: "Post-processor", postEdit: "Edit...", postDelete: "Delete", postEditOwn: "Edit post-processor", postEditCopy: "New post-processor (a copy you can change)", postName: "Name", postOn: "Beam on", postOff: "Beam off", postEnd: "Program end", postHeader: "Header lines (one per line)", postDwell: "Pierce dwell", postComments: "Comments", postSave: "Save", postSaveCopy: "Save as my post-processor", postCancel: "Cancel", search: "Search", searches: { quick: "Quick", normal: "Normal", thorough: "Thorough" },
@@ -96,7 +96,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         holes: "holes", mirror: "Mirror", inHoles: "In holes", fileUnit: "File units", fileUnits: { "": "As in file", 1: "inch", 4: "mm", 5: "cm", 6: "m", 2: "foot" },
         calculate: "Calculate", stop: "Stop", clear: "Clear", check: "Check nest", saveJob: "Save job", openJob: "Open job",
         fillIn: "Fill in the orange fields", ready: "Ready to calculate", gone: "Drawing no longer found", bedWarn: "The sheet is larger than the machine bed.",
-        results: "Results", kpi: { sheets: "Sheets", sheetsUsed: "Sheets used", toBuy: "To purchase", util: "Utilisation", placed: "Parts placed", cut: "Cut length", pierce: "Pierces" },
+        results: "Results", kpi: { sheets: "Sheets", sheetsUsed: "Sheets used", toBuy: "To purchase", util: "Utilisation", placed: "Parts placed", cut: "Cut length", pierce: "Pierces", time: "Cut time (est.)" },
         stockUsage: "Stock usage", offcuts: "Usable offcuts", saveOffcuts: "Save offcuts as stock", notPlaced: "Not placed", dxf: "DXF", allZip: "All as ZIP", gcode: "G-code", toolpath: "Toolpath", toolpathTip: "Open the cut order, pierces and rapids for this sheet in a new tab",
         manual: "Manual", groupsMode: "Groups from a list", bomHint: "Paste the parts list here (part number, quantity, material)...", loadCsv: "Load CSV", chooseFolder: "Choose folder", makeGroups: "Groups from the list",
         noFolder: "No drawing folder chosen - part numbers are looked up as DXF files in it.", noGroups: "No groups yet - paste a parts list and click Groups from the list.", group: "Group", of: "of",
@@ -134,6 +134,16 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         return "<label class='fld'><span class='t'>" + esc(label) + "</span><span class='lf'>" +
           "<input data-id='" + id + "' data-len='" + id + "' class='st-" + (st || "ok") + "' value='" + esc(f.v) + "'" + (extraAttr || "") + ">" +
           "<select data-id='" + id + "-u' data-lenu='" + id + "'" + (extraAttr || "") + ">" + units + "</select></span></label>";
+      }
+
+      const MM_PER_UNIT = { in: 25.4, mm: 1, cm: 10, m: 1000, ft: 304.8 };
+      /** A machine speed (length per minute): blank shows the built-in estimate, converted to the field's own unit, in grey. */
+      function speedField(id, label, f, autoMm) {
+        const fld = f || { v: "", u: V.bareUnit || "in" };
+        const k = MM_PER_UNIT[fld.u] || 25.4;
+        const v = autoMm > 0 ? autoMm / k : 0;
+        const ph = v > 0 ? String(v >= 100 ? Math.round(v) : Math.round(v * 10) / 10) : "";
+        return lenField(id, label, fld, "ok", ph ? " placeholder='" + ph + "'" : "");
       }
 
       function thumb(pts) {
@@ -186,6 +196,11 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (j.machine === "laser") h += lenField("clamp", T.clamp, p.clamp, st.clamp);
         h += lenField("bedW", T.bedW, p.bedW, st.bedW);
         h += lenField("bedH", T.bedH, p.bedH, st.bedH);
+        h += "</div><h4 style='margin-top:6px'>" + T.speeds + "</h4><div class='muted' style='font-size:10px;margin-bottom:4px'>" + esc(V.speedAuto && V.speedAuto.none ? V.speedAuto.none : T.speedsHint) + "</div><div class='grid2'>";
+        h += speedField("feed", T.feed, p.feed, V.speedAuto ? V.speedAuto.feedMm : 0);
+        h += speedField("rapid", T.rapid, p.rapid, V.speedAuto ? V.speedAuto.rapidMm : 0);
+        h += "<label class='fld'><span class='t'>" + T.pierce + "</span><input data-id='pierce' data-pierce='1' value='" + esc(p.pierce || "") + "' placeholder='" + esc(V.speedAuto ? V.speedAuto.pierce : "") + "'></label>";
+        h += "</div><div class='grid2'>";
         h += "<label class='fld' title='" + esc(ras ? "" : RASTER_ONLY_NA.accuracy) + "'><span class='t'>" + T.accuracy + "</span><select data-id='accuracy' data-set='accuracy'" + (ras ? "" : " disabled") + ">" + optionsHtml(T.acc, j.accuracy) + "</select></label>";
         h += "<label class='fld' title='" + esc(ras ? "" : RASTER_ONLY_NA.time) + "'><span class='t'>" + T.time + "</span><select data-id='timeMs' data-set='timeMs'" + (ras ? "" : " disabled") + ">" + optionsHtml(T.times, j.timeMs, [0, 10000, 30000, 120000]) + "</select></label>";
         h += "<label class='fld'><span class='t'>" + T.units + "</span><select data-id='outputUnit' data-set='outputUnit'>" + optionsHtml(T.unitNames, j.outputUnit) + "</select></label></div>";
@@ -300,7 +315,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (!R) return "";
         const k = R.kpis;
         let h = "<div class='card'><h4>" + T.results + "</h4><div class='kpis'>" +
-          [[k.sheets, k.showPurchase ? T.kpi.sheets : T.kpi.sheetsUsed]].concat(k.showPurchase ? [[k.toPurchase, T.kpi.toBuy]] : []).concat([[Math.round(k.utilisation * 1000) / 10 + "%", T.kpi.util], [k.placed + "/" + k.required, T.kpi.placed], [k.cutLength, T.kpi.cut], [k.pierces, T.kpi.pierce]])
+          [[k.sheets, k.showPurchase ? T.kpi.sheets : T.kpi.sheetsUsed]].concat(k.showPurchase ? [[k.toPurchase, T.kpi.toBuy]] : []).concat([[Math.round(k.utilisation * 1000) / 10 + "%", T.kpi.util], [k.placed + "/" + k.required, T.kpi.placed], [k.cutLength, T.kpi.cut], [k.pierces, T.kpi.pierce]]).concat(k.cutTime ? [[k.cutTime, T.kpi.time]] : [])
             .map((x) => "<div class='kpi'><b>" + esc(x[0]) + "</b><span>" + x[1] + "</span></div>").join("") + "</div>";
         if (R.unplaced.length) h += "<div class='msg err'>" + T.notPlaced + ": " + R.unplaced.map((u) => esc(u.name) + " &times;" + u.count).join(", ") + "</div>";
         if (R.stopped) h += "<div class='msg warn'>Stopped early - showing the best layout found so far.</div>";
@@ -350,6 +365,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (t.dataset.pe && postDraft) { postDraft[t.dataset.pe] = t.value; return; }
         if (t.dataset.jobnotes) { jobNotes = t.value; return; }
         if (t.dataset.len) later("len" + t.dataset.len, () => setJob(lenPatch(t.dataset.len)));
+        else if (t.dataset.pierce) later("pierce", () => setJob({ params: { pierce: t.value } }));
         else if (t.dataset.stock) later("stock", () => post({ type: "stock-set", rows: stockRows() }), 400);
         else if (t.dataset.pset === "qty") later("q" + t.dataset.part, () => post({ type: "part-set", key: t.dataset.part, patch: { qty: t.value }, refresh: false }));
         else if (t.dataset.bom) later("bom", () => post({ type: "bom-text", text: t.value, refresh: false }), 400);

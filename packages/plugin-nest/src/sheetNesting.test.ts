@@ -7,7 +7,11 @@ import {
   clampStripRect,
   combineResults,
   engineHintLines,
+  fmtDuration,
   fmtMm2,
+  fmtSpeed,
+  pierceSeconds,
+  resolveCutSpeeds,
   groupIdenticalSheetsPerRun,
   groupsFromRows,
   problemHint,
@@ -202,5 +206,49 @@ describe("groupIdenticalSheetsPerRun", () => {
     expect(groups.map((g) => g.indices)).toEqual([[0, 1], [2, 3]]);
     expect(groupIdenticalSheetsPerRun(sheets, placed, [0, 0, 0, 0]).map((g) => g.indices)).toEqual([[0, 1, 2, 3]]);
     expect(groupIdenticalSheetsPerRun([], [], [])).toEqual([]);
+  });
+});
+
+describe("cutting speeds", () => {
+  const row = { material: "Aluminum", thickness: 3.175, feedRateMmPerMin: 4200, pierceTimeSec: 0.45, rapidMmPerMin: 15000, estimated: true };
+  const params = defaultJob().params;
+
+  it("uses the built-in laser row when the machine's speeds are blank", () => {
+    expect(resolveCutSpeeds("laser", params, row)).toEqual({ feedRateMmPerMin: 4200, pierceTimeSec: 0.45, rapidMmPerMin: 15000, source: "table" });
+  });
+
+  it("the machine's own values win, each one on its own", () => {
+    const own = resolveCutSpeeds("laser", { ...params, feed: { v: "200", u: "in" }, pierce: "1.5" }, row)!;
+    expect(own.feedRateMmPerMin).toBeCloseTo(200 * 25.4, 9);
+    expect(own.pierceTimeSec).toBe(1.5);
+    expect(own.rapidMmPerMin).toBe(15000); // rapid left blank: still the table's
+    expect(own.source).toBe("machine");
+  });
+
+  it("a waterjet / router gets no laser estimate - only its own feed rate gives it a time", () => {
+    expect(resolveCutSpeeds("waterjet", params, row)).toBeNull();
+    const wj = resolveCutSpeeds("waterjet", { ...params, feed: { v: "20", u: "in" } }, row)!;
+    expect(wj.feedRateMmPerMin).toBeCloseTo(508, 9);
+    expect(wj.pierceTimeSec).toBe(0.5); // not the laser's pierce
+    expect(wj.rapidMmPerMin).toBe(10000);
+  });
+
+  it("no feed at all (no row, nothing typed) gives no speeds; junk typed counts as blank", () => {
+    expect(resolveCutSpeeds("laser", params, undefined)).toBeNull();
+    expect(resolveCutSpeeds("laser", { ...params, feed: { v: "fast", u: "in" }, pierce: "-2" }, row)).toMatchObject({ feedRateMmPerMin: 4200, pierceTimeSec: 0.45 });
+    expect(pierceSeconds("")).toBeNull();
+    expect(pierceSeconds(" 0.8 ")).toBe(0.8);
+    expect(pierceSeconds("abc")).toBeNull();
+  });
+
+  it("formats speeds and durations for the panel and report", () => {
+    expect(fmtSpeed(4200, "in")).toBe("165 in/min");
+    expect(fmtSpeed(4200, "mm")).toBe("4200 mm/min");
+    expect(fmtSpeed(200, "indec")).toBe("7.9 in/min");
+    expect(fmtSpeed(4200, "m")).toBe("4.2 m/min");
+    expect(fmtDuration(42)).toBe("42 s");
+    expect(fmtDuration(754)).toBe("12.6 min");
+    expect(fmtDuration(5000)).toBe("1 h 23 min");
+    expect(fmtDuration(3600 * 2 + 4 * 60)).toBe("2 h 04 min");
   });
 });

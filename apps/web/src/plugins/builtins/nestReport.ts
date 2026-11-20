@@ -64,7 +64,7 @@ export interface LastNest {
   footer?: string;
   /** RN-42: job-level KPIs, stock usage and group names, already formatted by the caller. */
   summary?: {
-    kpis: { sheets: number; toPurchase: number; showPurchase?: boolean; utilisation: number; placed: number; required: number; cutLengthMm: number; pierces: number; unplaced: number };
+    kpis: { sheets: number; toPurchase: number; showPurchase?: boolean; utilisation: number; placed: number; required: number; cutLengthMm: number; pierces: number; unplaced: number; cuttingTimeSec?: number | null };
     stock: { name: string; size: string; used: number; purchased: number; available: number | null }[];
     groups: string[];
   };
@@ -89,11 +89,25 @@ function sheetDrawingEntities(lastNest: LastNest, sheetIdx: number): Entity[] {
   const { outline, title } = sheetOutlineEntities(lastNest.sheets[sheetIdx], lastNest.sheetLabels[sheetIdx]);
   const entities: Entity[] = [outline, title];
   for (const p of placementsOn(lastNest, sheetIdx)) {
-    entities.push(...p.outerEntities, ...p.holeEntities);
+    for (const e of p.outerEntities) entities.push(inked(e));
+    for (const e of p.holeEntities) entities.push(inked(e));
     entities.push(text(p.label.at, String(p.number), { layer: NEST_LABELS_LAYER, height: p.label.height }));
   }
   const sheet = lastNest.sheets[sheetIdx];
   return lastNest.fitPage && isTall(sheet) ? entities.map((e) => toLandscape(e, sheet.height)) : entities;
+}
+
+/**
+ * A part's geometry in the report's own ink. Parts keep the colour their
+ * drawing file gave them, and a CAD export very often uses AutoCAD colour 7,
+ * which reads as white - drawn on a white page those parts printed as bare
+ * numbers with no outline (yellow and the light ACI shades nearly as bad).
+ * The report is a black-ink production print, so colour and tint go.
+ */
+function inked(e: Entity): Entity {
+  if (!("color" in e) && !("fill" in e)) return e;
+  const { color: _color, fill: _fill, ...rest } = e as Entity & { color?: string; fill?: string };
+  return rest as Entity;
 }
 
 /** True for a sheet taller than wide: the print drawing turns it a quarter turn so it uses the page width. */
@@ -112,7 +126,10 @@ function toLandscape(e: Entity, sheetHeight: number): Entity {
 const toU = (mm: number, perMm: number): number => Math.round(mm * perMm * 100) / 100;
 
 function fmtTime(sec: number | null): string {
-  return sec == null ? "—" : `${Math.round(sec / 6) / 10} min (est.)`;
+  if (sec == null) return "—";
+  if (sec < 3600) return `${Math.round(sec / 6) / 10} min (est.)`;
+  const min = Math.round(sec / 60);
+  return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, "0")} min (est.)`;
 }
 
 function fmtRemnant(remnant: { width: number; height: number } | null, lastNest: LastNest): string {
@@ -186,6 +203,7 @@ export function reportSummaryLines(lastNest: LastNest): { kpis: [string, string]
     ["Parts placed", `${k.placed} of ${k.required}`],
     ["Cut length", lastNest.format ? lastNest.format.len(k.cutLengthMm) : `${Math.round(toU(k.cutLengthMm, lastNest.unit.perMm))} ${lastNest.unit.label}`],
     ["Pierces", String(k.pierces)],
+    ...(k.cuttingTimeSec !== undefined ? ([["Cutting time", fmtTime(k.cuttingTimeSec)]] as [string, string][]) : []),
   ];
   const stock = s.stock.map((r) => `${r.size}: ${r.used} used${buy ? `, ${r.purchased} to purchase` : ""}${r.available === null ? "" : `, ${r.available} in stock`}`);
   return { kpis, stock, groups: s.groups.join("; ") };
@@ -299,8 +317,11 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
   }
   const extra = reportSummaryLines(lastNest);
   if (extra.kpis.length > 0) {
-    pdf.text(margin, y, extra.kpis.map(([l, v]) => `${l}: ${v}`).join("   "), { size: 9, bold: true });
-    y += 14;
+    // Four to a line: six or seven KPIs on one bold 9 pt line run off a Letter page.
+    for (let i = 0; i < extra.kpis.length; i += 4) {
+      pdf.text(margin, y, extra.kpis.slice(i, i + 4).map(([l, v]) => `${l}: ${v}`).join("   "), { size: 9, bold: true });
+      y += i + 4 < extra.kpis.length ? 12 : 14;
+    }
     for (const line of extra.stock) {
       need(14);
       pdf.text(margin, y, `Stock - ${line}`, { size: 9 });
