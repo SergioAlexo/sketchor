@@ -298,7 +298,7 @@ These keep their original IDs; the full spec for each is in the named doc. Tick 
 - [~] NF-08 Nest print / PDF report like the Load Planner - done: report + PDF from the shared sheet geometry (RN-42), job name + notes fields, autosave folder (`ui.printFolder`/`pickPrintFolder`), time-stamped file name; open: rendering the report from the Nest layers on the canvas so manual drags after nesting appear in it, live check of the panel in the plugin iframe
 
 *Sheet metal nesting — `docs/sheet-metal-nesting-plan.md`*
-- [~] N-42 More G-code post profiles (controller dialects) - done (`58f7720`): data-driven `PostProfileSpec`, built-ins generic laser/plasma, LinuxCNC, Mach3/4, GRBL laser, picker in the Sheet Nesting panel; open: custom-profile editor, the older Sheet Metal Nest panel still uses the default
+- [x] N-42 More G-code post profiles (controller dialects) - done (`58f7720`): data-driven `PostProfileSpec`, built-ins generic laser/plasma, LinuxCNC, Mach3/4, GRBL laser, picker in the Sheet Nesting panel; custom-profile editor (Edit…/Save/Delete beside the picker, validated, kept in plugin storage) ticked 2026-11-20. The older Sheet Metal Nest panel still uses the default (superseded by Sheet Nesting)
 - [x] N-43 Canvas toolpath preview with dashed rapids - `plugin-gcode/src/preview.ts` + Sheet Nesting "Toolpath" button (own tab); rapids stay dashed at sheet scale via the new per-entity `linetypeScale` (DXF group 48)
 - [ ] N-50 Spatial indexing so a sheet can hold more than ~600 identical instances (the current cap)
 - [ ] N-51 Common-line cutting
