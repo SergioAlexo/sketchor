@@ -88,7 +88,7 @@ N-54 (save/reopen job file) is already done in the Sheet Nesting plugin (RN-42, 
 **Arc lead-ins** (2026-11-20): Sheet Nesting's G-code options have **Lead-in: Straight / Arc (tangent)**. Arc makes each lead-in a quarter circle of the lead-in length that joins the path tangentially (`buildCutPlan({ leadIn: "arc" })` → `CutFeature.leadInArc`, emitted as G2/G3 with I/J, drawn by the Toolpath preview and counted in the cutting time). It is checked against its own contour - every sample in scrap, nothing of the contour closer than half the clearance a straight edge would give - and falls back to the straight lead-in where it does not fit (small holes) and on contours with tabs (the tab code re-aims and checks a straight lead-in). Default stays Straight, so existing programs are unchanged.
 
 Remaining: a real algorithmic
-improvement if jobs need more than ~2000 instances sharing one sheet.
+improvement if jobs need more than ~2000 instances sharing one sheet — done as N-50 (2026-11-20): the candidate search is incremental per sheet and orientation, a placement only touches the frontier of the fill, the cap is 10000 (2000 parts on one sheet: 4.9 s → 0.06 s).
 
 Goal: select parts, enter quantities, nest them true-shape onto any number of sheets drawn from a library of standard sizes, with per-part rotation freedom (locked / 90° / any), part-in-part filling of large cut-outs, and output as a printed/PDF report (cutting time, utilisation, scrap), DXF, and G-code.
 
