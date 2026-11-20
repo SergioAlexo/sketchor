@@ -1,5 +1,6 @@
 import { defaultPalette, needsThemeFile, paletteCss, pickMode, type EmbedPalette } from "./embedTheme";
 import { cacheKey, getCachedModel, putCachedModel, sha256Hex } from "./modelCache";
+import { parseOffThread } from "./parseClient";
 import { CSS } from "./styles";
 import {
   DEFAULT_MAX_MB,
@@ -329,7 +330,7 @@ export class SketchorView extends HTMLElement {
       const cachedHit = model !== null;
       const viewer = await viewerP;
       if (!model) {
-        model = await viewer.parseModel(bytes, name, verdict.format, up);
+        model = await parseOffThread(bytes, name, verdict.format, up);
         if (key && !key.endsWith(":")) void putCachedModel(key, model);
       }
       if (token !== this.loadToken || !this.connected) return;

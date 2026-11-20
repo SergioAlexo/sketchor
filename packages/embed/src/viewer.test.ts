@@ -4,7 +4,7 @@
  * preview and the opened file disagree about what the part looks like.
  */
 import { describe, expect, it } from "vitest";
-import { parseModel } from "./viewer";
+import { parseModel } from "./parse";
 
 /** A 10 × 20 × 30 mm box as ASCII STL (12 triangles). */
 function boxStl(): Uint8Array {

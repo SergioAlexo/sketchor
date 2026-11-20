@@ -2,40 +2,18 @@
  * The lazy half of `<sketchor-view>`: everything that needs three.js or a
  * parser. Imported with `import()` the first time an element loads a file.
  *
- * Parsing is the app's own path (F-05): core `parseAnyMesh` → `segmentMesh`
- * → `buildModel`, so faces, B-rep-style edges and colours come out exactly as
- * they do in a Sketchor model tab, and `buildModelObjects`/`buildLights` draw
- * them the same way (E-01: one renderer, three consumers).
+ * Parsing (parse.ts) runs in a worker (parseClient.ts); this module draws the
+ * result with `buildModelObjects`/`buildLights`, exactly as a Sketchor model
+ * tab does (E-01: one renderer, three consumers).
  */
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { gltfUsesDraco, parseAnyMesh } from "../../core/src/mesh/parse2";
-import { segmentMesh } from "../../core/src/mesh/segment";
-import { buildModel } from "./three/buildModel";
 import { buildLights, buildModelObjects, fitClipPlanes, framePerspective, STAGE_BACKGROUND, type ModelObjects } from "./three/modelScene";
-import type { Model3D, OcctResult } from "./three/types";
-import { reorientModel, type UpAxis } from "./three/upAxis";
+import type { Model3D } from "./three/types";
 import { edgePoints, vertexPoint, type Measurement, type SelRef } from "./three/measure";
 import { pickEdge, pickVertex, type Projector } from "./three/picking";
 import { faceTrianglePositions, measureForEmbed, nextSelection, partOfTriangle } from "./measureView";
 import { atRest, spring, stepSpring, TURNTABLE_RAD_PER_S, type Spring } from "./motion";
-import type { PreviewFormat } from "./load";
-
-export async function parseModel(bytes: Uint8Array, name: string, format: PreviewFormat, up: UpAxis | "auto"): Promise<Model3D> {
-  // Draco-compressed glTF: fetch the decoder (its own lazy chunk) only for files that need it.
-  const draco = (format === "glb" || format === "gltf") && gltfUsesDraco(bytes) ? await (await import("./three/draco")).loadDracoDecoder() : undefined;
-  const parsed = await parseAnyMesh(format, bytes, name.replace(/\.[^.]*$/, "") || "Part", { draco });
-  const meshes = parsed.parts.map((p) => segmentMesh(p));
-  const result: OcctResult = {
-    success: true,
-    meshes,
-    root: meshes.length > 1 ? { name, children: meshes.map((m, i) => ({ name: m.name, meshes: [i] })) } : { name, meshes: [0] },
-  };
-  const model = buildModel(result, name, "embed", format);
-  if (model.parts.length === 0) throw new Error("the file contains no triangles to show");
-  const detected: UpAxis = format === "gltf" || format === "glb" ? "y" : "z";
-  return reorientModel(model, up === "auto" ? detected : up);
-}
 
 export interface StageOptions {
   /** CSS colour, or null for a transparent canvas over the host page. */
