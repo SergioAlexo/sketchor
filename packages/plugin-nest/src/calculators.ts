@@ -5,7 +5,8 @@
  * plan and a ready-to-render result with every length already formatted.
  * Pure, never throw: a bad row is reported, not fatal.
  */
-import { groupBars, planBars, tubeCutLength, tubeSectionArea, tubeTime, type BarCutItem, type BarStock, type TubeShape } from "./barCutting";
+import { tubeCutLength, tubeSectionArea, type BarCutItem, type BarStock, type TubeProfile, type TubeShape } from "./barCutting";
+import { groupMiterBars, miterCutLength, miterDepth, planMiterBars, type MiterBar, type MiterPlan } from "./miterNest";
 import type { MaterialId } from "./catalog";
 import { profileMotionMm, profileRowFor, type MachineProfile } from "./machineProfile";
 import { fmtDuration, fmtMm } from "./sheetNesting";
@@ -19,7 +20,11 @@ export interface BarCalcInput {
   trim: string;
   tail: string;
   stock: { length: string; qty: string; cost: string }[];
-  cuts: { label: string; length: string; qty: string; extraCut?: string; extraPierces?: string }[];
+  /** `a1` / `a2`: mitre angle at each end, degrees from square (tubes). */
+  cuts: { label: string; length: string; qty: string; extraCut?: string; extraPierces?: string; a1?: string; a2?: string }[];
+  /** Saw: seconds per cut and per bar loaded, for the time estimate (bars). */
+  cutSec?: string;
+  loadSec?: string;
 }
 
 export interface TubeCalcInput extends BarCalcInput {
@@ -36,6 +41,20 @@ export interface TubeCalcInput extends BarCalcInput {
   unload: string;
   piercesPerCut: string;
   profileId: string;
+  /** The face the mitres run across: "b" = height (default), "a" = width. */
+  across: "a" | "b";
+  /** Let the plan turn pieces end for end / upside down so mitres share cuts. */
+  turn: boolean;
+}
+
+/** One bar as drawn in the preview / report: lengths in mm, pieces in the side view (x along the bar, depth up). */
+export interface BarDrawing {
+  stock: number;
+  depth: number;
+  trim: number;
+  tail: number;
+  used: number;
+  pieces: { label: string; length: number; l0: number; l1: number; r0: number; r1: number; turned: string }[];
 }
 
 export interface CalcResult {
@@ -43,8 +62,13 @@ export interface CalcResult {
   warnings: string[];
   summary: [string, string][];
   buy: { length: string; count: number; cost: string }[];
-  bars: { count: number; stock: string; cuts: string; remnant: string; time?: string }[];
+  bars: { count: number; stock: string; cuts: string; remnant: string; time?: string; draw?: BarDrawing }[];
   unplaced: string[];
+  /** Every label in first-seen order, so the preview gives each its own colour. */
+  labels?: string[];
+  /** Report header lines (label, value), already formatted. */
+  details?: [string, string][];
+  mitred?: boolean;
 }
 
 const DISPLAY: Record<CalcUnit, LengthFormat> = { in: "indec", ft: "ftin", mm: "mm", m: "m" };
@@ -58,6 +82,8 @@ export function defaultBarInput(): BarCalcInput {
     tail: "0",
     stock: [{ length: "20'", qty: "", cost: "" }, { length: "24'", qty: "", cost: "" }],
     cuts: [{ label: "A", length: "48", qty: "6" }, { label: "B", length: "30 1/2", qty: "10" }],
+    cutSec: "",
+    loadSec: "",
   };
 }
 
@@ -79,6 +105,8 @@ export function defaultTubeInput(): TubeCalcInput {
     unload: "4",
     piercesPerCut: "1",
     profileId: "",
+    across: "b",
+    turn: true,
   };
 }
 
@@ -92,7 +120,7 @@ const numOr = (s: string | undefined, fb: number): number => {
 };
 
 interface Parsed {
-  items: BarCutItem[];
+  items: (BarCutItem & { a1?: number; a2?: number })[];
   stock: BarStock[];
   kerf: number;
   trim: number;
@@ -127,7 +155,16 @@ function parseCommon(inp: BarCalcInput): Parsed | { error: string } {
     if (!(L > 0)) return void warnings.push(`Cut row ${i + 1}: "${c.length}" is not a length - skipped.`);
     if (!(q > 0)) return void warnings.push(`Cut row ${i + 1}: quantity "${c.qty}" - skipped.`);
     const label = c.label.trim() || `#${i + 1}`;
-    items.push({ label, length: L, qty: q });
+    const ang = (v: string | undefined) => {
+      const n = v === undefined || v.trim() === "" ? 0 : Number(v.replace(/°/g, "").trim());
+      if (!Number.isFinite(n) || Math.abs(n) >= 80) {
+        warnings.push(`Cut row ${i + 1}: angle "${v}" - use degrees from square, under 80 (0 = square).`);
+        return 0;
+      }
+      return n;
+    };
+    const a1 = ang(c.a1), a2 = ang(c.a2);
+    items.push({ label, length: L, qty: q, ...(a1 ? { a1 } : {}), ...(a2 ? { a2 } : {}) });
     const extra = c.extraCut && c.extraCut.trim() !== "" ? lenMm(c.extraCut, u) : 0;
     const ep = numOr(c.extraPierces, 0);
     if ((extra > 0 || ep > 0) && !features.has(label)) features.set(label, { cutLength: extra > 0 ? extra : 0, pierces: Math.floor(ep) });
@@ -138,11 +175,15 @@ function parseCommon(inp: BarCalcInput): Parsed | { error: string } {
 
 const money = (v: number | null) => (v === null ? "" : (Math.round(v * 100) / 100).toFixed(2));
 
-function planResult(p: Parsed, unit: CalcUnit): { res: CalcResult; plan: ReturnType<typeof planBars> } {
+const turnText = (flipped: boolean, upsideDown: boolean) => [flipped ? "end for end" : "", upsideDown ? "upside down" : ""].filter(Boolean).join(", ");
+
+function planResult(p: Parsed, unit: CalcUnit, miter?: { depth: number; turn: boolean }): { res: CalcResult; plan: MiterPlan; groups: { count: number; bar: MiterBar }[] } {
   const f = (mm: number) => fmtMm(mm, DISPLAY[unit]);
-  const plan = planBars(p.items, p.stock, { kerf: p.kerf, trimStart: p.trim, tail: p.tail });
+  const plan = planMiterBars(p.items, p.stock, { kerf: p.kerf, trimStart: p.trim, tail: p.tail, depth: miter?.depth ?? 0, allowTurn: miter?.turn ?? true });
   const totalCost = plan.byStock.every((b) => b.cost !== null) && plan.byStock.length > 0 ? plan.byStock.reduce((n, b) => n + (b.cost ?? 0), 0) : null;
   const need = p.items.reduce((n, it) => n + it.qty, 0);
+  const groups = groupMiterBars(plan.bars);
+  const angleOf = (label: string) => p.items.find((it) => it.label === label);
   const res: CalcResult = {
     warnings: [...p.warnings],
     summary: [
@@ -154,27 +195,62 @@ function planResult(p: Parsed, unit: CalcUnit): { res: CalcResult; plan: ReturnT
       ...(totalCost !== null ? ([["Stock cost", money(totalCost)]] as [string, string][]) : []),
     ],
     buy: plan.byStock.map((b) => ({ length: f(b.length), count: b.count, cost: money(b.cost) })),
-    bars: groupBars(plan.bars).map(({ count, bar }) => {
+    bars: groups.map(({ count, bar }) => {
       const runs: string[] = [];
       let i = 0;
-      while (i < bar.cuts.length) {
+      const ps = bar.pieces;
+      const same = (x: (typeof ps)[number], y: (typeof ps)[number]) => x.label === y.label && x.length === y.length && x.flipped === y.flipped && x.upsideDown === y.upsideDown;
+      while (i < ps.length) {
         let j = i;
-        while (j < bar.cuts.length && bar.cuts[j]!.label === bar.cuts[i]!.label && bar.cuts[j]!.length === bar.cuts[i]!.length) j++;
-        runs.push(`${j - i > 1 ? `${j - i} × ` : ""}${f(bar.cuts[i]!.length)} (${bar.cuts[i]!.label})`);
+        while (j < ps.length && same(ps[j]!, ps[i]!)) j++;
+        const it = angleOf(ps[i]!.label);
+        const ang = it && (it.a1 || it.a2) ? ` ${it.a1 ?? 0}°/${it.a2 ?? 0}°` : "";
+        const turned = turnText(ps[i]!.flipped, ps[i]!.upsideDown);
+        runs.push(`${j - i > 1 ? `${j - i} × ` : ""}${f(ps[i]!.length)} (${ps[i]!.label}${ang}${turned ? `, ${turned}` : ""})`);
         i = j;
       }
-      return { count, stock: f(bar.stockLength), cuts: runs.join(", "), remnant: f(bar.remnant) };
+      return {
+        count,
+        stock: f(bar.stockLength),
+        cuts: runs.join(", "),
+        remnant: f(bar.remnant),
+        draw: {
+          stock: bar.stockLength,
+          depth: miter?.depth ?? 0,
+          trim: p.trim,
+          tail: p.tail,
+          used: bar.used,
+          pieces: bar.pieces.map((pc) => ({ label: pc.label, length: pc.length, l0: pc.shape.l0, l1: pc.shape.l1, r0: pc.shape.r0, r1: pc.shape.r1, turned: turnText(pc.flipped, pc.upsideDown) })),
+        },
+      };
     }),
     unplaced: plan.unplaced.map((u) => `${u.label} ${f(u.length)} × ${u.count}`),
+    labels: [...new Set(p.items.map((it) => it.label))],
+    mitred: plan.mitred,
+    details: [
+      ["Kerf", f(p.kerf)],
+      ["End trim", f(p.trim)],
+      ["Tail (drop)", f(p.tail)],
+      ["Stock", p.stock.map((s) => `${f(s.length)}${s.qty !== null ? ` (${s.qty} on hand)` : ""}`).join(", ")],
+    ],
   };
   if (plan.unplaced.length > 0) res.warnings.push("Some pieces did not fit: longer than every bar (after trim and tail), or the stock you have ran out.");
-  return { res, plan };
+  return { res, plan, groups };
 }
 
 export function runBarCalc(inp: BarCalcInput): CalcResult {
   const p = parseCommon(inp);
   if ("error" in p) return { error: p.error, warnings: [], summary: [], buy: [], bars: [], unplaced: [] };
-  return planResult(p, inp.unit).res;
+  const { res, plan, groups } = planResult(p, inp.unit);
+  // Saw time: seconds per cut and per bar loaded (blank = no estimate).
+  const cutSec = numOr(inp.cutSec, NaN), loadSec = numOr(inp.loadSec, 0);
+  if (Number.isFinite(cutSec)) {
+    const barSec = (b: MiterBar) => loadSec + b.cutAngles.length * cutSec;
+    res.summary.push(["Saw time", fmtDuration(plan.bars.reduce((n, b) => n + barSec(b), 0))], ["Cuts", String(plan.bars.reduce((n, b) => n + b.cutAngles.length, 0))]);
+    res.bars = res.bars.map((bv, i) => ({ ...bv, time: fmtDuration(barSec(groups[i]!.bar)) }));
+    res.details!.push(["Saw time per cut", `${cutSec} s, load ${loadSec} s per bar`]);
+  }
+  return res;
 }
 
 const DENSITY: Partial<Record<MaterialId, number>> = { cs: 7850, ss: 8000, al5052: 2680, al6061: 2700 };
@@ -185,8 +261,9 @@ export function runTubeCalc(inp: TubeCalcInput, profiles: MachineProfile[]): Cal
   const u = inp.unit;
   const a = lenMm(inp.a, u), b = inp.b.trim() === "" ? a : lenMm(inp.b, u), wall = lenMm(inp.wall, u);
   if (!(a > 0) || !(wall > 0)) return { error: "Enter the tube size and wall thickness.", warnings: [], summary: [], buy: [], bars: [], unplaced: [] };
-  const profile = { shape: inp.shape, a, b, wall };
-  const { res, plan } = planResult(p, u);
+  const profile: TubeProfile = { shape: inp.shape, a, b, wall };
+  const across = inp.across === "a" ? "a" : "b";
+  const { res, plan, groups } = planResult(p, u, { depth: miterDepth(profile, across), turn: inp.turn !== false });
   const prof = profiles.find((x) => x.id === inp.profileId) ?? null;
   const row = prof ? profileRowFor(prof, inp.material, wall) : null;
   const motion = prof ? profileMotionMm(prof) : null;
@@ -207,20 +284,57 @@ export function runTubeCalc(inp: TubeCalcInput, profiles: MachineProfile[]): Cal
     res.summary.push(["Stock weight", u === "in" || u === "ft" ? `${Math.round(kg * 2.20462)} lb` : `${Math.round(kg)} kg`]);
   }
   res.summary.push(["Cut per end", f(tubeCutLength(profile))]);
+  const shapeName: Record<TubeShape, string> = { round: "Round tube", square: "Square tube", rect: "Rectangular tube", angle: "Angle", channel: "Channel", flat: "Flat bar" };
+  res.details!.unshift(["Profile", `${shapeName[inp.shape]} ${f(a)}${inp.shape === "rect" || inp.shape === "angle" || inp.shape === "channel" ? ` × ${f(b)}` : ""}, wall ${f(wall)}`]);
+  if (plan.mitred) res.details!.push(["Mitres", `across the ${across === "a" ? "width" : "height"} (${f(miterDepth(profile, across))}); pieces ${inp.turn !== false ? "may be turned end for end / upside down to share cuts" : "kept as drawn"}`]);
   if (feed > 0) {
-    const t = tubeTime(plan, { profile, feedMmPerMin: feed, pierceSec: pierce, indexSec: numOr(inp.index, 1.5), barLoadSec: load, partUnloadSec: numOr(inp.unload, 0), piercesPerCut: Math.max(1, Math.floor(numOr(inp.piercesPerCut, 1))), facingCut: p.trim > 0 }, p.features);
+    const tm = { feedMmPerMin: feed, pierceSec: pierce, indexSec: numOr(inp.index, 1.5), barLoadSec: load, partUnloadSec: numOr(inp.unload, 0), piercesPerCut: Math.max(1, Math.floor(numOr(inp.piercesPerCut, 1))) };
+    const t = miterTubeTime(plan.bars, profile, across, tm, p.features);
     res.summary.push(["Cut time", fmtDuration(t.totalSec)], ["Beam on", fmtDuration(t.cutSec + t.pierceSec)], ["Handling", fmtDuration(t.handlingSec)], ["Cuts", String(t.cuts)]);
-    // Per grouped bar: the same model on a one-bar plan.
-    const groups = groupBars(plan.bars);
-    res.bars = res.bars.map((bv, i) => {
-      const one = { ...plan, bars: [groups[i]!.bar] };
-      const tb = tubeTime(one, { profile, feedMmPerMin: feed, pierceSec: pierce, indexSec: numOr(inp.index, 1.5), barLoadSec: load, partUnloadSec: numOr(inp.unload, 0), piercesPerCut: Math.max(1, Math.floor(numOr(inp.piercesPerCut, 1))), facingCut: p.trim > 0 }, p.features);
-      return { ...bv, time: fmtDuration(tb.totalSec) };
-    });
+    res.bars = res.bars.map((bv, i) => ({ ...bv, time: fmtDuration(miterTubeTime([groups[i]!.bar], profile, across, tm, p.features).totalSec) }));
+    res.details!.push(["Tube laser", `feed ${f(feed)}/min, pierce ${Math.round(pierce * 100) / 100} s, index ${tm.indexSec} s, load ${tm.barLoadSec} s, unload ${tm.partUnloadSec} s${prof ? ` (${prof.name})` : ""}`]);
   } else {
     res.warnings.push("No feed rate - pick a machine file or enter the feed to get a cutting time.");
   }
   return res;
+}
+
+/**
+ * Tube-laser time for bars with mitred ends: per bar one load; per cut
+ * (`cutAngles` - shared cuts counted once) the profile's cut length at that
+ * angle at the feed, the pierces and one index; per piece its extra features
+ * and an unload. Square ends give the same time as `tubeTime`.
+ */
+export function miterTubeTime(
+  bars: readonly MiterBar[],
+  profile: TubeProfile,
+  across: "a" | "b",
+  inp: { feedMmPerMin: number; pierceSec: number; indexSec: number; barLoadSec: number; partUnloadSec: number; piercesPerCut: number },
+  features: Map<string, { cutLength: number; pierces: number }> = new Map(),
+): { totalSec: number; cutSec: number; pierceSec: number; handlingSec: number; cuts: number; cutLength: number } {
+  const feed = inp.feedMmPerMin > 0 ? inp.feedMmPerMin / 60 : 0;
+  let cuts = 0, cutLength = 0, pierces = 0, handling = 0;
+  for (const bar of bars) {
+    handling += inp.barLoadSec;
+    for (const a of bar.cutAngles) {
+      cuts++;
+      cutLength += miterCutLength(profile, a, across);
+      pierces += Math.max(1, inp.piercesPerCut);
+      handling += inp.indexSec;
+    }
+    for (const c of bar.cuts) {
+      handling += inp.partUnloadSec;
+      const ft = features.get(c.label);
+      if (ft) {
+        cutLength += ft.cutLength;
+        pierces += ft.pierces;
+        handling += ft.pierces * inp.indexSec;
+      }
+    }
+  }
+  const cutSec = feed > 0 ? cutLength / feed : 0;
+  const pierceSec = pierces * Math.max(0, inp.pierceSec);
+  return { totalSec: cutSec + pierceSec + handling, cutSec, pierceSec, handlingSec: handling, cuts, cutLength };
 }
 
 export function parseBarInput(v: unknown, d: BarCalcInput = defaultBarInput()): BarCalcInput {
@@ -228,7 +342,7 @@ export function parseBarInput(v: unknown, d: BarCalcInput = defaultBarInput()): 
   const s = (x: unknown, fb: string) => (typeof x === "string" ? x.slice(0, 40) : fb);
   const arr = (x: unknown) => (Array.isArray(x) ? x.slice(0, 200) : null);
   const stock = arr(o.stock)?.map((r) => { const q = (r ?? {}) as Record<string, unknown>; return { length: s(q.length, ""), qty: s(q.qty, ""), cost: s(q.cost, "") }; }) ?? d.stock;
-  const cuts = arr(o.cuts)?.map((r) => { const q = (r ?? {}) as Record<string, unknown>; return { label: s(q.label, ""), length: s(q.length, ""), qty: s(q.qty, ""), extraCut: s(q.extraCut, ""), extraPierces: s(q.extraPierces, "") }; }) ?? d.cuts;
+  const cuts = arr(o.cuts)?.map((r) => { const q = (r ?? {}) as Record<string, unknown>; return { label: s(q.label, ""), length: s(q.length, ""), qty: s(q.qty, ""), extraCut: s(q.extraCut, ""), extraPierces: s(q.extraPierces, ""), a1: s(q.a1, ""), a2: s(q.a2, "") }; }) ?? d.cuts;
   return {
     unit: o.unit === "mm" || o.unit === "ft" || o.unit === "m" || o.unit === "in" ? o.unit : d.unit,
     kerf: s(o.kerf, d.kerf),
@@ -236,6 +350,8 @@ export function parseBarInput(v: unknown, d: BarCalcInput = defaultBarInput()): 
     tail: s(o.tail, d.tail),
     stock,
     cuts,
+    cutSec: s(o.cutSec, d.cutSec ?? ""),
+    loadSec: s(o.loadSec, d.loadSec ?? ""),
   };
 }
 
@@ -260,5 +376,7 @@ export function parseTubeInput(v: unknown): TubeCalcInput {
     unload: s(o.unload, d.unload),
     piercesPerCut: s(o.piercesPerCut, d.piercesPerCut),
     profileId: s(o.profileId, d.profileId),
+    across: o.across === "a" ? "a" : "b",
+    turn: o.turn !== false,
   };
 }
