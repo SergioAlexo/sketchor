@@ -97,6 +97,34 @@ export interface LastNest {
   groupSections?: { title: string; sheets: string[]; parts: { name: string; ordered: number; placed: number; unplaced: number }[] }[];
   /** Sheet Nesting: draw a tall sheet rotated to landscape and cap the drawing height so a sheet fits one page (print only). */
   fitPage?: boolean;
+  /**
+   * Identical sheets (same size, same parts in the same places) as groups of
+   * 0-based sheet indices: the report draws each group once, headed with how
+   * many to cut. Unset = every sheet on its own page.
+   */
+  sheetGroups?: number[][];
+  /** The layout was edited by hand: count ordered / placed from `placements`, not from the nest result. */
+  countFromPlacements?: boolean;
+}
+
+/** "Sheet 2" / "Sheets 3-7" (1-based, ranges collapsed) for a report heading. */
+function sheetsText(indices: number[]): string {
+  const n = indices.map((i) => i + 1);
+  if (n.length === 1) return `Sheet ${n[0]}`;
+  const contiguous = n[n.length - 1]! - n[0]! === n.length - 1;
+  return `Sheets ${contiguous ? `${n[0]}–${n[n.length - 1]}` : n.join(", ")}`;
+}
+
+/** The report's sheet groups: the caller's identical-sheet groups, or one per sheet. */
+export function reportSheetGroups(lastNest: LastNest): { first: number; indices: number[]; heading: string; qty: number }[] {
+  const groups = lastNest.sheetGroups?.filter((g) => g.length > 0 && g.every((i) => i >= 0 && i < lastNest.sheets.length)) ?? [];
+  const covered = new Set(groups.flat());
+  const all = covered.size === lastNest.sheets.length ? groups : lastNest.sheets.map((_, i) => [i]);
+  return all.map((g) => {
+    const first = g[0]!;
+    const label = lastNest.sheetLabels[first] ?? `Sheet ${first + 1}`;
+    return { first, indices: g, qty: g.length, heading: g.length > 1 ? `${label} — CUT ×${g.length} (${sheetsText(g)})` : label };
+  });
 }
 
 function placementsOn(lastNest: LastNest, sheetIdx: number): LastNestPlacement[] {
@@ -214,16 +242,20 @@ function reportSpine(lastNest: LastNest): ReportSpine {
       cost: m.costEstimate,
     };
   });
-  const orderedRows = ordered.map((o) => ({
-    name: o.name,
-    ordered: o.quantity,
-    placed: result.placed.filter((p) => p.partId === o.key).length,
-    unplaced: result.unplaced.find((u) => u.partId === o.key)?.count ?? 0,
-    urgency: urgencyText(o),
-  }));
+  const manual = lastNest.countFromPlacements === true;
+  const orderedRows = ordered.map((o) => {
+    const placed = manual ? lastNest.placements.filter((p) => p.partId === o.key).length : result.placed.filter((p) => p.partId === o.key).length;
+    return {
+      name: o.name,
+      ordered: o.quantity,
+      placed,
+      unplaced: manual ? Math.max(0, o.quantity - placed) : (result.unplaced.find((u) => u.partId === o.key)?.count ?? 0),
+      urgency: urgencyText(o),
+    };
+  });
   return {
-    totalPlaced: result.placed.length,
-    totalUnplaced: result.unplaced.reduce((n, u) => n + u.count, 0),
+    totalPlaced: manual ? lastNest.placements.length : result.placed.length,
+    totalUnplaced: manual ? orderedRows.reduce((n, r) => n + r.unplaced, 0) : result.unplaced.reduce((n, u) => n + u.count, 0),
     sheetRows,
     orderedRows,
     hasUrgency: ordered.some((o) => urgencyText(o) !== "") || lastNest.placements.some((p) => urgencyText(p) !== ""),
@@ -268,19 +300,23 @@ export function buildNestReportHtml(lastNest: LastNest): string {
       (extra.groups ? `<p>Groups: ${esc(extra.groups)}</p>` : "")
     : "";
 
-  const coverRows = sheetRows
-    .map(
-      (r, i) =>
-        `<tr><td>${esc(r.label)}</td><td>${Math.round(r.utilisation * 100)}%</td><td>${esc(fmtRemnant(r.remnant, lastNest))}</td>` +
-        `<td>${fmtTime(r.cuttingTimeSec)}</td><td>${r.weightKg != null ? r.weightKg.toFixed(2) + " kg" : "—"}</td>` +
+  const sheetGroups = reportSheetGroups(lastNest);
+  const coverRows = sheetGroups
+    .map((g) => {
+      const r = sheetRows[g.first]!, i = g.first;
+      return (
+        `<tr><td>${esc(r.label)}${g.qty > 1 ? ` <span style="color:#666666">(${esc(sheetsText(g.indices))})</span>` : ""}</td><td><b>${g.qty}</b></td><td>${Math.round(r.utilisation * 100)}%</td><td>${esc(fmtRemnant(r.remnant, lastNest))}</td>` +
+        `<td>${fmtTime(r.cuttingTimeSec)}${g.qty > 1 ? " each" : ""}</td><td>${r.weightKg != null ? r.weightKg.toFixed(2) + " kg" : "—"}</td>` +
         `<td>${r.cost != null ? r.cost.toFixed(2) : "—"}</td>` +
         (hasUrgency ? `<td>${esc(sheetUrgency(placementsOn(lastNest, i)) || "—")}</td>` : "") +
-        `</tr>`,
-    )
+        `</tr>`
+      );
+    })
     .join("");
 
-  const sheetsHtml = lastNest.sheets
-    .map((_sheet, i) => {
+  const sheetsHtml = sheetGroups
+    .map((g) => {
+      const i = g.first;
       const entities = sheetDrawingEntities(lastNest, i);
       let svg = entitiesToSvgDocument(entities, { strokeColor: "#000000", strokeWidth: reportStrokeWidth(lastNest.sheets[i]), unit: "none" }).replace(/<\?xml[^>]*\?>\s*/, "");
       if (lastNest.fitPage) svg = svg.replace("<svg ", `<svg style="max-height:${FIT_PAGE_MAX_HEIGHT_PX}px;width:auto" `);
@@ -291,7 +327,7 @@ export function buildNestReportHtml(lastNest: LastNest): string {
         )
         .join("");
       return (
-        `<div class="sheet-page"><h2>${esc(lastNest.sheetLabels[i])}</h2>${svg}` +
+        `<div class="sheet-page"><h2>${esc(g.qty > 1 ? lastNest.sheetLabels[i] : g.heading)}${g.qty > 1 ? ` <span class="qty">CUT ×${g.qty}</span>` : ""}</h2>${g.qty > 1 ? `<p><b>${esc(sheetsText(g.indices))}</b> are identical - cut this layout ${g.qty} times.</p>` : ""}${svg}` +
         `<table><thead><tr><th>#</th><th>Part</th><th>Rotation</th><th>Area</th>${hasUrgency ? "<th>Priority / due</th>" : ""}</tr></thead><tbody>${rows}</tbody></table></div>`
       );
     })
@@ -313,12 +349,13 @@ export function buildNestReportHtml(lastNest: LastNest): string {
     .nest-report th { background: #f0f0f0; }
     .nest-report .sheet-page { page-break-before: always; margin-top: 16px; }
     .nest-report svg { max-width: 100%; height: auto; border: 1px solid #dddddd; }
+    .nest-report .qty { display: inline-block; margin-left: 10px; padding: 1px 10px; border: 2px solid #111111; border-radius: 4px; font-size: 18px; }
   </style>
   <div class="nest-report">
     <h1>${esc(lastNest.title ?? "Sheet Metal Nest Report")}</h1>${detailsHtml}
     <p>${totalPlaced} part(s) placed on ${lastNest.sheets.length} sheet(s)${totalUnplaced ? `, ${totalUnplaced} didn't fit` : ""}. Overall utilisation ${Math.round(metrics.totalUtilisation * 100)}%.</p>
     ${extraHtml}
-    <table><thead><tr><th>Sheet</th><th>Utilisation</th><th>Reusable remnant</th><th>Cutting time</th><th>Weight</th><th>Cost</th>${hasUrgency ? "<th>Most urgent</th>" : ""}</tr></thead><tbody>${coverRows}</tbody></table>
+    <table><thead><tr><th>Sheet</th><th>Qty</th><th>Utilisation</th><th>Reusable remnant</th><th>Cutting time</th><th>Weight</th><th>Cost</th>${hasUrgency ? "<th>Most urgent</th>" : ""}</tr></thead><tbody>${coverRows}</tbody></table>
     ${sheetsHtml}
     ${bottomHtml}
     ${lastNest.footer ? `<p style="margin-top:16px;font-size:11px;color:#666666">${esc(lastNest.footer)}</p>` : ""}
@@ -380,31 +417,39 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
   }
   y += 8;
 
-  const coverCols = [margin, margin + 150, margin + 250, margin + 340, margin + 420, margin + 480];
+  const sheetGroups = reportSheetGroups(lastNest);
+  const coverCols = [margin, margin + 160, margin + 195, margin + 265, margin + 345, margin + 425, margin + 485];
   const coverHeader = () => {
-    const labels = ["Sheet", "Utilisation", "Remnant", "Cut time", "Weight", "Cost"];
+    const labels = ["Sheet", "Qty", "Utilisation", "Remnant", "Cut time", "Weight", "Cost"];
     labels.forEach((l, i) => pdf.text(coverCols[i], y, l, { size: 9, bold: true }));
     y += 6;
     pdf.line({ x: margin, y }, { x: right, y }, { stroke: "#999999", width: 0.5 });
     y += 10;
   };
   coverHeader();
-  for (const r of sheetRows) {
+  for (const g of sheetGroups) {
+    const r = sheetRows[g.first]!;
     need(14, coverHeader);
-    pdf.text(coverCols[0], y, r.label, { size: 9 });
-    pdf.text(coverCols[1], y, `${Math.round(r.utilisation * 100)}%`, { size: 9 });
-    pdf.text(coverCols[2], y, fmtRemnant(r.remnant, lastNest), { size: 9 });
-    pdf.text(coverCols[3], y, fmtTime(r.cuttingTimeSec), { size: 9 });
-    pdf.text(coverCols[4], y, r.weightKg != null ? `${r.weightKg.toFixed(2)} kg` : "—", { size: 9 });
-    pdf.text(coverCols[5], y, r.cost != null ? r.cost.toFixed(2) : "—", { size: 9 });
+    pdf.text(coverCols[0]!, y, r.label, { size: 9 });
+    pdf.text(coverCols[1]!, y, String(g.qty), { size: 9, bold: true });
+    pdf.text(coverCols[2]!, y, `${Math.round(r.utilisation * 100)}%`, { size: 9 });
+    pdf.text(coverCols[3]!, y, fmtRemnant(r.remnant, lastNest), { size: 9 });
+    pdf.text(coverCols[4]!, y, fmtTime(r.cuttingTimeSec) + (g.qty > 1 ? " each" : ""), { size: 9 });
+    pdf.text(coverCols[5]!, y, r.weightKg != null ? `${r.weightKg.toFixed(2)} kg` : "—", { size: 9 });
+    pdf.text(coverCols[6]!, y, r.cost != null ? r.cost.toFixed(2) : "—", { size: 9 });
     y += 14;
   }
 
-  for (let i = 0; i < lastNest.sheets.length; i++) {
+  for (const g of sheetGroups) {
+    const i = g.first;
     pdf.addPage();
     y = margin + 12;
-    pdf.text(margin, y, lastNest.sheetLabels[i], { size: 13, bold: true });
+    pdf.text(margin, y, g.heading, { size: 13, bold: true });
     y += 16;
+    if (g.qty > 1) {
+      pdf.text(margin, y, `CUT x${g.qty} - ${sheetsText(g.indices)} are identical.`, { size: 11, bold: true });
+      y += 15;
+    }
     const urgent = hasUrgency ? sheetUrgency(placementsOn(lastNest, i)) : "";
     if (urgent) {
       pdf.text(margin, y, `Most urgent part: ${urgent}`, { size: 9, bold: true });

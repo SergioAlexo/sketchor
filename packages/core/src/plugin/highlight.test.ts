@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_HIGHLIGHT_LABEL, MAX_HIGHLIGHT_MARKS, sanitizeHighlightMarks } from "./highlight";
+import { MAX_HIGHLIGHT_LABEL, MAX_HIGHLIGHT_MARKS, MAX_HIGHLIGHT_OUTLINE_POINTS, MAX_HIGHLIGHT_TOTAL_POINTS, sanitizeHighlightMarks } from "./highlight";
 
 /**
  * `ui.highlight` hands the host whatever a plugin sends; the renderer then
@@ -39,5 +39,21 @@ describe("sanitizeHighlightMarks", () => {
   it("never keeps more than the cap", () => {
     const many = Array.from({ length: MAX_HIGHLIGHT_MARKS + 50 }, (_, i) => ({ at: { x: i, y: 0 } }));
     expect(sanitizeHighlightMarks(many)).toHaveLength(MAX_HIGHLIGHT_MARKS);
+  });
+
+  it("keeps an outline's finite points and a known tone", () => {
+    const [m] = sanitizeHighlightMarks([{ at: { x: 0, y: 0 }, outline: [{ x: 0, y: 0 }, { x: Number.NaN, y: 1 }, { x: 10, y: 0 }, { x: 10, y: 10 }, "x"], tone: "warn" }]);
+    expect(m).toEqual({ at: { x: 0, y: 0 }, outline: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], tone: "warn" });
+    const [n] = sanitizeHighlightMarks([{ at: { x: 0, y: 0 }, outline: [{ x: 0, y: 0 }, { x: 1, y: 1 }], tone: "purple" }]);
+    expect(n).toEqual({ at: { x: 0, y: 0 } });
+  });
+
+  it("caps outline points per mark and across the call", () => {
+    const big = Array.from({ length: MAX_HIGHLIGHT_OUTLINE_POINTS + 10 }, (_, i) => ({ x: i, y: i % 2 }));
+    const [m] = sanitizeHighlightMarks([{ at: { x: 0, y: 0 }, outline: big }]);
+    expect(m.outline).toHaveLength(MAX_HIGHLIGHT_OUTLINE_POINTS);
+    const many = Array.from({ length: Math.ceil(MAX_HIGHLIGHT_TOTAL_POINTS / MAX_HIGHLIGHT_OUTLINE_POINTS) + 3 }, () => ({ at: { x: 0, y: 0 }, outline: big }));
+    const total = sanitizeHighlightMarks(many).reduce((n, x) => n + (x.outline?.length ?? 0), 0);
+    expect(total).toBeLessThanOrEqual(MAX_HIGHLIGHT_TOTAL_POINTS);
   });
 });

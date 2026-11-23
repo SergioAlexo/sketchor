@@ -77,6 +77,12 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       .rows.hdr { font-size: 10px; opacity: .6; }
       .barline { padding: 4px 0; border-top: 1px solid var(--sk-border,#3a3d42); font-size: 11px; }
       .barline:first-child { border-top: none; }
+      .qtyb { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 9px; background: var(--sk-accent,#4f7cff); color: #fff; font-size: 11px; font-weight: 600; }
+      .mlist { margin: 4px 0 0; padding-left: 16px; }
+      .mlist li { margin: 1px 0; }
+      .mlist li.err { color: var(--sk-danger,#f0616d); }
+      .mlist li.warn { color: #e0912f; }
+      .rotrow button { padding: 3px 6px; }
       .icon { background: none; border: none; color: var(--sk-text-dim,#9aa0a6); padding: 0 3px; cursor: pointer; }
     </style>
   </head>
@@ -139,6 +145,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       let customOpen = false;
       let cuttingOpen = false; // the Cutting parameters <details> stays as the user left it across re-renders
       let postDraft = null; // N-42: the post-processor being edited, or null; kept here so a re-render doesn't lose typing
+      let M = null; // manual nesting: the last read of the layout tab (overlaps, parts still to nest)
 
       function optionsHtml(map, sel, keys) {
         return (keys || Object.keys(map)).map((k) => "<option value='" + esc(k) + "'" + (String(k) === String(sel) ? " selected" : "") + ">" + esc(map[k]) + "</option>").join("");
@@ -354,18 +361,38 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (!R) return "";
         const k = R.kpis;
         let h = "<div class='card'><h4>" + T.results + "</h4><div class='kpis'>" +
-          [[k.sheets, k.showPurchase ? T.kpi.sheets : T.kpi.sheetsUsed]].concat(k.showPurchase ? [[k.toPurchase, T.kpi.toBuy]] : []).concat([[Math.round(k.utilisation * 1000) / 10 + "%", T.kpi.util], [k.placed + "/" + k.required, T.kpi.placed], [k.cutLength, T.kpi.cut], [k.pierces, T.kpi.pierce]]).concat(k.cutTime ? [[k.cutTime, T.kpi.time]] : [])
+          [[k.sheets, k.showPurchase ? T.kpi.sheets : T.kpi.sheetsUsed]].concat(k.showPurchase ? [[k.toPurchase, T.kpi.toBuy]] : []).concat([[Math.round(k.utilisation * 1000) / 10 + "%", T.kpi.util], [(M ? M.placed + "/" + M.required : k.placed + "/" + k.required), T.kpi.placed], [k.cutLength, T.kpi.cut], [k.pierces, T.kpi.pierce]]).concat(k.cutTime ? [[k.cutTime, T.kpi.time]] : [])
             .map((x) => "<div class='kpi'><b>" + esc(x[0]) + "</b><span>" + x[1] + "</span></div>").join("") + "</div>";
-        if (R.unplaced.length) h += "<div class='msg err'>" + T.notPlaced + ": " + R.unplaced.map((u) => esc(u.name) + " &times;" + u.count).join(", ") + "</div>";
+        if (R.unplaced.length && !M) h += "<div class='msg err'>" + T.notPlaced + ": " + R.unplaced.map((u) => esc(u.name) + " &times;" + u.count).join(", ") + "</div>";
+        h += manualCard();
         if (R.stopped) h += "<div class='msg warn'>Stopped early - showing the best layout found so far.</div>";
         (R.notes || []).forEach((n) => (h += "<div class='msg warn'>" + esc(n) + "</div>"));
         if ((R.remnants || []).length) h += "<div class='row' style='margin-top:6px'><span class='muted'>" + T.offcuts + ": " + R.remnants.map((r) => esc(r.size)).join(", ") + "</span><button class='ghost sm' data-act='save-remnants'>" + T.saveOffcuts + "</button></div>";
         h += "<h4 style='margin-top:6px'>" + T.stockUsage + "</h4><table><tr><th>Size</th><th>Used</th>" + (k.showPurchase ? "<th>Buy</th>" : "") + "<th>In stock</th></tr>" +
           R.stock.map((s) => "<tr><td>" + esc(s.size) + "</td><td>" + s.used + "</td>" + (k.showPurchase ? "<td>" + s.purchased + "</td>" : "") + "<td>" + (s.available == null ? "&infin;" : s.available) + "</td></tr>").join("") + "</table>";
         h += "<h4 style='margin-top:8px'>Sheets</h4>" + R.cards.map((c) =>
-          "<div class='scard'><div><b>" + esc(c.title) + "</b>" + (c.group ? " <span class='muted'>" + esc(c.group) + "</span>" : "") + "<div class='pdim'>" + esc(c.size) + " &middot; " + c.parts + " parts &middot; " + Math.round(c.utilisation * 100) + "%</div></div>" +
+          "<div class='scard'><div><b>" + esc(c.title) + "</b>" + (c.count > 1 ? "<span class='qtyb' title='Identical sheets - cut this layout " + c.count + " times'>CUT &times;" + c.count + "</span>" : "") + (c.group ? " <span class='muted'>" + esc(c.group) + "</span>" : "") + "<div class='pdim'>" + esc(c.size) + " &middot; " + c.parts + " parts &middot; " + Math.round(c.utilisation * 100) + "%</div></div>" +
           "<button class='ghost sm' data-act='dxf' data-i='" + c.index + "'>" + T.dxf + "</button></div>").join("");
         h += "<div class='row' style='margin-top:8px'><button class='ghost sm' data-act='dxf-all'>" + T.allZip + "</button><select id='gsheet' style='width:auto;margin:0'>" + R.sheetLabels.map((l, i) => "<option value='" + i + "'>" + esc(l) + "</option>").join("") + "</select><button class='ghost sm' data-act='toolpath' title='" + esc(T.toolpathTip) + "'>" + T.toolpath + "</button><button class='ghost sm' data-act='gcode'>" + T.gcode + "</button><button class='ghost sm' data-act='print'>Print report</button></div>" + reportCard();
+        return h + "</div>";
+      }
+
+      /** Manual nesting on the layout tab: how to move / turn parts, what is flagged, what is still to nest. */
+      function manualCard() {
+        let h = "<div class='card' style='margin:6px 0'><h4>Manual nesting</h4><div class='muted' style='font-size:10px;margin-bottom:4px'>On the nest layout tab, click a part to pick up the whole part and drag it - it snaps to the other parts and the sheet edge. Turn it with its round handle (45&deg; steps; hold Ctrl for any angle) or with these buttons. Parts that did not fit wait in the To nest tray below the sheets.</div>";
+        h += "<div class='row tight rotrow'><span class='muted'>Rotate selected</span><button class='ghost sm' data-act='rot' data-deg='90' title='90&deg; anticlockwise'>&#8634; 90&deg;</button><button class='ghost sm' data-act='rot' data-deg='-90' title='90&deg; clockwise'>&#8635; 90&deg;</button><button class='ghost sm' data-act='rot' data-deg='45'>&#8634; 45&deg;</button><button class='ghost sm' data-act='rot' data-deg='-45'>&#8635; 45&deg;</button><input data-id='rotdeg' style='width:52px;margin:0' placeholder='deg'><button class='ghost sm' data-act='rot-free' title='Turn by the angle typed (anticlockwise; negative = clockwise)'>Turn</button></div>";
+        if (!M) return h + "</div>";
+        if (M.red || M.orange) {
+          h += "<div class='msg " + (M.red ? "err" : "warn") + "'>" + (M.red ? M.red + " part(s) flagged red - overlapping or off the sheet" : "") + (M.red && M.orange ? "; " : "") + (M.orange ? M.orange + " flagged orange - margin, clamp strip or web gap" : "") + "<ul class='mlist'>" +
+            M.issues.map((i) => "<li class='" + (i.tone === "error" ? "err" : "warn") + "'>" + esc(i.label) + "</li>").join("") + (M.more ? "<li>+" + M.more + " more</li>" : "") + "</ul></div>";
+        } else {
+          h += "<div class='msg ok'>No overlaps - every part on a sheet fits." + (M.moved ? " " + M.moved + " part(s) placed by hand." : "") + "</div>";
+        }
+        if (M.toNest.length) {
+          h += "<div class='msg warn'><b>Still to nest</b>" + M.toNest.map((t) => "<div class='row tight' style='margin-top:3px'><span style='flex:1'>" + esc(t.name) + " &times;" + t.n + (t.waiting ? " <span class='muted'>(" + t.waiting + " in the tray)</span>" : "") + "</span>" +
+            (t.waiting < t.n ? "<button class='ghost sm' data-act='tray-add' data-k='" + esc(t.key) + "' data-n='" + (t.n - t.waiting) + "' title='Draw the missing part(s) in the To nest tray so you can drag them onto a sheet'>Put " + (t.n - t.waiting) + " in tray</button>" : "") + "</div>").join("") + "</div>";
+        }
+        if (M.extra.length) h += "<div class='msg warn'>More than ordered: " + M.extra.map((t) => esc(t.name) + " +" + t.n).join(", ") + "</div>";
         return h + "</div>";
       }
 
@@ -621,6 +648,9 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         else if (a === "post-delete") { postDraft = null; post({ type: "post-delete", id: V.postId }); }
         else if (a === "pick-print-folder") post({ type: "pick-print-folder" });
         else if (a === "print") post({ type: "print", jobName, notes: jobNotes });
+        else if (a === "rot") post({ type: "rotate-selected", deg: Number(b.dataset.deg) });
+        else if (a === "rot-free") { const v = Number((document.querySelector("[data-id=rotdeg]") || {}).value); if (v) post({ type: "rotate-selected", deg: v }); else { message = "Type an angle in degrees first (e.g. 30, or -15 for clockwise)."; render(); } }
+        else if (a === "tray-add") post({ type: "tray-add", key: b.dataset.k, count: Number(b.dataset.n) || 1 });
       });
 
       $("file-parts").addEventListener("change", async (e) => {
@@ -681,9 +711,10 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (m.type === "tube-result") { tubeRes = m.result; render(); return; }
         if (m.type === "status") { if (V) { V.status = m.status; V.partsProblem = m.partsProblem; V.canCalculate = m.canCalculate && !V.running; render(); } return; }
         if (m.type === "nest-progress") { progress = m; const el = document.querySelector(".msg.ok"); if (el && V && V.running) el.textContent = progressText(); return; }
-        if (m.type === "result") { R = m; message = null; render(); return; }
+        if (m.type === "result") { R = m; M = null; message = null; render(); return; }
+        if (m.type === "manual") { M = m; if (R && tab === "sheets") render(); return; }
         if (m.type === "print-folder") { printFolder = m.folder; if (R) render(); return; }
-        if (m.type === "cleared") { R = null; message = null; render(); return; }
+        if (m.type === "cleared") { R = null; M = null; message = null; render(); return; }
         if (m.type === "post-saved") { postDraft = null; message = null; render(); return; }
         if (m.type === "error") { message = m.message; render(); return; }
         if (m.type === "selection-hint") { const el = $("sel-hint"); if (el) el.textContent = m.count ? m.count + " shape(s) selected" + (m.openCount ? ", " + m.openCount + " open" : "") : ""; return; }

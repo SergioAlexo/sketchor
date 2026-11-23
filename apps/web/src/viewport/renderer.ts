@@ -529,12 +529,35 @@ function drawHealMarker(ctx: CanvasRenderingContext2D, view: View, p: Point, col
 }
 
 /** A plugin's `ui.highlight` marker: the crossings detector's violet ring, plus its label beside it. */
+const PLUGIN_TONE = { error: "#f0616d", warn: "#e0912f" } as const;
+
 function drawPluginMarker(ctx: CanvasRenderingContext2D, view: View, m: HighlightMark): void {
-  drawHealMarker(ctx, view, m.at, COLORS.crossingMarker);
+  const color = m.tone ? PLUGIN_TONE[m.tone] : m.outline ? PLUGIN_TONE.error : COLORS.crossingMarker;
+  if (m.outline && m.outline.length >= 3) {
+    // A flagged shape (e.g. a nested part that overlaps another): tinted fill plus a heavy edge, so it reads red at any zoom.
+    ctx.save();
+    ctx.beginPath();
+    m.outline.forEach((p, i) => {
+      const s = worldToScreen(view, p);
+      if (i === 0) ctx.moveTo(s.x, s.y);
+      else ctx.lineTo(s.x, s.y);
+    });
+    ctx.closePath();
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+    ctx.restore();
+  } else {
+    drawHealMarker(ctx, view, m.at, color);
+  }
   if (!m.label) return;
   const s = worldToScreen(view, m.at);
   ctx.font = "12px 'Segoe UI', system-ui, sans-serif";
-  ctx.fillStyle = COLORS.crossingMarker;
+  ctx.fillStyle = color;
   ctx.textAlign = "left";
   ctx.textBaseline = "bottom";
   ctx.fillText(m.label, s.x + 10, s.y - 8);
