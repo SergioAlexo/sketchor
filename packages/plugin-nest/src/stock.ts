@@ -7,6 +7,8 @@ import type { Bounds } from "./geometry";
 export interface StockRow {
   size: { name: string; width: number; height: number };
   material?: string;
+  /** NT-02: the job's material id (al5052, cs...), for the machine-file lookup. */
+  materialId?: string;
   thickness?: number;
   /** Sheets available; `null` = unlimited. */
   qty: number | null;

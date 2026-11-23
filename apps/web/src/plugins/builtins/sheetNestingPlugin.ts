@@ -23,6 +23,19 @@ import {
   engineFor,
   engineHintLines,
   extractPartsWithDiagnostics,
+  mergeIntoOnePart,
+  newMachineProfile,
+  parseMachineProfile,
+  serializeMachineProfile,
+  profileRowFor,
+  profileMotionMm,
+  type MachineProfile,
+  runBarCalc,
+  runTubeCalc,
+  parseBarInput,
+  parseTubeInput,
+  FALLBACK_RAPID_MM_PER_MIN,
+  type PartPiece,
   openChainMarks,
   type OpenChainInfo,
   fmtDuration,
@@ -84,7 +97,7 @@ import {
   type StockRow,
   type TrueNestSheet,
 } from "@sketchor/plugin-nest";
-import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, isCustomPostId, parseCustomPosts, postProfileFromSpec, removeCustomPost, resolvePost, cutTimeSec, toolpathPreview, toolpathPreviewScale, upsertCustomPost, writeGcode, type GcodePlacement, type PostProfileSpec } from "@sketchor/plugin-gcode";
+import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, isCustomPostId, parseCustomPosts, postProfileFromSpec, removeCustomPost, resolvePost, cutTimeSec, machineTimeSec, toolpathPreview, toolpathPreviewScale, upsertCustomPost, writeGcode, type GcodePlacement, type PostProfileSpec } from "@sketchor/plugin-gcode";
 
 /** N-53: tab width used when a job asks for tabs but never set one. */
 const DEFAULT_TAB_WIDTH_MM = 3;
@@ -114,6 +127,10 @@ const KEY_JOB = "job";
 const KEY_CUSTOM = "custom";
 const KEY_FILES = "files";
 const KEY_BOM = "bom";
+const KEY_PROFILES = "machineProfiles";
+const KEY_BARCALC = "barCalc";
+const KEY_TUBECALC = "tubeCalc";
+const MAX_PROFILES = 50;
 /** Groups mode looks up DXF drawings only (DWG needs a conversion step; add the file in Manual mode). */
 const DRAWING_EXTS = /\.dxf$/i;
 const MATERIAL_NAMES: Record<string, string> = { al5052: "AL 5052", al6061: "AL 6061", ss: "Stainless", cs: "Carbon steel", plastic: "Plastic", plywood: "Plywood", stone: "Stone", quartz: "Quartz" };
@@ -163,6 +180,8 @@ export interface PartRec {
   notes: ExtractNote[];
   cnc: CncInfo;
   file?: string;
+  /** NT-01: a file's separate outlines kept together as one part; each piece is cut as its own contour. */
+  pieces?: PartPiece[];
 }
 
 /** One imported drawing file (manual "Add files" or a BOM item in groups mode). */
@@ -199,7 +218,7 @@ export function stableKey(sourceIds: string[]): string {
 
 /** Builds a part record from an extracted part. */
 export function recFromExtracted(
-  p: { name: string; outer: Pt[]; holes: Pt[][]; outerSourceIds: string[]; holeSourceIds: string[][]; cutLength: number; pierceCount: number; holeCount: number },
+  p: { name: string; outer: Pt[]; holes: Pt[][]; outerSourceIds: string[]; holeSourceIds: string[][]; cutLength: number; pierceCount: number; holeCount: number; pieces?: PartPiece[]; netArea?: number },
   key: string,
   lookup: Map<string, Entity>,
   notes: ExtractNote[],
@@ -215,7 +234,7 @@ export function recFromExtracted(
     outerSourceIds: p.outerSourceIds,
     holeSourceIds: p.holeSourceIds,
     lookup,
-    area: Math.max(0, polygonArea(p.outer) - holesArea),
+    area: p.netArea ?? Math.max(0, polygonArea(p.outer) - holesArea),
     w: b.maxX - b.minX,
     h: b.maxY - b.minY,
     cutLength: p.cutLength,
@@ -224,6 +243,7 @@ export function recFromExtracted(
     notes,
     cnc: cncInfoForPart(p),
     ...(file ? { file } : {}),
+    ...(p.pieces && p.pieces.length > 1 ? { pieces: p.pieces } : {}),
   };
 }
 
@@ -245,7 +265,10 @@ export function loadDxfFile(key: string, name: string, text: string, unit: numbe
       base.error = openChains.length > 0 ? `${openChains.length} open shape(s) - no closed outline found` : "no closed shape found";
       return base;
     }
-    base.parts = parts.map((p, i) => recFromExtracted({ ...p, name: parts.length > 1 ? `${name} (${i + 1})` : name }, `${key}#${i}`, lookup, notes, key));
+    // NT-01: one file is one part - separate outlines stay together, positioned as drawn.
+    const merged = mergeIntoOnePart(parts, name)!;
+    base.parts = [recFromExtracted(merged, `${key}#0`, lookup, notes.filter((n) => n.kind !== "multi-outer"), key)];
+    if (parts.length > 1) base.warnings.push(`${parts.length} separate pieces - nested together as one part`);
     if (openChains.length > 0) base.warnings.push(`${openChains.length} open shape(s) ignored`);
     return base;
   } catch (err) {
@@ -312,6 +335,20 @@ const plugin: PluginModule = {
         files.set(f.key, loadDxfFile(f.key, str(f.name, "part.dxf"), f.text, typeof f.unit === "number" ? f.unit : null, job.joinTolerance));
       }
     }
+
+    // NT-02: the shop's machine files; NT-03/04: the calculators' last input.
+    let profiles: MachineProfile[] = [];
+    const profilesRaw = await sketchor.storage.get(KEY_PROFILES).catch(() => undefined);
+    for (const raw of Array.isArray(profilesRaw) ? profilesRaw.slice(0, MAX_PROFILES) : []) {
+      const pr = parseMachineProfile(raw, `m${profiles.length + 1}`);
+      if (pr && !profiles.some((x) => x.id === pr.id)) profiles.push(pr);
+    }
+    let barInput = parseBarInput(await sketchor.storage.get(KEY_BARCALC).catch(() => undefined));
+    let tubeInput = parseTubeInput(await sketchor.storage.get(KEY_TUBECALC).catch(() => undefined));
+    const persistProfiles = () => void sketchor.storage.set(KEY_PROFILES, profiles).catch(() => undefined);
+    const newProfileId = () => {
+      for (let i = profiles.length + 1; ; i++) if (!profiles.some((x) => x.id === `m${i}`)) return `m${i}`;
+    };
 
     let lastNest: LastNest | null = null;
     /** NF-08: where each drawn sheet's outline went on the layout tab, and each placement's identity across identical sheets. */
@@ -493,10 +530,35 @@ const plugin: PluginModule = {
     const geometryMap = (recs: Map<string, PartRec>) => new Map([...recs].map(([k, r]) => [k, { id: k, name: r.name, outer: r.outer, holes: r.holes }]));
 
     /** A sheet's cutting speeds: its stock row's material / thickness against the cut table, with the machine's own values over that. */
-    const speedsForStock = (row: StockRow | undefined): CutSpeeds | null => resolveCutSpeeds(job.machine, job.params, cutTableRowFor(row, CUT_TABLE));
+    /** NT-02: the selected sheet machine file (a tube laser file is for the Tubes calculator only). */
+    const activeProfile = (): MachineProfile | null => profiles.find((x) => x.id === job.profileId && x.type !== "tube") ?? null;
+    const speedsForStock = (row: StockRow | undefined): CutSpeeds | null => {
+      const prof = activeProfile();
+      const m = prof && row?.materialId && row.thickness ? profileRowFor(prof, row.materialId, row.thickness) : null;
+      if (prof && m) return { feedRateMmPerMin: m.feedMmPerMin, pierceTimeSec: m.pierceSec, rapidMmPerMin: profileMotionMm(prof).rapidMmPerMin || FALLBACK_RAPID_MM_PER_MIN, source: "profile" };
+      return resolveCutSpeeds(job.machine, job.params, cutTableRowFor(row, CUT_TABLE));
+    };
+    /**
+     * One sheet's machine time. With a machine file: acceleration, corner
+     * stops, small-hole feed, head lift and the sheet load/unload time
+     * (`machineTimeSec`); without one, length / feed + pierces + rapids.
+     */
+    const sheetTimeSec = (placements: LastNestPlacement[], i: number, row: StockRow | undefined): number | null => {
+      const speeds = speedsForStock(row);
+      if (!speeds) return null;
+      const features = sheetCutPlan(placements, i).features;
+      const prof = speeds.source === "profile" ? activeProfile() : null;
+      if (!prof) return cutTimeSec(toolpathPreview(features).stats, speeds);
+      const mo = profileMotionMm(prof);
+      return machineTimeSec(features, { feedMmPerMin: speeds.feedRateMmPerMin, rapidMmPerMin: speeds.rapidMmPerMin, pierceSec: speeds.pierceTimeSec, cutAccel: mo.cutAccel, rapidAccel: mo.rapidAccel, headLiftSec: mo.headLiftSec, cornerAngleDeg: mo.cornerAngleDeg, smallHoleMm: mo.smallHoleMm, smallHoleFeedPct: mo.smallHoleFeedPct }).totalSec + mo.sheetLoadSec;
+    };
 
     /** The built-in estimate for the job as set up now, shown greyed in the blank speed fields so the user sees what "blank" means. */
     const speedAutoView = () => {
+      const prof = activeProfile();
+      const pm = prof ? profileRowFor(prof, job.material, lengthMm(job.thickness)) : null;
+      if (prof && pm) return { feedMm: pm.feedMmPerMin, rapidMm: profileMotionMm(prof).rapidMmPerMin, pierce: String(Math.round(pm.pierceSec * 100) / 100), profile: `${prof.name}: ${pm.exact ? "cut row" : "estimated from the nearest rows"}${pm.note ? " (" + pm.note + ")" : ""} - the machine file sets the cutting time.` };
+      if (prof) return { feedMm: 0, rapidMm: 0, pierce: "", none: `${prof.name} has no cut row for this material - add one under Machines, or enter the feed rate here.` };
       const material = CUT_MATERIAL_NAME[job.material];
       const row = material ? cutRowForThickness(material, lengthMm(job.thickness), CUT_TABLE) : undefined;
       const auto = resolveCutSpeeds(job.machine, { ...job.params, feed: undefined, rapid: undefined, pierce: undefined }, row);
@@ -511,7 +573,8 @@ const plugin: PluginModule = {
       const speeds = speedsForStock(result.stock[result.sheets[0]!.stockIndex]);
       if (!speeds) return [["Cut speeds", "not set - enter the machine's feed rate for a cutting time"]];
       const u = job.outputUnit;
-      return [["Cut speeds", `feed ${fmtSpeed(speeds.feedRateMmPerMin, u)}, pierce ${Math.round(speeds.pierceTimeSec * 100) / 100} s, rapid ${fmtSpeed(speeds.rapidMmPerMin, u)} (${speeds.source === "machine" ? "machine values" : "built-in estimate"})`]];
+      const prof = speeds.source === "profile" ? activeProfile() : null;
+      return [["Cut speeds", `feed ${fmtSpeed(speeds.feedRateMmPerMin, u)}, pierce ${Math.round(speeds.pierceTimeSec * 100) / 100} s, rapid ${fmtSpeed(speeds.rapidMmPerMin, u)} (${prof ? `machine file "${prof.name}" - acceleration, head lift and sheet loading included` : speeds.source === "machine" ? "machine values" : "built-in estimate"})`]];
     };
 
     const buildView = async (): Promise<Record<string, unknown>> => {
@@ -577,6 +640,10 @@ const plugin: PluginModule = {
         stockRows: job.stock.map((s) => ({ name: s.size.name, w: num3(s.size.width), h: num3(s.size.height), qty: s.qty === null ? "" : String(s.qty), thickness: s.thickness })),
         bareUnit: bareUnitFor(job.outputUnit),
         credit: NEST_CREDIT,
+        profiles,
+        profileId: activeProfile()?.id ?? "",
+        barInput,
+        tubeInput,
       };
     };
 
@@ -630,8 +697,40 @@ const plugin: PluginModule = {
         if (patch.postId === DEFAULT_POST_ID) delete next.postId;
         else next.postId = patch.postId;
       }
+      if (typeof patch.profileId === "string") {
+        if (patch.profileId === "") delete next.profileId;
+        else if (profiles.some((x) => x.id === patch.profileId && x.type !== "tube")) next.profileId = patch.profileId;
+      }
+      // NT-02: a machine file fills the machine, bed and kerf (for the material and thickness) so the nest spaces parts the way that machine cuts.
+      if (next.profileId && (patch.profileId !== undefined || patch.material !== undefined || patch.thickness !== undefined)) applyProfile(next);
       job = next;
       persistJob();
+    };
+
+    /** Copies the machine file's type, bed and the matching row's kerf onto the job's cutting parameters (the user can still edit them after). */
+    const applyProfile = (next: NestJob) => {
+      const prof = profiles.find((x) => x.id === next.profileId);
+      if (!prof || prof.type === "tube") return;
+      if (prof.type !== next.machine) {
+        custom.machines[next.machine] = next.params;
+        next.machine = prof.type;
+        next.params = custom.machines[next.machine] ?? defaultMachines().machines[next.machine];
+      }
+      const u = prof.units;
+      const p = { ...next.params };
+      if (prof.bedW > 0 && prof.bedH > 0) {
+        p.bedW = { v: String(prof.bedW), u };
+        p.bedH = { v: String(prof.bedH), u };
+      }
+      const row = profileRowFor(prof, next.material, lengthMm(next.thickness));
+      if (row?.kerfMm) p.kerf = u === "in" ? { v: String(Math.round((row.kerfMm / MM_PER_IN) * 10000) / 10000), u: "in" } : { v: String(Math.round(row.kerfMm * 1000) / 1000), u: "mm" };
+      // The machine file owns the speeds now; blank fields show its values in grey.
+      delete p.feed;
+      delete p.rapid;
+      delete p.pierce;
+      next.params = p;
+      custom.machines[next.machine] = p;
+      persistCustom();
     };
 
     // ---------- init ----------
@@ -675,7 +774,7 @@ const plugin: PluginModule = {
     const tagStock = (r: RasterNestResult, run: Run): RasterNestResult => {
       const material = CUT_MATERIAL_NAME[run.job.material];
       const thickness = lengthMm(run.job.thickness);
-      return { ...r, stock: r.stock.map((s) => ({ ...s, ...(material ? { material } : {}), ...(thickness > 0 ? { thickness } : {}) })) };
+      return { ...r, stock: r.stock.map((s) => ({ ...s, materialId: run.job.material, ...(material ? { material } : {}), ...(thickness > 0 ? { thickness } : {}) })) };
     };
 
     const runNest = async (runs: Run[]) => {
@@ -760,9 +859,12 @@ const plugin: PluginModule = {
         const pl = result.placed[i]!;
         const p = recByKey.get(pl.partId);
         if (!p) continue;
-        const outerSource = p.outerSourceIds.map((id) => p.lookup.get(id)).filter((e): e is Entity => e !== undefined);
+        const ents = (ids: string[]) => ids.map((id) => p.lookup.get(id)).filter((e): e is Entity => e !== undefined);
+        // NT-01: a compound part lists its pieces in order, so the cut plan can cut each one as its own contour.
+        const pieceSrc = (p.pieces ?? [{ outerSourceIds: p.outerSourceIds, holeSourceIds: p.holeSourceIds }]).map((pc) => ({ outer: ents(pc.outerSourceIds), holes: ents(pc.holeSourceIds.flat()) }));
+        const outerSource = pieceSrc.flatMap((pc) => pc.outer);
         if (outerSource.length === 0) continue;
-        const holeSource = p.holeSourceIds.flat().map((id) => p.lookup.get(id)).filter((e): e is Entity => e !== undefined);
+        const holeSource = pieceSrc.flatMap((pc) => pc.holes);
         const transform = placementTransform(p.outer, pl);
         const outerEntities = materializeInstance(outerSource, transform).map((e) => ({ ...e, layer: NEST_PARTS_LAYER }));
         const holeEntities = holeSource.length > 0 ? materializeInstance(holeSource, transform).map((e) => ({ ...e, layer: NEST_HOLES_LAYER })) : [];
@@ -782,6 +884,7 @@ const plugin: PluginModule = {
           rotationDeg: pl.rotationDeg,
           mirrored: pl.mirrored,
           area: p.area,
+          ...(p.pieces ? { pieces: pieceSrc.map((pc) => ({ outer: pc.outer.length, holes: pc.holes.length })) } : {}),
           ...(orderedMap.get(pl.partId)?.priority ? { priority: orderedMap.get(pl.partId)!.priority } : {}),
           ...(orderedMap.get(pl.partId)?.due ? { due: orderedMap.get(pl.partId)!.due } : {}),
         });
@@ -808,13 +911,12 @@ const plugin: PluginModule = {
       }));
       await sketchor.app.openDocumentTab(`Nest – ${result.placed.length} part${result.placed.length === 1 ? "" : "s"}, ${result.sheets.length} sheet${result.sheets.length === 1 ? "" : "s"}`, layout);
 
-      const geoMap = new Map([...recByKey].map(([k, r]) => [k, { outer: r.outer, holes: r.holes }]));
+      const geoMap = new Map([...recByKey].map(([k, r]) => [k, { outer: r.outer, holes: r.holes, ...(r.pieces ? { netArea: r.area } : {}) }]));
       const cutMap = new Map([...recByKey].map(([k, r]) => [k, { cutLength: r.cutLength, pierceCount: r.pierceCount }]));
       const metrics: JobMetrics = computeJobMetrics(result, geoMap, result.stock, CUT_TABLE, { gravity: job.gravity, cut: cutMap });
       // Cutting time from the real cut plan (lead-ins, tab restarts, the actual rapids) at the machine's speeds - the same walk the G-code makes.
       result.sheets.forEach((sh, i) => {
-        const speeds = speedsForStock(result.stock[sh.stockIndex]);
-        metrics.sheets[i]!.cuttingTimeSec = speeds ? cutTimeSec(toolpathPreview(sheetCutPlan(placements, i).features).stats, speeds) : null;
+        metrics.sheets[i]!.cuttingTimeSec = sheetTimeSec(placements, i, result.stock[sh.stockIndex]);
       });
       metrics.totalCuttingTimeSec = metrics.sheets.length > 0 && metrics.sheets.every((m) => m.cuttingTimeSec !== null) ? metrics.sheets.reduce((n, m) => n + (m.cuttingTimeSec ?? 0), 0) : null;
       const required = [...orderedMap.values()].reduce((n, o) => n + o.quantity, 0);
@@ -940,10 +1042,7 @@ const plugin: PluginModule = {
       }
       if (moved === 0) return ln;
       notify(`Using ${moved} part${moved === 1 ? "" : "s"} as moved on the canvas.`);
-      const sheets = ln.metrics.sheets.map((m, i) => {
-        const speeds = speedsForStock(lastStock[ln.sheets[i]!.stockIndex] as StockRow | undefined);
-        return { ...m, cuttingTimeSec: speeds ? cutTimeSec(toolpathPreview(sheetCutPlan(placements, i).features).stats, speeds) : null };
-      });
+      const sheets = ln.metrics.sheets.map((m, i) => ({ ...m, cuttingTimeSec: sheetTimeSec(placements, i, lastStock[ln.sheets[i]!.stockIndex] as StockRow | undefined) }));
       const total = sheets.length > 0 && sheets.every((m) => m.cuttingTimeSec !== null) ? sheets.reduce((n, m) => n + (m.cuttingTimeSec ?? 0), 0) : null;
       return {
         ...ln,
@@ -985,7 +1084,17 @@ const plugin: PluginModule = {
     const sheetCutPlan = (placements: LastNestPlacement[], sheetIndex: number) => {
       const gp: GcodePlacement[] = placements
         .filter((p) => p.sheet === sheetIndex)
-        .map((p) => ({ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }));
+        .flatMap((p): GcodePlacement[] => {
+          if (!p.pieces || p.pieces.length < 2) return [{ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }];
+          // NT-01: each piece of a compound part is its own closed outer contour.
+          let o = 0, h = 0;
+          return p.pieces.map((pc, k) => {
+            const out = { id: k === 0 ? p.id : `${p.id}.${k}`, number: p.number, outerEntities: p.outerEntities.slice(o, o + pc.outer), holeEntities: p.holeEntities.slice(h, h + pc.holes), insideOfId: p.insideOfId };
+            o += pc.outer;
+            h += pc.holes;
+            return out;
+          });
+        });
       return buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined, leadIn: job.leadIn ?? "line" });
     };
 
@@ -1380,6 +1489,95 @@ const plugin: PluginModule = {
         }
         await pushView();
         return notify("Post-processor deleted.");
+      }
+
+      // ---------- NT-02: machine files ----------
+      if (type === "profile-new") {
+        if (profiles.length >= MAX_PROFILES) return fail(`Up to ${MAX_PROFILES} machine files.`);
+        const from = profiles.find((x) => x.id === str(msg.copyOf));
+        const id = newProfileId();
+        const pr: MachineProfile = from ? { ...from, id, name: `${from.name} (copy)`, rows: from.rows.map((r) => ({ ...r })) } : newMachineProfile(id, msg.kind === "tube" ? "Tube laser" : "My laser");
+        if (!from && msg.kind === "tube") {
+          pr.type = "tube";
+          pr.bedW = 0;
+          pr.bedH = 0;
+          pr.sheetLoadMin = 0.75;
+        }
+        profiles = [...profiles, pr];
+        persistProfiles();
+        await pushView();
+        return void post({ type: "profile-created", id });
+      }
+      if (type === "profile-save") {
+        const id = isObj(msg.profile) ? str(msg.profile.id) : "";
+        const pr = parseMachineProfile(msg.profile, id || newProfileId());
+        if (!pr) return fail("That machine file could not be read.");
+        const i = profiles.findIndex((x) => x.id === pr.id);
+        profiles = i >= 0 ? profiles.map((x, k) => (k === i ? pr : x)) : [...profiles, pr].slice(0, MAX_PROFILES);
+        persistProfiles();
+        if (job.profileId === pr.id) {
+          const next = { ...job };
+          if (pr.type === "tube") delete next.profileId;
+          else applyProfile(next);
+          job = next;
+          persistJob();
+        }
+        if (msg.refresh === false) return;
+        return void (await pushView());
+      }
+      if (type === "profile-delete") {
+        const id = str(msg.id);
+        profiles = profiles.filter((x) => x.id !== id);
+        persistProfiles();
+        if (job.profileId === id) {
+          const { profileId: _drop, ...rest } = job;
+          job = rest;
+          persistJob();
+        }
+        if (tubeInput.profileId === id) tubeInput = { ...tubeInput, profileId: "" };
+        return void (await pushView());
+      }
+      if (type === "profile-import") {
+        let raw: unknown = null;
+        try {
+          raw = JSON.parse(str(msg.text));
+        } catch {
+          return fail("That is not a machine file (.sketchor-machine).");
+        }
+        const list = Array.isArray(raw) ? raw : [raw];
+        let added = 0;
+        for (const r of list) {
+          if (profiles.length >= MAX_PROFILES) break;
+          const pr = parseMachineProfile(r, newProfileId());
+          if (!pr) continue;
+          if (profiles.some((x) => x.id === pr.id)) pr.id = newProfileId();
+          profiles = [...profiles, pr];
+          added++;
+        }
+        if (added === 0) return fail("No machine could be read from that file.");
+        persistProfiles();
+        await pushView();
+        return notify(`Imported ${added} machine file${added === 1 ? "" : "s"}.`);
+      }
+      if (type === "profile-export") {
+        const pr = profiles.find((x) => x.id === str(msg.id));
+        if (!pr) return;
+        const name = `${pr.name.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "machine"}.sketchor-machine`;
+        const res = await sketchor.ui.saveFile(name, serializeMachineProfile(pr), [{ description: "Sketchor machine file", accept: { "application/json": [".sketchor-machine"] } }]);
+        if (res.saved) notify(`Saved ${res.name ?? name}.`);
+        return;
+      }
+
+      // ---------- NT-03 / NT-04: calculators ----------
+      if (type === "bar-calc") {
+        barInput = parseBarInput(msg.input);
+        void sketchor.storage.set(KEY_BARCALC, barInput).catch(() => undefined);
+        return void post({ type: "bar-result", result: runBarCalc(barInput) });
+      }
+      if (type === "tube-calc") {
+        tubeInput = parseTubeInput(msg.input);
+        void sketchor.storage.set(KEY_TUBECALC, tubeInput).catch(() => undefined);
+        return void post({ type: "tube-result", result: runTubeCalc(tubeInput, profiles) });
       }
 
       if (type === "print") {

@@ -29,6 +29,8 @@ export interface LastNestPlacement {
   mirrored: boolean;
   /** Net area (outer − holes), mm². */
   area: number;
+  /** NT-01: a compound part (one file, several outlines): entity counts per piece, in order, slicing `outerEntities` / `holeEntities`. */
+  pieces?: { outer: number; holes: number }[];
   /** N-55: the part's priority and due date (Sheet Nesting); absent = normal, undated. */
   priority?: "high" | "low";
   due?: string;

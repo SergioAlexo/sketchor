@@ -132,6 +132,8 @@ export interface NestJob {
   leadIn?: "arc";
   /** N-42: G-code post-processor profile id (absent = the default, generic laser). Checked against the built-ins by the plugin. */
   postId?: string;
+  /** NT-02: the selected machine file (its speeds, motion and sheet load time drive the cutting time). */
+  profileId?: string;
 }
 
 const GRAVITIES: Gravity[] = ["bottom-left", "bottom-right", "top-left", "top-right"];
@@ -301,6 +303,7 @@ export function parseNestJob(v: unknown): NestJob {
     ...(num(v.tabWidth, 0) > 0 ? { tabWidth: Math.min(1000, num(v.tabWidth, 0)) } : {}),
     ...(v.leadIn === "arc" ? { leadIn: "arc" as const } : {}),
     ...(typeof v.postId === "string" && /^[a-z0-9-]{1,40}$/.test(v.postId) ? { postId: v.postId } : {}),
+    ...(typeof v.profileId === "string" && /^[a-z0-9-]{1,40}$/.test(v.profileId) ? { profileId: v.profileId } : {}),
   };
 }
 
