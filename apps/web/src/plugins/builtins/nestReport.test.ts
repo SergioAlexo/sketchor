@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Entity } from "@sketchor/core";
 import type { JobMetrics, TrueNestResult, TrueNestSheet } from "@sketchor/plugin-nest";
-import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportWithJob, urgencyText, type LastNest, type LastNestPlacement } from "./nestReport";
+import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportStrokeWidth, reportWithJob, REPORT_LABEL_FRACTION, urgencyText, type LastNest, type LastNestPlacement } from "./nestReport";
 
 /**
  * The report is the deliverable a fabricator actually works from — a wrong
@@ -364,5 +364,29 @@ describe("N-55 priority / due in the report", () => {
     expect(urgencyText({})).toBe("");
     expect(urgencyText({ priority: "low" })).toBe("Low");
     expect(urgencyText({ due: "2026-12-01" })).toBe("due 2026-12-01");
+  });
+});
+
+describe("sheet drawings read on paper", () => {
+  // A 60" x 120" sheet squeezed onto letter paper: canvas-sized numbers (max 12 mm) and 0.2 mm lines printed as specks and hairlines.
+  const big = (): LastNest => {
+    const n = lastNest();
+    n.sheets = n.sheets.map((s) => ({ ...s, width: 3048, height: 1524 }));
+    n.placements[0]!.label = { at: { x: 20, y: 15 }, height: 12 };
+    return n;
+  };
+
+  it("item numbers are at least 2.5% of the sheet's long side, centred where the canvas label was", () => {
+    const html = buildNestReportHtml(big());
+    const sizes = [...html.matchAll(/<text[^>]*font-size="([\d.]+)"[^>]*>(\d+)<\/text>/g)].map((m) => Number(m[1]));
+    expect(sizes.length).toBeGreaterThan(0);
+    for (const s of sizes) expect(s).toBeGreaterThanOrEqual(3048 * REPORT_LABEL_FRACTION - 1e-6);
+  });
+
+  it("lines are drawn in black at a width that scales with the sheet", () => {
+    expect(reportStrokeWidth({ width: 3048, height: 1524 })).toBeCloseTo(3048 / 500, 9);
+    const html = buildNestReportHtml(big());
+    expect(html).toMatch(/stroke-width="6\.09\d*"/);
+    expect(html).toContain('stroke="#000000"');
   });
 });
