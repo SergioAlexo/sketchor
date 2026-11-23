@@ -83,6 +83,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       .mlist li.err { color: var(--sk-danger,#f0616d); }
       .mlist li.warn { color: #e0912f; }
       .rotrow button { padding: 3px 6px; }
+      .barsvg { display: block; width: 100%; height: auto; margin: 3px 0 1px; }
       .icon { background: none; border: none; color: var(--sk-text-dim,#9aa0a6); padding: 0 3px; cursor: pointer; }
     </style>
   </head>
@@ -126,7 +127,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       };
       const TT = {
         unit: "Units", units: { in: "inches", ft: "feet", mm: "mm", m: "m" }, kerf: "Kerf (blade / beam)", trim: "End trim (squaring cut)", tail: "Tail (unusable drop)",
-        stock: "Stock lengths", stockHdr: ["Length", "Qty on hand", "Cost / bar"], addStock: "+ length", cuts: "Lengths to cut", cutsHdr: ["Label", "Length", "Qty"], cutsHdrTube: ["Label", "Length", "Qty", "Extra cut", "Holes"], addCut: "+ row",
+        stock: "Stock lengths", stockHdr: ["Length", "Qty on hand", "Cost / bar"], addStock: "+ length", cuts: "Lengths to cut", cutsHdr: ["Label", "Length", "Qty"], cutsHdrTube: ["Label", "Length", "Qty", "&ang;1", "&ang;2", "Extra", "Holes"], angHint: "Mitre angle at each end, degrees from square (0 = square cut). + = long point on the bottom face: 45 and 45 is a frame piece, 45 and -45 a parallelogram. Length = long point to long point.", across: "Mitres across", acrossOpts: { b: "Height", a: "Width" }, turn: "Turn pieces so mitres share a cut", turnHint: "Lets the plan turn a piece end for end or roll it upside down (180 degrees about the tube axis) so neighbouring mitres share one cut - a frame piece nests against the next one with no wedge of waste.", sawCut: "Saw time per cut (s)", sawLoad: "Load per bar (s)", draw: "Draw on canvas", print: "Print report", drawHint: "Open the bars to scale in a new tab", turned: "* turned (see the cut list)", addCut: "+ row",
         calc: "Calculate", buy: "Get these bars", cutList: "Cut list", notPlaced: "Not placed", remnant: "drop", paste: "Paste list...", pasteHint: "One per line: length, qty, label (tab or comma separated)",
         tube: "Tube / profile", shape: "Shape", shapes: { round: "Round tube / pipe", square: "Square tube", rect: "Rectangular tube", angle: "Angle", channel: "Channel", flat: "Flat bar" }, a: { round: "Outside diameter", other: "Width" }, b: "Height", wall: "Wall", material: "Material",
         machine: "Tube laser", feed: "Feed (per min)", pierce: "Pierce (s)", index: "Index / rotate per cut (s)", load: "Bar load (s)", unload: "Part unload (s)", ppc: "Pierces per cut", fromFile: "from machine file", none: "None - enter values",
@@ -421,16 +422,38 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         h += "<h4 style='margin-top:4px'>" + TT.stock + "</h4><div class='rows hdr' style='grid-template-columns:1fr 70px 70px 18px'>" + TT.stockHdr.map((x) => "<span>" + x + "</span>").join("") + "<span></span></div>";
         h += D.stock.map((r, i) => "<div class='rows' style='grid-template-columns:1fr 70px 70px 18px'>" + inp("data-ck='" + k + "' data-cs='" + i + ":length' data-id='" + k + "s" + i + "l'", r.length) + inp("data-ck='" + k + "' data-cs='" + i + ":qty' data-id='" + k + "s" + i + "q' placeholder='&infin;'", r.qty) + inp("data-ck='" + k + "' data-cs='" + i + ":cost' data-id='" + k + "s" + i + "c'", r.cost) + "<button class='icon' data-act='c-del' data-ck='" + k + "' data-list='stock' data-i='" + i + "'>&#10005;</button></div>").join("");
         h += "<button class='ghost sm' data-act='c-add' data-ck='" + k + "' data-list='stock'>" + TT.addStock + "</button>";
-        const cols = tube ? "46px 1fr 46px 62px 40px 18px" : "54px 1fr 54px 18px";
+        const cols = tube ? "36px 1fr 34px 30px 30px 42px 30px 16px" : "54px 1fr 54px 18px";
         h += "<h4 style='margin-top:8px'>" + TT.cuts + "</h4><div class='rows hdr' style='grid-template-columns:" + cols + "'>" + (tube ? TT.cutsHdrTube : TT.cutsHdr).map((x) => "<span>" + x + "</span>").join("") + "<span></span></div>";
         h += D.cuts.map((r, i) => "<div class='rows' style='grid-template-columns:" + cols + "'>" + inp("data-ck='" + k + "' data-cc='" + i + ":label' data-id='" + k + "c" + i + "a'", r.label) + inp("data-ck='" + k + "' data-cc='" + i + ":length' data-id='" + k + "c" + i + "l'", r.length) + inp("data-ck='" + k + "' data-cc='" + i + ":qty' data-id='" + k + "c" + i + "q'", r.qty) +
-          (tube ? inp("data-ck='" + k + "' data-cc='" + i + ":extraCut' data-id='" + k + "c" + i + "e' title='Extra cut length per piece (holes, slots, copes)'", r.extraCut || "") + inp("data-ck='" + k + "' data-cc='" + i + ":extraPierces' data-id='" + k + "c" + i + "p' title='Extra pierces per piece (one per hole)'", r.extraPierces || "") : "") +
+          (tube ? inp("data-ck='" + k + "' data-cc='" + i + ":a1' data-id='" + k + "c" + i + "a1' placeholder='0' title='" + esc(TT.angHint) + "'", r.a1 || "") + inp("data-ck='" + k + "' data-cc='" + i + ":a2' data-id='" + k + "c" + i + "a2' placeholder='0' title='" + esc(TT.angHint) + "'", r.a2 || "") + inp("data-ck='" + k + "' data-cc='" + i + ":extraCut' data-id='" + k + "c" + i + "e' title='Extra cut length per piece (holes, slots, copes)'", r.extraCut || "") + inp("data-ck='" + k + "' data-cc='" + i + ":extraPierces' data-id='" + k + "c" + i + "p' title='Extra pierces per piece (one per hole)'", r.extraPierces || "") : "") +
           "<button class='icon' data-act='c-del' data-ck='" + k + "' data-list='cuts' data-i='" + i + "'>&#10005;</button></div>").join("");
         h += "<div class='row'><button class='ghost sm' data-act='c-add' data-ck='" + k + "' data-list='cuts'>" + TT.addCut + "</button><button class='ghost sm' data-act='c-paste' data-ck='" + k + "'>" + TT.paste + "</button></div>";
         if (pasteOpen[k]) h += "<textarea data-id='" + k + "-paste' data-paste='" + k + "' rows='4' placeholder='" + esc(TT.pasteHint) + "' style='width:100%;margin-top:4px;background:var(--sk-bg,#1e1f22);color:inherit;border:1px solid var(--sk-border,#3a3d42);border-radius:4px;font:11px monospace'></textarea><button class='sm' data-act='c-paste-apply' data-ck='" + k + "'>Add lines</button>";
         return h;
       }
-      function calcResult(res) {
+      const BAR_COLORS = ["#4f7cff", "#3f8f5c", "#e0912f", "#a35bd6", "#d6536d", "#2aa3b5", "#8a8f3a", "#c26a3a"];
+      /** One bar pattern from the side: stock, trim, each piece (a mitred one as a trapezoid), the drop. */
+      function barSvg(d, labels) {
+        if (!d || !(d.stock > 0)) return "";
+        const W = 1000, H = d.depth > 0 ? Math.max(40, Math.min(120, d.depth * W / d.stock * 4)) : 40;
+        const sx = W / d.stock, sy = d.depth > 0 ? H / d.depth : 0;
+        const X = (v) => (v * sx).toFixed(1);
+        const yb = H + 2, yt = 2;
+        let g = "<rect x='0' y='2' width='" + W + "' height='" + H + "' fill='rgba(127,127,127,.12)' stroke='#888' stroke-width='1.5'/>";
+        if (d.trim > 0) g += "<rect x='0' y='2' width='" + X(d.trim) + "' height='" + H + "' fill='rgba(127,127,127,.45)'/>";
+        if (d.tail > 0) g += "<rect x='" + X(d.stock - d.tail) + "' y='2' width='" + X(d.tail) + "' height='" + H + "' fill='rgba(127,127,127,.45)'/>";
+        d.pieces.forEach((p) => {
+          const ci = Math.max(0, labels.indexOf(p.label)) % BAR_COLORS.length;
+          const l1 = d.depth > 0 ? p.l1 : p.l0, r1 = d.depth > 0 ? p.r1 : p.r0;
+          g += "<polygon points='" + X(p.l0) + "," + yb + " " + X(p.r0) + "," + yb + " " + X(r1) + "," + yt + " " + X(l1) + "," + yt + "' fill='" + BAR_COLORS[ci] + "' fill-opacity='.8' stroke='#fff' stroke-width='1'><title>" + esc(p.label + (p.turned ? " - turned " + p.turned : "")) + "</title></polygon>";
+          const w = (Math.min(p.r0, r1) - Math.max(p.l0, l1)) * sx;
+          const t = p.label + (p.turned ? "*" : "");
+          if (w > t.length * 13 + 4) g += "<text x='" + (((p.l0 + p.r0 + l1 + r1) / 4) * sx).toFixed(1) + "' y='" + (2 + H / 2 + 8) + "' text-anchor='middle' font-size='24' font-weight='600' fill='#fff'>" + esc(t) + "</text>";
+        });
+        return "<svg class='barsvg' viewBox='0 0 " + W + " " + (H + 4) + "' preserveAspectRatio='none'>" + g + "</svg>";
+      }
+      let calcJobName = "";
+      function calcResult(res, kind) {
         if (!res) return "";
         let h = "<div class='card'><h4>" + T.results + "</h4>";
         if (res.error) return h + "<div class='msg err'>" + esc(res.error) + "</div></div>";
@@ -439,12 +462,16 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (res.unplaced.length) h += "<div class='msg err'>" + TT.notPlaced + ": " + res.unplaced.map(esc).join(", ") + "</div>";
         const hasCost = res.buy.some((b) => b.cost);
         h += "<h4 style='margin-top:6px'>" + TT.buy + "</h4><table><tr><th>Length</th><th>Bars</th>" + (hasCost ? "<th>Cost</th>" : "") + "</tr>" + res.buy.map((b) => "<tr><td>" + esc(b.length) + "</td><td><b>" + b.count + "</b></td>" + (hasCost ? "<td>" + esc(b.cost) + "</td>" : "") + "</tr>").join("") + "</table>";
-        h += "<h4 style='margin-top:8px'>" + TT.cutList + "</h4>" + res.bars.map((b) => "<div class='barline'><b>" + b.count + " &times; " + esc(b.stock) + "</b>" + (b.time ? " <span class='muted'>&middot; " + esc(b.time) + " each</span>" : "") + "<div>" + esc(b.cuts) + "</div><div class='pdim'>" + TT.remnant + " " + esc(b.remnant) + "</div></div>").join("");
+        const labels = res.labels || [];
+        h += "<h4 style='margin-top:8px'>" + TT.cutList + "</h4>" + res.bars.map((b, i) => "<div class='barline'><b>" + (i + 1) + ". " + esc(b.stock) + "</b>" + (b.count > 1 ? "<span class='qtyb' title='Cut " + b.count + " bars this way'>CUT &times;" + b.count + "</span>" : "") + (b.time ? " <span class='muted'>&middot; " + esc(b.time) + " each</span>" : "") + barSvg(b.draw, labels) + "<div>" + esc(b.cuts) + "</div><div class='pdim'>" + TT.remnant + " " + esc(b.remnant) + "</div></div>").join("");
+        if (res.bars.some((b) => b.draw && b.draw.pieces.some((p) => p.turned))) h += "<div class='pdim'>" + TT.turned + "</div>";
+        h += "<div class='row' style='margin-top:8px'><input data-id='calcjob' data-calcjob='1' placeholder='Job name (report title)' value='" + esc(calcJobName) + "' style='flex:1'><button class='ghost sm' data-act='calc-draw' data-ck='" + kind + "' title='" + esc(TT.drawHint) + "'>" + TT.draw + "</button><button class='ghost sm' data-act='calc-print' data-ck='" + kind + "'>" + TT.print + "</button></div>";
         return h + "</div>";
       }
       function barsView() {
         return "<div class='card'><h4>" + T.tabs.bars + "</h4><div class='muted' style='font-size:10px;margin-bottom:6px'>Saw or any straight cut: how many bars to buy for a list of lengths, and what to cut from each.</div>" + calcCommon("bar") +
-          "<div class='row' style='margin-top:8px'><button class='go' data-act='calc' data-ck='bar' style='flex:1'>" + TT.calc + "</button></div></div>" + calcResult(barRes);
+          "<div class='grid2' style='margin-top:6px'><label class='fld'><span class='t'>" + TT.sawCut + "</span>" + inp("data-ck='bar' data-cf='cutSec' data-id='bar-cutsec' placeholder='-'", BI.cutSec || "") + "</label><label class='fld'><span class='t'>" + TT.sawLoad + "</span>" + inp("data-ck='bar' data-cf='loadSec' data-id='bar-loadsec' placeholder='0'", BI.loadSec || "") + "</label></div>" +
+          "<div class='row' style='margin-top:8px'><button class='go' data-act='calc' data-ck='bar' style='flex:1'>" + TT.calc + "</button></div></div>" + calcResult(barRes, "bar");
       }
       function tubesView() {
         const D = TI, tubeProfiles = (V.profiles || []).filter((p) => p.type === "tube" || p.type === "laser");
@@ -453,7 +480,9 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         h += "<label class='fld'><span class='t'>" + (D.shape === "round" ? TT.a.round : TT.a.other) + "</span>" + inp("data-ck='tube' data-cf='a' data-id='t-a'", D.a) + "</label>";
         if (D.shape === "rect" || D.shape === "angle" || D.shape === "channel") h += "<label class='fld'><span class='t'>" + TT.b + "</span>" + inp("data-ck='tube' data-cf='b' data-id='t-b'", D.b) + "</label>";
         h += "<label class='fld'><span class='t'>" + TT.wall + "</span>" + inp("data-ck='tube' data-cf='wall' data-id='t-w'", D.wall) + "</label>";
-        h += "<label class='fld'><span class='t'>" + TT.material + "</span><select data-ck='tube' data-cf='material'>" + optionsHtml(T.materials, D.material, V.materials) + "</select></label></div>";
+        h += "<label class='fld'><span class='t'>" + TT.material + "</span><select data-ck='tube' data-cf='material'>" + optionsHtml(T.materials, D.material, V.materials) + "</select></label>";
+        h += "<label class='fld'><span class='t'>" + TT.across + "</span><select data-ck='tube' data-cf='across'>" + optionsHtml(TT.acrossOpts, D.across || "b") + "</select></label></div>";
+        h += "<label style='display:block;margin:0 0 4px' title='" + esc(TT.turnHint) + "'><input type='checkbox' data-ck='tube' data-cf='turn'" + (D.turn !== false ? " checked" : "") + ">" + TT.turn + "</label>";
         h += "<h4 style='margin-top:4px'>" + TT.machine + "</h4><label class='fld'><span class='lf'><select data-ck='tube' data-cf='profileId' data-rerender='1' style='flex:1;min-width:0'><option value=''>" + TT.none + "</option>" + tubeProfiles.map((p) => "<option value='" + esc(p.id) + "'" + (p.id === D.profileId ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") + "</select><button class='ghost sm' data-act='tab' data-v='machines'>" + T.manageMachines + "</button></span></label>";
         const ph = D.profileId ? " placeholder='" + TT.fromFile + "'" : "";
         h += "<div class='grid2'>";
@@ -464,7 +493,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         h += "<label class='fld'><span class='t'>" + TT.unload + "</span>" + inp("data-ck='tube' data-cf='unload' data-id='t-unload'", D.unload) + "</label>";
         h += "<label class='fld'><span class='t'>" + TT.ppc + "</span>" + inp("data-ck='tube' data-cf='piercesPerCut' data-id='t-ppc'", D.piercesPerCut) + "</label></div></div>";
         h += "<div class='card'>" + calcCommon("tube") + "<div class='row' style='margin-top:8px'><button class='go' data-act='calc' data-ck='tube' style='flex:1'>" + TT.calc + "</button></div></div>";
-        return h + calcResult(tubeRes);
+        return h + calcResult(tubeRes, "tube");
       }
 
       function machinesView() {
@@ -556,7 +585,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
 
       document.addEventListener("input", (e) => {
         const t = e.target;
-        if (t.dataset.ck && t.tagName !== "SELECT") {
+        if (t.dataset.calcjob) { calcJobName = t.value; return; }
+        if (t.dataset.ck && t.tagName !== "SELECT" && t.type !== "checkbox") {
           const D = draftOf(t.dataset.ck);
           if (t.dataset.cf) D[t.dataset.cf] = t.value;
           else if (t.dataset.cs) { const a = t.dataset.cs.split(":"); D.stock[Number(a[0])][a[1]] = t.value; }
@@ -581,6 +611,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       document.addEventListener("change", (e) => {
         const t = e.target, d = t.dataset;
         if (d.ck && t.tagName === "SELECT") { draftOf(d.ck)[d.cf] = t.value; if (d.rerender || d.cf === "unit") render(); return; }
+        if (d.ck && t.type === "checkbox") { draftOf(d.ck)[d.cf] = t.checked; return; }
         if (d.m && MD && t.tagName === "SELECT") { MD[d.m] = t.value; saveMachine(true); render(); return; }
         if (d.mr && MD && t.tagName === "SELECT") { const a = d.mr.split(":"); MD.rows[Number(a[0])][a[1]] = t.value; saveMachine(false); return; }
         if (d.pe && postDraft) { postDraft[d.pe] = t.value; return; }
@@ -599,10 +630,11 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         const a = b.dataset.act;
         if (a === "tab") { if (mSaveTimer) saveMachine(false); tab = b.dataset.v; render(); window.scrollTo(0, 0); return; }
         if (a === "calc") { const k = b.dataset.ck; post({ type: k === "tube" ? "tube-calc" : "bar-calc", input: draftOf(k) }); return; }
+        if (a === "calc-draw" || a === "calc-print") { const k = b.dataset.ck; post({ type: a, kind: k, input: draftOf(k), jobName: calcJobName }); return; }
         if (a === "c-add") {
           const D = draftOf(b.dataset.ck);
           if (b.dataset.list === "stock") D.stock.push({ length: D.stock.length ? D.stock[D.stock.length - 1].length : "", qty: "", cost: "" });
-          else D.cuts.push({ label: String.fromCharCode(65 + (D.cuts.length % 26)), length: "", qty: "1", extraCut: "", extraPierces: "" });
+          else D.cuts.push({ label: String.fromCharCode(65 + (D.cuts.length % 26)), length: "", qty: "1", extraCut: "", extraPierces: "", a1: "", a2: "" });
           render(); return;
         }
         if (a === "c-del") { draftOf(b.dataset.ck)[b.dataset.list].splice(Number(b.dataset.i), 1); render(); return; }

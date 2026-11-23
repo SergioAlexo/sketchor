@@ -31,3 +31,4 @@ export * from "./compoundPart";
 export * from "./machineProfile";
 export * from "./barCutting";
 export * from "./calculators";
+export * from "./miterNest";

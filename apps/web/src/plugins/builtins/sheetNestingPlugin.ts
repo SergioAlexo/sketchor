@@ -108,6 +108,7 @@ import { add, type DisplayUnitInfo, type PickedFolder, type PluginModule } from 
 import { displayUnitToDxfCode, factorFromMm } from "../../units";
 import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportWithJob, type LastNest, type LastNestPlacement } from "./nestReport";
 import { SHEET_NESTING_PANEL_HTML } from "./sheetNestingPanel";
+import { barLayoutCommands, buildBarReportHtml, buildBarReportPdf } from "./barReport";
 import { issueMarks, readManualNest, trayPositions, type ManualInstance, type ManualReadResult, type ManualSheet } from "./nestManual";
 
 /**
@@ -1811,6 +1812,26 @@ const plugin: PluginModule = {
       }
 
       // ---------- NT-03 / NT-04: calculators ----------
+      // NT-05: the Bars / Tubes plan drawn to scale on a canvas tab, or printed with its time estimate.
+      if (type === "calc-draw" || type === "calc-print") {
+        const tube = msg.kind === "tube";
+        if (tube) tubeInput = parseTubeInput(msg.input);
+        else barInput = parseBarInput(msg.input);
+        const res = tube ? runTubeCalc(tubeInput, profiles) : runBarCalc(barInput);
+        if (res.error) return fail(res.error);
+        if (res.bars.length === 0) return fail("Nothing to draw - no bar holds any of the pieces.");
+        const noun = tube ? "Tube" : "Bar";
+        if (type === "calc-draw") {
+          const n = res.bars.reduce((k, b) => k + b.count, 0);
+          await sketchor.app.openDocumentTab(`${tube ? "Tubes" : "Bars"} – ${n} bar${n === 1 ? "" : "s"}, ${res.bars.length} pattern${res.bars.length === 1 ? "" : "s"}`, barLayoutCommands(res, { noun }));
+          return;
+        }
+        const jobName = typeof msg.jobName === "string" ? msg.jobName.slice(0, 120) : "";
+        const meta = { title: tube ? "Tube Cutting Report" : "Bar Cutting Report", noun, jobName, notes: typeof msg.notes === "string" ? msg.notes.slice(0, 2000) : "", date: new Date().toLocaleString() };
+        sketchor.ui.print(buildBarReportHtml(res, meta), { fileName: `${tube ? "tube" : "bar"}-cutting${jobName ? `-${jobName.replace(/[^\w-]+/g, "_").slice(0, 40)}` : ""}`, pdf: buildBarReportPdf(res, meta) });
+        return;
+      }
+
       if (type === "bar-calc") {
         barInput = parseBarInput(msg.input);
         void sketchor.storage.set(KEY_BARCALC, barInput).catch(() => undefined);
