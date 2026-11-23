@@ -105,15 +105,36 @@ function placementsOn(lastNest: LastNest, sheetIdx: number): LastNestPlacement[]
 
 /** A sheet's full drawing — outline, title, every placed part's real geometry and number label — built from the same `sheetOutlineEntities` the canvas layout uses, so the report page can't drift from what's on screen. */
 function sheetDrawingEntities(lastNest: LastNest, sheetIdx: number): Entity[] {
-  const { outline, title } = sheetOutlineEntities(lastNest.sheets[sheetIdx], lastNest.sheetLabels[sheetIdx]);
-  const entities: Entity[] = [outline, title];
+  // The sheet's name is the page heading; the canvas title (10 mm) would only print as a speck under the drawing.
+  const { outline } = sheetOutlineEntities(lastNest.sheets[sheetIdx], lastNest.sheetLabels[sheetIdx]);
+  const entities: Entity[] = [outline];
   for (const p of placementsOn(lastNest, sheetIdx)) {
     for (const e of p.outerEntities) entities.push(inked(e));
     for (const e of p.holeEntities) entities.push(inked(e));
-    entities.push(text(p.label.at, String(p.number), { layer: NEST_LABELS_LAYER, height: p.label.height }));
+    entities.push(reportLabel(p, lastNest.sheets[sheetIdx]));
   }
   const sheet = lastNest.sheets[sheetIdx];
   return lastNest.fitPage && isTall(sheet) ? entities.map((e) => toLandscape(e, sheet.height)) : entities;
+}
+
+/**
+ * The part's item number, sized for the printed page rather than the canvas.
+ * On the canvas a label is at most 12 mm, which on a 60" x 120" sheet shrinks
+ * to a speck on letter paper; in the report it is at least 2.5 % of the
+ * sheet's long side (about 3" on a 10' sheet, ~8 pt on the page), centred
+ * where the canvas label is centred - the middle of the part.
+ */
+export const REPORT_LABEL_FRACTION = 0.025;
+function reportLabel(p: LastNestPlacement, sheet: { width: number; height: number }): Entity {
+  const n = String(p.number), h0 = p.label.height;
+  const cx = p.label.at.x + textWidth(n, h0) / 2, cy = p.label.at.y + h0 / 2;
+  const h = Math.max(h0, Math.max(sheet.width, sheet.height) * REPORT_LABEL_FRACTION);
+  return text({ x: cx - textWidth(n, h) / 2, y: cy - h / 2 }, n, { layer: NEST_LABELS_LAYER, height: h });
+}
+
+/** Line width for the report drawing, in sheet mm: ~1/500 of the long side, so lines print solid at any sheet size (a fixed 0.2 mm on a 3 m sheet is a fraction of a pixel). */
+export function reportStrokeWidth(sheet: { width: number; height: number }): number {
+  return Math.max(sheet.width, sheet.height) / 500;
 }
 
 /**
@@ -261,7 +282,7 @@ export function buildNestReportHtml(lastNest: LastNest): string {
   const sheetsHtml = lastNest.sheets
     .map((_sheet, i) => {
       const entities = sheetDrawingEntities(lastNest, i);
-      let svg = entitiesToSvgDocument(entities, { strokeColor: "#111111", unit: "none" }).replace(/<\?xml[^>]*\?>\s*/, "");
+      let svg = entitiesToSvgDocument(entities, { strokeColor: "#000000", strokeWidth: reportStrokeWidth(lastNest.sheets[i]), unit: "none" }).replace(/<\?xml[^>]*\?>\s*/, "");
       if (lastNest.fitPage) svg = svg.replace("<svg ", `<svg style="max-height:${FIT_PAGE_MAX_HEIGHT_PX}px;width:auto" `);
       const rows = placementsOn(lastNest, i)
         .map(
@@ -393,7 +414,7 @@ export function buildNestReportPdf(lastNest: LastNest): Uint8Array {
     const entities = sheetDrawingEntities(lastNest, i);
     const drawHeight = Math.min(pdf.height * 0.42, bottom - y - 100);
     if (drawHeight > 40 && entities.length > 0) {
-      drawEntitiesToPdf(pdf, entities, { x: margin, y, width: right - margin, height: drawHeight }, { strokeColor: "#111111", strokeWidth: 0.4 });
+      drawEntitiesToPdf(pdf, entities, { x: margin, y, width: right - margin, height: drawHeight }, { strokeColor: "#000000", strokeWidth: 0.9 });
       y += drawHeight + 14;
     }
 
