@@ -53,6 +53,25 @@ describe("loadDxfFile", () => {
     expect(f.parts[0]!.pierceCount).toBe(1);
   });
 
+  it("NT-01: one file is one part - separate outlines stay together as drawn", () => {
+    const second = polyline([{ x: 200, y: 0 }, { x: 240, y: 0 }, { x: 240, y: 30 }, { x: 200, y: 30 }], true);
+    const text = entitiesToDxf([rect(100, 50), second, circle({ x: 50, y: 25 }, 5)], 4, 1);
+    const f = loadDxfFile("k", "kit.dxf", text, null);
+    expect(f.parts).toHaveLength(1);
+    const p = f.parts[0]!;
+    expect(p.name).toBe("kit.dxf");
+    expect(p.pieces).toHaveLength(2);
+    expect(p.w).toBeCloseTo(240, 3);
+    expect(p.pierceCount).toBe(3);
+    // Material area, not the envelope (the hull would be ~12000): 100x50 - hole + 40x30, the hole flattened to chords.
+    expect(Math.abs(p.area - (5000 - Math.PI * 25 + 1200))).toBeLessThan(5);
+  });
+
+  it("panel: dropped files go through the same intake as Add files", () => {
+    expect(PANEL_HTML).toContain("data-drop='parts'");
+    expect(PANEL_HTML).toMatch(/addEventListener\("drop"[\s\S]*post\(\{ type: "add-files", files: out \}\)/);
+  });
+
   it("a forced unit rescales the geometry", () => {
     const text = entitiesToDxf([rect(100, 50)], 0, 1); // no declared unit
     const mm = loadDxfFile("k", "a.dxf", text, 4);

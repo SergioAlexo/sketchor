@@ -27,3 +27,7 @@ export * from "./nestJob";
 export * from "./nestEngine";
 export * from "./sheetNesting";
 export * from "./remnants";
+export * from "./compoundPart";
+export * from "./machineProfile";
+export * from "./barCutting";
+export * from "./calculators";
