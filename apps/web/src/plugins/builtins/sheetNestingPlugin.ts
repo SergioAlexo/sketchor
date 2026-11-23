@@ -78,6 +78,8 @@ import {
   type Remnant,
   thicknessesFor,
   checkNestOverlaps,
+  clampStripRect,
+  sheetTitleHeight,
   type CncInfo,
   type CutTableRow,
   type DxfPreset,
@@ -106,7 +108,7 @@ import { add, type DisplayUnitInfo, type PickedFolder, type PluginModule } from 
 import { displayUnitToDxfCode, factorFromMm } from "../../units";
 import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportWithJob, type LastNest, type LastNestPlacement } from "./nestReport";
 import { SHEET_NESTING_PANEL_HTML } from "./sheetNestingPanel";
-import { applyCanvasEdits, type LayoutSheetRef } from "./nestCanvasEdits";
+import { issueMarks, readManualNest, trayPositions, type ManualInstance, type ManualReadResult, type ManualSheet } from "./nestManual";
 
 /**
  * "Sheet Nesting" (RN-30/31/32): the raster-first nesting panel, a separate
@@ -295,6 +297,58 @@ export function snapshotCanvasPart(
   return loadDxfFile(fileKey, part.name, entitiesToDxf(entities, 4, 1), null, joinTolerance);
 }
 
+/** Manual nesting: at most this many parts are drawn in the "To nest" tray at once (the rest can be added from the panel). */
+const MAX_TRAY = 200;
+/** Gap between parts in the tray, mm. */
+const TRAY_GAP = 40;
+
+/** Mirror, rotate (degrees) then translate - the placement transform, applied to a polygon. */
+function xformPts(pts: readonly Pt[], t: { rotationDeg: number; mirrored?: boolean; translation: Pt }): Pt[] {
+  const a = (t.rotationDeg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+  return pts.map((p) => {
+    const x = t.mirrored ? -p.x : p.x;
+    return { x: c * x - s * p.y + t.translation.x, y: s * x + c * p.y + t.translation.y };
+  });
+}
+
+function trayTitle(total: number, drawn: number): string {
+  return `To nest: ${total} part${total === 1 ? "" : "s"} - drag onto a sheet${drawn < total ? ` (${drawn} shown)` : ""}`;
+}
+
+/**
+ * One part waiting in the tray, unrotated, its box's lower-left at `at`
+ * (canvas coordinates - the tray is not on a sheet).
+ */
+export function trayItem(rec: PartRec, id: string, number: number, at: Pt, ordered?: { name: string; priority?: "high" | "low"; due?: string }): ManualInstance {
+  const t0 = placementTransform(rec.outer, { rotationDeg: 0, mirrored: false, translation: at });
+  const ents = (ids: string[]) => ids.map((x) => rec.lookup.get(x)).filter((e): e is Entity => e !== undefined);
+  const pieceSrc = (rec.pieces ?? [{ outerSourceIds: rec.outerSourceIds, holeSourceIds: rec.holeSourceIds }]).map((pc) => ({ outer: ents(pc.outerSourceIds), holes: ents(pc.holeSourceIds.flat()) }));
+  const outerSource = pieceSrc.flatMap((pc) => pc.outer);
+  const holeSource = pieceSrc.flatMap((pc) => pc.holes);
+  const outerEntities = materializeInstance(outerSource, t0).map((e) => ({ ...e, layer: NEST_PARTS_LAYER }));
+  const holeEntities = holeSource.length > 0 ? materializeInstance(holeSource, t0).map((e) => ({ ...e, layer: NEST_HOLES_LAYER })) : [];
+  const outer = xformPts(rec.outer, t0);
+  const b = bounds(outer);
+  const labelHeight = Math.max(1, Math.min(Math.min(b.maxX - b.minX, b.maxY - b.minY) * 0.3, 12));
+  const placement: LastNestPlacement = {
+    sheet: -1,
+    number,
+    id,
+    outerEntities,
+    holeEntities,
+    label: { at: { x: (b.minX + b.maxX) / 2 - textWidth(String(number), labelHeight) / 2, y: (b.minY + b.maxY) / 2 - labelHeight / 2 }, height: labelHeight },
+    partId: rec.key,
+    name: rec.name,
+    rotationDeg: 0,
+    mirrored: false,
+    area: rec.area,
+    ...(rec.pieces ? { pieces: pieceSrc.map((pc) => ({ outer: pc.outer.length, holes: pc.holes.length })) } : {}),
+    ...(ordered?.priority ? { priority: ordered.priority } : {}),
+    ...(ordered?.due ? { due: ordered.due } : {}),
+  };
+  return { id, placement, outer, holes: rec.holes.map((h) => xformPts(h, t0)), drawnAt: { x: 0, y: 0 }, home: -1 };
+}
+
 const plugin: PluginModule = {
   async activate(sketchor) {
     let unit: DisplayUnitInfo = { unit: "mm", perMm: 1, label: "mm" };
@@ -351,9 +405,24 @@ const plugin: PluginModule = {
     };
 
     let lastNest: LastNest | null = null;
-    /** NF-08: where each drawn sheet's outline went on the layout tab, and each placement's identity across identical sheets. */
-    let lastLayoutRefs: LayoutSheetRef[] = [];
-    let lastPlacementKeys = new Map<string, string>();
+    /**
+     * Manual nesting: every part drawn on the layout tab (sheets and the "To
+     * nest" tray), the drawn sheets, and what the job ordered - so a read of
+     * the canvas knows what moved, what overlaps and what is still to nest.
+     */
+    let manual: {
+      instances: ManualInstance[];
+      sheets: ManualSheet[];
+      ordered: Map<string, { name: string; qty: number }>;
+      recs: Map<string, PartRec>;
+      nextNumber: number;
+      nextTray: number;
+      trayTop: number;
+      trayWidth: number;
+      trayTitled: boolean;
+      labelHeight: number;
+    } | null = null;
+    let lastManual: ManualReadResult | null = null;
     let lastView: ResultView | null = null;
     /** Effective stock rows (with material / thickness) of the last result, for the G-code feed-rate lookup. */
     let lastStock: StockRow[] = [];
@@ -745,7 +814,11 @@ const plugin: PluginModule = {
       unit = info;
     });
     // NF-03b: mark where a selected outline fails to close (the host only shows them while this panel is open).
-    const markOpenEnds = (openChains: OpenChainInfo[]) => void sketchor.ui.highlight(openChainMarks(openChains, (mm) => fmtMm(mm, job.outputUnit))).catch(() => undefined);
+    const markOpenEnds = (openChains: OpenChainInfo[]) => {
+      // The host keeps one set of marks per plugin: on the nest layout tab those are the manual-nesting flags.
+      if (openChains.length === 0 && manualShown) return;
+      void sketchor.ui.highlight(openChainMarks(openChains, (mm) => fmtMm(mm, job.outputUnit))).catch(() => undefined);
+    };
     void sketchor.selection.onChange(async () => {
       const selection = await sketchor.selection.read();
       if (selection.length === 0) {
@@ -899,16 +972,59 @@ const plugin: PluginModule = {
       const groups = groupIdenticalSheetsPerRun(result.sheets, result.placed, sheetRun);
       const clamp = runs[0] ? lengthMm(effectiveClamp(runs[0].job)) : 0;
       const outlineAt = new Map<number, { id: string; origin: { x: number; y: number } }>();
-      const layout = buildSideBySideLayout(result.sheets, placements, groups, sheetLabel, { clamp, onSheet: (i, id, origin) => outlineAt.set(i, { id, origin }) });
-      lastLayoutRefs = groups.flatMap((g) => {
-        const o = outlineAt.get(g.indices[0]!);
-        return o ? [{ sheet: g.indices[0]!, indices: g.indices, outlineId: o.id, origin: o.origin }] : [];
+      // Manual nesting: parts the nester could not fit wait in a tray below the sheets, ready to drag onto one.
+      const titleH = result.sheets[0] ? sheetTitleHeight(result.sheets[0]) : 10;
+      const layoutWidth = groups.reduce((w, g) => w + result.sheets[g.indices[0]!]!.width, 0) + Math.max(0, groups.length - 1) * 200;
+      const trayTop = -(titleH * 8 + 80);
+      const trayWidth = Math.max(1500, layoutWidth);
+      let nextNumber = placements.reduce((n, p) => Math.max(n, p.number), 0) + 1;
+      const trayWanted: { rec: PartRec; key: string }[] = [];
+      for (const u of result.unplaced) {
+        const rec = recByKey.get(u.partId);
+        for (let k = 0; rec && k < u.count && trayWanted.length < MAX_TRAY; k++) trayWanted.push({ rec, key: u.partId });
+      }
+      const trayCount = result.unplaced.reduce((n, u) => n + u.count, 0);
+      const trayPlan = trayPositions(trayWanted.map((t) => ({ w: t.rec.w, h: t.rec.h })), trayTop, trayWidth, TRAY_GAP);
+      const tray = trayWanted.map((t, k) => trayItem(t.rec, String(`t${k + 1}`), nextNumber + k, trayPlan.offsets[k]!, orderedMap.get(t.key)));
+      nextNumber += tray.length;
+      const layout = buildSideBySideLayout(result.sheets, placements, groups, sheetLabel, {
+        clamp,
+        onSheet: (i, id, origin) => outlineAt.set(i, { id, origin }),
+        partGroups: true,
+        qtyBadge: true,
+        ...(tray.length > 0 ? { tray: { title: trayTitle(trayCount, tray.length), items: tray.map((t) => t.placement), at: trayPlan.at } } : {}),
       });
-      const r3 = (v: number) => Math.round(v * 1000) / 1000;
-      lastPlacementKeys = new Map(placements.map((p) => {
-        const pl = result.placed[Number(p.id)]!;
-        return [p.id, `${pl.partId}|${pl.rotationDeg}|${pl.mirrored ? 1 : 0}|${r3(pl.translation.x)}|${r3(pl.translation.y)}`];
-      }));
+      const margin = runs[0] ? jobParamsMm(runs[0].job).margin : 0;
+      const drawnSheets: ManualSheet[] = groups.flatMap((g) => {
+        const o = outlineAt.get(g.indices[0]!);
+        const sh = result.sheets[g.indices[0]!]!;
+        return o ? [{ sheet: g.indices[0]!, indices: g.indices, outlineId: o.id, width: sh.width, height: sh.height, margin, clampRect: clampStripRect(sh, clamp) }] : [];
+      });
+      const instances: ManualInstance[] = [];
+      for (const ms of drawnSheets) {
+        const origin = outlineAt.get(ms.sheet)!.origin;
+        for (const p of placements) {
+          if (p.sheet !== ms.sheet) continue;
+          const pl = result.placed[Number(p.id)]!;
+          const rec = recByKey.get(p.partId)!;
+          const t = placementTransform(rec.outer, pl);
+          instances.push({ id: p.id, placement: p, outer: xformPts(rec.outer, t), holes: rec.holes.map((h) => xformPts(h, t)), drawnAt: origin, home: ms.sheet });
+        }
+      }
+      for (const t of tray) instances.push(t);
+      manual = {
+        instances,
+        sheets: drawnSheets,
+        ordered: new Map([...orderedMap].map(([k, o]) => [k, { name: o.name, qty: o.quantity }])),
+        recs: recByKey,
+        nextNumber,
+        nextTray: tray.length + 1,
+        trayTop: trayPlan.bottom - TRAY_GAP,
+        trayWidth,
+        trayTitled: tray.length > 0,
+        labelHeight: titleH,
+      };
+      lastManual = null;
       await sketchor.app.openDocumentTab(`Nest – ${result.placed.length} part${result.placed.length === 1 ? "" : "s"}, ${result.sheets.length} sheet${result.sheets.length === 1 ? "" : "s"}`, layout);
 
       const geoMap = new Map([...recByKey].map(([k, r]) => [k, { outer: r.outer, holes: r.holes, ...(r.pieces ? { netArea: r.area } : {}) }]));
@@ -950,6 +1066,7 @@ const plugin: PluginModule = {
         title: "Sheet Nesting Report",
         format: { len: fmt, area: (mm2) => fmtMm2(mm2, job.outputUnit) },
         fitPage: true,
+        sheetGroups: groups.map((g) => g.indices),
         details: [...reportDetails(grouped), ...speedDetails(result, grouped)],
         groupSections: grouped
           ? runs.map((run, ri) => ({
@@ -986,7 +1103,7 @@ const plugin: PluginModule = {
           const first = g.indices[0]!;
           const m = metrics.sheets[first]!;
           return {
-            title: g.indices.length > 1 ? describeGroup(g.indices) : `Sheet ${first + 1}`,
+            title: g.indices.length > 1 ? describeGroup(g.indices).replace(/ ×\d+$/, "") : `Sheet ${first + 1}`,
             size: `${fmt(g.sheet.width)} × ${fmt(g.sheet.height)}`,
             group: grouped ? (runs[sheetRun[first] ?? 0]?.label ?? "") : "",
             count: g.indices.length,
@@ -998,6 +1115,7 @@ const plugin: PluginModule = {
         sheetLabels,
       };
       post({ type: "result", ...lastView });
+      void checkManual();
       notify(
         kpis.unplaced > 0
           ? `Nested ${kpis.placed} on ${kpis.sheets} sheet(s) - ${kpis.unplaced} did not fit.`
@@ -1032,24 +1150,147 @@ const plugin: PluginModule = {
      */
     const currentNest = async (): Promise<LastNest | null> => {
       const ln = lastNest;
-      if (!ln || lastLayoutRefs.length === 0) return ln;
+      if (!ln || !manual) return ln;
       const model = await sketchor.document.read();
-      const doc = new Map(model.entities.map((e) => [e.id, e] as const));
-      const { placements, moved, found } = applyCanvasEdits(ln.placements, lastLayoutRefs, doc, (p) => lastPlacementKeys.get(p.id) ?? p.id);
-      if (!found) {
+      const r = readNow(model.entities);
+      if (!r.found) {
         notify("The nest layout tab isn't the active tab - using the nest as calculated. Switch to it to include parts you moved there.");
         return ln;
       }
-      if (moved === 0) return ln;
-      notify(`Using ${moved} part${moved === 1 ? "" : "s"} as moved on the canvas.`);
-      const sheets = ln.metrics.sheets.map((m, i) => ({ ...m, cuttingTimeSec: sheetTimeSec(placements, i, lastStock[ln.sheets[i]!.stockIndex] as StockRow | undefined) }));
+      const red = r.issues.filter((i) => i.tone === "error").length;
+      if (red > 0) notify(`${red} part${red === 1 ? " is" : "s are"} flagged red on the layout (overlapping or off the sheet) - fix ${red === 1 ? "it" : "them"} before cutting.`, true);
+      if (!r.changed) return ln;
+      notify(`Using the layout as edited on the canvas (${r.moved} moved${r.deleted ? `, ${r.deleted} removed` : ""}).`);
+      const placements = r.placements;
+      const cutOf = (p: LastNestPlacement) => manual?.recs.get(p.partId);
+      const sheets = ln.metrics.sheets.map((m, i) => {
+        const on = placements.filter((p) => p.sheet === i);
+        const net = on.reduce((n, p) => n + p.area, 0);
+        return {
+          ...m,
+          netPartArea: net,
+          utilisation: m.sheetArea > 0 ? net / m.sheetArea : 0,
+          cutLengthMm: on.reduce((n, p) => n + (cutOf(p)?.cutLength ?? 0), 0),
+          pierceCount: on.reduce((n, p) => n + (cutOf(p)?.pierceCount ?? 0), 0),
+          cuttingTimeSec: sheetTimeSec(placements, i, lastStock[ln.sheets[i]!.stockIndex] as StockRow | undefined),
+        };
+      });
       const total = sheets.length > 0 && sheets.every((m) => m.cuttingTimeSec !== null) ? sheets.reduce((n, m) => n + (m.cuttingTimeSec ?? 0), 0) : null;
+      const area = sheets.reduce((n, m) => n + m.sheetArea, 0);
+      const util = area > 0 ? sheets.reduce((n, m) => n + m.netPartArea, 0) / area : 0;
+      const required = r.counts.reduce((n, c) => n + c.ordered, 0);
+      const placed = placements.length;
       return {
         ...ln,
         placements,
-        metrics: { ...ln.metrics, sheets, totalCuttingTimeSec: total },
-        summary: ln.summary ? { ...ln.summary, kpis: { ...ln.summary.kpis, cuttingTimeSec: total } } : ln.summary,
+        countFromPlacements: true,
+        metrics: { ...ln.metrics, sheets, totalUtilisation: util, totalCuttingTimeSec: total },
+        summary: ln.summary
+          ? {
+              ...ln.summary,
+              kpis: {
+                ...ln.summary.kpis,
+                cuttingTimeSec: total,
+                utilisation: util,
+                placed,
+                unplaced: Math.max(0, required - placed),
+                cutLengthMm: sheets.reduce((n, m) => n + m.cutLengthMm, 0),
+                pierces: sheets.reduce((n, m) => n + m.pierceCount, 0),
+              },
+            }
+          : ln.summary,
       };
+    };
+
+    /** Reads the layout tab back (see nestManual.ts). */
+    const readNow = (entities: readonly Entity[]): ManualReadResult => {
+      const m = manual!;
+      const doc = new Map(entities.map((e) => [e.id, e] as const));
+      return readManualNest(m.instances, m.sheets, doc, { gap: jobParamsMm(job).spacing, ordered: m.ordered });
+    };
+
+    /**
+     * Manual nesting, live: after every edit on the layout tab, flag parts
+     * that overlap or stick off the sheet (red) or sit in the margin, on the
+     * clamp strip or closer than the web gap (orange), and tell the panel what
+     * is still to nest. The flags are host highlights - never undo steps.
+     */
+    let manualTimer: ReturnType<typeof setTimeout> | null = null;
+    let manualShown = false;
+    const checkManual = async (entities?: readonly Entity[]) => {
+      if (!manual) return;
+      const ents = entities ?? (await sketchor.document.read()).entities;
+      if (!manual) return;
+      const r = readNow(ents);
+      if (!r.found) return; // another tab: leave the marks with the layout tab
+      lastManual = r;
+      manualShown = r.issues.length > 0;
+      void sketchor.ui.highlight(issueMarks(r.issues)).catch(() => undefined);
+      post({ type: "manual", ...manualView(r) });
+    };
+    const manualView = (r: ManualReadResult) => ({
+      moved: r.moved,
+      deleted: r.deleted,
+      red: r.issues.filter((i) => i.tone === "error").length,
+      orange: r.issues.filter((i) => i.tone === "warn").length,
+      issues: r.issues.slice(0, 8).map((i) => ({ label: i.label, tone: i.tone })),
+      more: Math.max(0, r.issues.length - 8),
+      tray: r.inTray.length,
+      placed: r.counts.reduce((n, c) => n + Math.min(c.placed, c.ordered), 0),
+      required: r.counts.reduce((n, c) => n + c.ordered, 0),
+      toNest: r.counts.filter((c) => c.placed < c.ordered).map((c) => ({ key: c.partId, name: c.name, n: c.ordered - c.placed, waiting: r.inTray.filter((id) => manual?.instances.find((x) => x.id === id)?.placement.partId === c.partId).length })),
+      extra: r.counts.filter((c) => c.placed > c.ordered).map((c) => ({ name: c.name, n: c.placed - c.ordered })),
+      sheets: r.perSheet.map((p) => ({ sheet: p.sheet + 1, parts: p.parts, qty: manual?.sheets.find((x) => x.sheet === p.sheet)?.indices.length ?? 1 })),
+    });
+    void sketchor.document.onChange((model) => {
+      if (!manual) return;
+      if (manualTimer) clearTimeout(manualTimer);
+      manualTimer = setTimeout(() => {
+        manualTimer = null;
+        void checkManual(model.entities);
+      }, 120);
+    });
+
+    /** The selected parts on the layout tab (whole part groups), turned by `deg` about each part's own centre. */
+    const rotateSelected = async (deg: number) => {
+      if (!manual) return fail("Nest first - the rotate buttons turn parts on the nest layout tab.");
+      const model = await sketchor.document.read();
+      const sel = new Set(await sketchor.selection.read());
+      const known = new Set(manual.instances.flatMap((i) => [...i.placement.outerEntities, ...i.placement.holeEntities].map((e) => e.id)));
+      const byId = new Map(model.entities.map((e) => [e.id, e] as const));
+      const picked = model.groups.filter((g) => g.members.some((m) => sel.has(m)) && g.members.some((m) => known.has(m)));
+      if (picked.length === 0) return fail("Select a part on the nest layout first (click it - the whole part is picked up), then rotate.");
+      const commands = picked.map((g) => {
+        const pts = g.members.flatMap((m) => {
+          const e = byId.get(m);
+          return e && known.has(m) ? entityPoints(e) : [];
+        });
+        const b = bounds(pts);
+        return { type: "transform-entities" as const, ids: [...g.members], pivot: { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 }, rotation: (deg * Math.PI) / 180 };
+      });
+      await sketchor.document.apply(commands);
+    };
+
+    /** Draws `count` more of a part in the tray, below what is there, so it can be dragged onto a sheet. */
+    const addToTray = async (key: string, count: number) => {
+      const m = manual;
+      if (!m) return fail("Nest first - the tray is on the nest layout tab.");
+      const rec = m.recs.get(key);
+      if (!rec) return fail("That part is not in this nest.");
+      const model = await sketchor.document.read();
+      if (!readNow(model.entities).found) return fail("Switch to the nest layout tab first - the parts are added to its tray.");
+      const n = Math.max(1, Math.min(MAX_TRAY, Math.floor(count)));
+      const plan = trayPositions(Array.from({ length: n }, () => ({ w: rec.w, h: rec.h })), m.trayTop, m.trayWidth, TRAY_GAP);
+      const ordered = m.ordered.get(key);
+      const items = plan.offsets.map((o) => trayItem(rec, `t${m.nextTray++}`, m.nextNumber++, o, ordered ? { name: ordered.name } : undefined));
+      const cmds = buildSideBySideLayout([], [], [], () => "", { tray: { title: m.trayTitled ? "" : "To nest - drag onto a sheet", items: items.map((t) => t.placement), at: plan.at } });
+      // buildSideBySideLayout puts the tray title first; leave it out once the tray already has one.
+      const commands = m.trayTitled ? cmds.slice(1) : cmds;
+      m.trayTitled = true;
+      m.trayTop = plan.bottom - TRAY_GAP;
+      m.instances.push(...items);
+      await sketchor.document.apply(commands);
+      notify(`${n} × ${rec.name} added to the tray below the sheets - drag ${n === 1 ? "it" : "them"} onto a sheet.`);
     };
 
     const exportDxf = async (msg: Record<string, unknown>) => {
@@ -1338,7 +1579,8 @@ const plugin: PluginModule = {
         job = { ...job, parts: [], groups: [] };
         files.clear();
         lastNest = null;
-        lastLayoutRefs = [];
+        manual = null;
+        lastManual = null;
         lastView = null;
         persistJob();
         persistFiles();
@@ -1580,6 +1822,10 @@ const plugin: PluginModule = {
         return void post({ type: "tube-result", result: runTubeCalc(tubeInput, profiles) });
       }
 
+      if (type === "rotate-selected") return void (await rotateSelected(num(msg.deg, 0)));
+      if (type === "tray-add") return void (await addToTray(str(msg.key), num(msg.count, 1)));
+      if (type === "manual-check") return void (await checkManual());
+
       if (type === "print") {
         const ln = await currentNest();
         if (!ln) return fail("Nothing to print - nest some parts first.");
@@ -1603,7 +1849,8 @@ const plugin: PluginModule = {
         files.clear();
         for (const f of jf.files) files.set(f.key, loadDxfFile(f.key, f.name, f.text, f.unit, job.joinTolerance));
         lastNest = null;
-        lastLayoutRefs = [];
+        manual = null;
+        lastManual = null;
         lastView = null;
         persistJob();
         persistFiles();

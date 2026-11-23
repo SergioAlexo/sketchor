@@ -274,8 +274,23 @@ export function dispatchSubscribe(
   emit: (payload: unknown) => void,
 ): () => void {
   switch (method) {
-    case "document.onChange":
-      return bus.onChange(() => emit(projectDocument(doc)));
+    case "document.onChange": {
+      // `bus` is the active tab's bus at the moment it is called, so a plain
+      // subscription stays on the tab that was open then and never hears edits
+      // made on a tab opened later (e.g. a plugin's own result tab). Follow the
+      // active tab instead, and emit on a switch - the document read changes.
+      let off = bus.onChange(() => emit(projectDocument(doc)));
+      const offTab = useApp.subscribe((state, prev) => {
+        if (state.activeSessionId === prev.activeSessionId) return;
+        off();
+        off = bus.onChange(() => emit(projectDocument(doc)));
+        emit(projectDocument(doc));
+      });
+      return () => {
+        off();
+        offTab();
+      };
+    }
 
     case "selection.onChange":
       return useApp.subscribe((state, prev) => {
