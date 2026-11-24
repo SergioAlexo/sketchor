@@ -761,6 +761,8 @@ const plugin: PluginModule = {
       if (patch.tabCount !== undefined) { const n = Math.max(0, Math.min(99, Math.floor(num(patch.tabCount)))); if (n >= 1) next.tabCount = n; else delete next.tabCount; }
       if (patch.tabWidth !== undefined) { const w = Math.max(0, Math.min(1000, num(patch.tabWidth))); if (w > 0) next.tabWidth = w; else delete next.tabWidth; }
       if (patch.searchLevel === "quick" || patch.searchLevel === "normal" || patch.searchLevel === "thorough") next.searchLevel = patch.searchLevel;
+      if (patch.commonLine === true) next.commonLine = true;
+      else if (patch.commonLine === false) delete next.commonLine;
       if (patch.leadIn === "arc") next.leadIn = "arc";
       else if (patch.leadIn === "line") delete next.leadIn;
       if (typeof patch.postId === "string" && (builtinPost(patch.postId) || custom.posts.some((p) => p.id === patch.postId))) {
@@ -1032,8 +1034,15 @@ const plugin: PluginModule = {
       const cutMap = new Map([...recByKey].map(([k, r]) => [k, { cutLength: r.cutLength, pierceCount: r.pierceCount }]));
       const metrics: JobMetrics = computeJobMetrics(result, geoMap, result.stock, CUT_TABLE, { gravity: job.gravity, cut: cutMap });
       // Cutting time from the real cut plan (lead-ins, tab restarts, the actual rapids) at the machine's speeds - the same walk the G-code makes.
+      let commonSaved = 0;
       result.sheets.forEach((sh, i) => {
         metrics.sheets[i]!.cuttingTimeSec = sheetTimeSec(placements, i, result.stock[sh.stockIndex]);
+        // N-51: a shared edge is cut once - the cut length counts it once too.
+        if (job.commonLine) {
+          const saved = sheetCutPlan(placements, i).commonLineMm ?? 0;
+          commonSaved += saved;
+          metrics.sheets[i]!.cutLengthMm = Math.max(0, metrics.sheets[i]!.cutLengthMm - saved);
+        }
       });
       metrics.totalCuttingTimeSec = metrics.sheets.length > 0 && metrics.sheets.every((m) => m.cuttingTimeSec !== null) ? metrics.sheets.reduce((n, m) => n + (m.cuttingTimeSec ?? 0), 0) : null;
       const required = [...orderedMap.values()].reduce((n, o) => n + o.quantity, 0);
@@ -1068,7 +1077,7 @@ const plugin: PluginModule = {
         format: { len: fmt, area: (mm2) => fmtMm2(mm2, job.outputUnit) },
         fitPage: true,
         sheetGroups: groups.map((g) => g.indices),
-        details: [...reportDetails(grouped), ...speedDetails(result, grouped)],
+        details: [...reportDetails(grouped), ...speedDetails(result, grouped), ...(job.commonLine ? ([["Common-line cutting", `on - ${fmt(commonSaved)} of edges shared by neighbouring parts are cut once (parts spaced one kerf apart)`]] as [string, string][]) : [])],
         groupSections: grouped
           ? runs.map((run, ri) => ({
               title: `${run.label} - sheet ${fmt(run.job.sheet.w * MM_PER_IN)} × ${fmt(run.job.sheet.h * MM_PER_IN)}`,
@@ -1171,7 +1180,7 @@ const plugin: PluginModule = {
           ...m,
           netPartArea: net,
           utilisation: m.sheetArea > 0 ? net / m.sheetArea : 0,
-          cutLengthMm: on.reduce((n, p) => n + (cutOf(p)?.cutLength ?? 0), 0),
+          cutLengthMm: Math.max(0, on.reduce((n, p) => n + (cutOf(p)?.cutLength ?? 0), 0) - (job.commonLine ? (sheetCutPlan(placements, i).commonLineMm ?? 0) : 0)),
           pierceCount: on.reduce((n, p) => n + (cutOf(p)?.pierceCount ?? 0), 0),
           cuttingTimeSec: sheetTimeSec(placements, i, lastStock[ln.sheets[i]!.stockIndex] as StockRow | undefined),
         };
@@ -1337,7 +1346,7 @@ const plugin: PluginModule = {
             return out;
           });
         });
-      return buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined, leadIn: job.leadIn ?? "line" });
+      return buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined, leadIn: job.leadIn ?? "line", ...(job.commonLine ? { commonLine: true } : {}) });
     };
 
     /** N-43: one sheet's cut order, pierces and dashed rapids, in a tab of its own so the result drawing is never touched. */
