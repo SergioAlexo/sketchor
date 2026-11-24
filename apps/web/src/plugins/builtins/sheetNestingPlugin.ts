@@ -119,7 +119,7 @@ import { issueMarks, readManualNest, trayPositions, type ManualInstance, type Ma
 
 /**
  * "Sheet Nesting" (RN-30/31/32): the raster-first nesting panel, a separate
- * plugin next to the older Sheet Metal Nest (which is left as it was). The
+ * plugin (it replaced the older Sheet Metal Nest panel, now removed). The
  * state is one `NestJob`; Nest runs `engineFor(job.engine)` - the raster
  * engine by default, the exact "True shape" engine on request - streams the
  * best layout so far, and lands the result in a new canvas tab, the report,
@@ -147,7 +147,7 @@ const MATERIAL_NAMES: Record<string, string> = { al5052: "AL 5052", al6061: "AL 
 const MM_PER_IN = 25.4;
 const MAX_FILE_BYTES = 20_000_000;
 
-/** Cutting-time seed table (same estimates as the Sheet Metal Nest plugin). */
+/** Cutting-time seed table (laser estimates; a machine file or the panel's speeds win). */
 const CUT_TABLE: CutTableRow[] = [
   { material: "Mild Steel", thickness: 1, feedRateMmPerMin: 6000, pierceTimeSec: 0.3, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 7850 },
   { material: "Mild Steel", thickness: 3, feedRateMmPerMin: 3500, pierceTimeSec: 0.6, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 7850 },

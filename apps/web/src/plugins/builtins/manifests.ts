@@ -81,20 +81,6 @@ export const BUILTIN_MANIFESTS: PluginManifest[] = [
     permissions: ["write-document"],
   },
   {
-    id: "com.sketchor.nest",
-    version: "2.0.0",
-    name: "Sheet Metal Nest",
-    description: "True-shape nest parts with holes onto stock sheets, with per-part rotation and a multi-sheet inventory.",
-    publisher: "Sketchor",
-    engines: { sketchor: `^${HOST_API_VERSION}` },
-    main: "nestPlugin.ts",
-    ui: "nest.html",
-    contributes: {
-      commands: [{ id: "nest.open", title: "Sheet Metal Nest (panel)" }],
-    },
-    permissions: ["read-document", "write-document", "storage"],
-  },
-  {
     id: "com.sketchor.sheet-nesting",
     version: "1.0.0",
     name: "Sheet Nesting",
