@@ -24,3 +24,13 @@ describe("bar report / layout (NT-05)", () => {
     expect(new TextDecoder().decode(pdf.slice(0, 5))).toBe("%PDF-");
   });
 });
+
+describe("bars arranged by hand in the report (NT-06)", () => {
+  it("marks an overrun bar too long and draws the overrun", () => {
+    const r = runTubeCalc({ ...defaultTubeInput(), unit: "mm", kerf: "0", trim: "0", tail: "0", a: "50", wall: "3", feed: "3000", stock: [{ length: "3000", qty: "", cost: "" }], cuts: [{ label: "S", length: "1200", qty: "3" }], manual: { patterns: [{ count: 1, stock: 3000, pieces: [1, 2, 3].map(() => ({ label: "S", length: 1200, flipped: false, upsideDown: false })) }] } }, []);
+    expect(r.bars[0]!.over).toBeTruthy();
+    const html = buildBarReportHtml(r, { title: "Tube Cutting Report", noun: "Tube" });
+    expect(html).toContain("TOO LONG by");
+    expect(html).toContain('fill="#f6c6cb"');
+  });
+});

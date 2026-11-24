@@ -74,10 +74,13 @@ const PRINT_FILLS = ["#dbe4ff", "#d3f0dc", "#fde3c4", "#ecdcf7", "#f9d9df", "#d2
 /** A pattern for the printed page: light fills by label, black outlines and lettering, the drop and the trim greyed. */
 export function barSvgHtml(d: BarDrawing, labels: readonly string[], dropText: string): string {
   const W = 1000, H = 64;
-  const sx = W / d.stock;
+  // A bar arranged by hand can be overrun: scale to the pieces and show the overrun hatched red.
+  const span = Math.max(d.stock, d.used + d.tail);
+  const sx = W / span;
   const X = (v: number) => (v * sx).toFixed(1);
   const yb = H + 2, yt = 2;
-  let g = `<rect x="0" y="2" width="${W}" height="${H}" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>`;
+  let g = `<rect x="0" y="2" width="${X(d.stock)}" height="${H}" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>`;
+  if (span > d.stock + 1e-6) g += `<rect x="${X(d.stock)}" y="2" width="${X(span - d.stock)}" height="${H}" fill="#f6c6cb" stroke="#c0392b" stroke-width="2"/>`;
   if (d.trim > 0) g += `<rect x="0" y="2" width="${X(d.trim)}" height="${H}" fill="#bbbbbb"/>`;
   if (d.stock - d.used > 1e-6) g += `<rect x="${X(d.used)}" y="2" width="${X(d.stock - d.used)}" height="${H}" fill="#eeeeee" stroke="#000000" stroke-width="1"/>`;
   for (const p of d.pieces) {
@@ -111,7 +114,7 @@ export function buildBarReportHtml(res: CalcResult, meta: BarReportMeta): string
   const patterns = res.bars
     .map((b, i) => {
       const svg = b.draw ? barSvgHtml(b.draw, res.labels ?? [], `drop ${b.remnant}`) : "";
-      return `<div class="pattern"><h3>${esc(meta.noun)} pattern ${i + 1} - ${esc(b.stock)}${b.count > 1 ? ` <span class="qty">CUT ×${b.count}</span>` : ""}</h3>${svg}<p>${esc(b.cuts)}</p>${b.draw && b.draw.pieces.some((p) => p.turned) ? '<p class="muted">* turned - see the cut list</p>' : ""}<p class="muted">Drop ${esc(b.remnant)}${b.time ? ` · ${esc(b.time)} each` : ""}</p></div>`;
+      return `<div class="pattern"><h3>${esc(meta.noun)} pattern ${i + 1} - ${esc(b.stock)}${b.count > 1 ? ` <span class="qty">CUT ×${b.count}</span>` : ""}${b.over ? ` <span style="color:#c0392b">TOO LONG by ${esc(b.over)}</span>` : ""}</h3>${svg}<p>${esc(b.cuts)}</p>${b.draw && b.draw.pieces.some((p) => p.turned) ? '<p class="muted">* turned - see the cut list</p>' : ""}<p class="muted">Drop ${esc(b.remnant)}${b.time ? ` · ${esc(b.time)} each` : ""}</p></div>`;
     })
     .join("");
   const unplaced = res.unplaced.length ? `<p style="color:#c0392b"><b>Not placed:</b> ${res.unplaced.map(esc).join(", ")}</p>` : "";
@@ -182,7 +185,7 @@ export function buildBarReportPdf(res: CalcResult, meta: BarReportMeta): Uint8Ar
   line("Cut list", 12, true);
   res.bars.forEach((b, i) => {
     need(110);
-    line(`${meta.noun} pattern ${i + 1} - ${b.stock}${b.count > 1 ? `   CUT x${b.count}` : ""}`, 11, true);
+    line(`${meta.noun} pattern ${i + 1} - ${b.stock}${b.count > 1 ? `   CUT x${b.count}` : ""}${b.over ? `   TOO LONG by ${b.over}` : ""}`, 11, true, b.over ? "#c0392b" : undefined);
     if (b.draw) {
       const ents = barPatternEntities(b.draw, 0, "", `drop ${b.remnant}`, true).filter((e) => !(e.type === "text" && e.text === ""));
       const h = 40;
