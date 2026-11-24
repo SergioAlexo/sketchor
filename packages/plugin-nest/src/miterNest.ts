@@ -176,20 +176,7 @@ export function sequenceBar(units: readonly Unit[], opts: { kerf: number; trimSt
       prev = shape;
     }
     const used = prev ? Math.max(prev.r0, prev.r1) : opts.trimStart;
-    // Cuts: the first end when it is mitred or the bar is trimmed, one per boundary (two when the ends are not parallel), the last end.
-    const cutAngles: number[] = [];
-    pieces.forEach((p, k) => {
-      const leftA = angleOf(p.shape.l1 - p.shape.l0, D), rightA = angleOf(p.shape.r1 - p.shape.r0, D);
-      if (k === 0) {
-        if (opts.trimStart > 0 || Math.abs(leftA) > EPS) cutAngles.push(Math.abs(leftA));
-      } else {
-        const q = pieces[k - 1]!;
-        const prevA = angleOf(q.shape.r1 - q.shape.r0, D);
-        if (Math.abs(prevA - leftA) > 1e-6) cutAngles.push(Math.abs(leftA));
-      }
-      cutAngles.push(Math.abs(rightA));
-    });
-    return { pieces, used, cutAngles };
+    return { pieces, used, cutAngles: cutAnglesOf(pieces, D, opts.trimStart) };
   };
   const types = [...new Set(units.map((u) => `${u.label}|${u.length}|${u.a1}|${u.a2}`))];
   let best = run(null);
@@ -200,6 +187,60 @@ export function sequenceBar(units: readonly Unit[], opts: { kerf: number; trimSt
     }
   }
   return best;
+}
+
+/** Cuts on a laid bar: the first end when it is mitred or the bar is trimmed, one per boundary (two when the ends are not parallel), the last end. */
+function cutAnglesOf(pieces: readonly MiterBarPiece[], D: number, trim: number): number[] {
+  const cutAngles: number[] = [];
+  pieces.forEach((p, k) => {
+    const leftA = angleOf(p.shape.l1 - p.shape.l0, D), rightA = angleOf(p.shape.r1 - p.shape.r0, D);
+    if (k === 0) {
+      if (trim > 0 || Math.abs(leftA) > EPS) cutAngles.push(Math.abs(leftA));
+    } else {
+      const q = pieces[k - 1]!;
+      const prevA = angleOf(q.shape.r1 - q.shape.r0, D);
+      if (Math.abs(prevA - leftA) > 1e-6) cutAngles.push(Math.abs(leftA));
+    }
+    cutAngles.push(Math.abs(rightA));
+  });
+  return cutAngles;
+}
+
+/** A piece's side view in a given orientation, left end touching x = 0. */
+export function orientedShape(length: number, a1: number, a2: number, depth: number, flipped: boolean, upsideDown: boolean): PieceShape {
+  let s = pieceShape(length, clampAngle(a1), clampAngle(a2), depth);
+  if (flipped) s = flipX(s);
+  if (upsideDown) s = flipY(s);
+  return normalized(s);
+}
+
+/**
+ * Manual bar layout (NT-06): the pieces exactly in the order and orientation
+ * given, each pushed against the one before (kerf apart, measured along the
+ * bar on a slanted cut), the first against the end trim. No reordering - the
+ * user arranged them; `used` says whether it still fits.
+ */
+export function layPieces(
+  list: readonly { label: string; length: number; a1: number; a2: number; flipped: boolean; upsideDown: boolean }[],
+  opts: { kerf: number; trimStart: number; depth: number },
+): { pieces: MiterBarPiece[]; used: number; cutAngles: number[] } {
+  const D = Math.max(0, opts.depth), kerf = Math.max(0, opts.kerf), trim = Math.max(0, opts.trimStart);
+  const pieces: MiterBarPiece[] = [];
+  let prev: PieceShape | null = null;
+  for (const it of list) {
+    const o = orientedShape(it.length, it.a1, it.a2, D, it.flipped, it.upsideDown);
+    let s: number;
+    if (prev === null) s = trim - Math.min(o.l0, o.l1);
+    else {
+      const tPrev = D > 0 ? (prev.r1 - prev.r0) / D : 0, tNext = D > 0 ? (o.l1 - o.l0) / D : 0;
+      const g = kerf * Math.sqrt(1 + Math.max(tPrev * tPrev, tNext * tNext));
+      s = Math.max(prev.r0 + g - o.l0, prev.r1 + g - o.l1);
+    }
+    const shape = shifted(o, s);
+    pieces.push({ label: it.label, length: it.length, a1: clampAngle(it.a1), a2: clampAngle(it.a2), flipped: it.flipped, upsideDown: it.upsideDown, shape });
+    prev = shape;
+  }
+  return { pieces, used: prev ? Math.max(prev.r0, prev.r1) : trim, cutAngles: cutAnglesOf(pieces, D, trim) };
 }
 
 export function planMiterBars(items: MiterItem[], stock: BarStock[], opts: MiterPlanOptions): MiterPlan {

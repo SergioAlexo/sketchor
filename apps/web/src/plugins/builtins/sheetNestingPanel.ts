@@ -83,7 +83,16 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       .mlist li.err { color: var(--sk-danger,#f0616d); }
       .mlist li.warn { color: #e0912f; }
       .rotrow button { padding: 3px 6px; }
-      .barsvg { display: block; width: 100%; height: auto; margin: 3px 0 1px; }
+      .barsvg { display: block; width: 100%; height: auto; margin: 3px 0 1px; touch-action: none; }
+      .barsvg polygon { cursor: grab; }
+      .barsvg polygon.sel { stroke: #ffd400; stroke-width: 4; }
+      .barsvg.over { outline: 2px solid var(--sk-danger,#f0616d); }
+      .barsvg.droptarget, .tray.droptarget { outline: 2px dashed var(--sk-accent,#4f7cff); outline-offset: 1px; }
+      .barline.over b { color: var(--sk-danger,#f0616d); }
+      .tray { border: 1px dashed var(--sk-border,#3a3d42); border-radius: 5px; padding: 6px; margin: 6px 0; min-height: 30px; touch-action: none; }
+      .chip { display: inline-block; margin: 2px; padding: 2px 7px; border-radius: 10px; color: #fff; font-size: 11px; cursor: grab; user-select: none; }
+      .ghost-drag { position: fixed; z-index: 99; pointer-events: none; padding: 2px 8px; border-radius: 10px; background: var(--sk-accent,#4f7cff); color: #fff; font-size: 11px; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+      .seltools { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
       .icon { background: none; border: none; color: var(--sk-text-dim,#9aa0a6); padding: 0 3px; cursor: pointer; }
     </style>
   </head>
@@ -127,7 +136,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       };
       const TT = {
         unit: "Units", units: { in: "inches", ft: "feet", mm: "mm", m: "m" }, kerf: "Kerf (blade / beam)", trim: "End trim (squaring cut)", tail: "Tail (unusable drop)",
-        stock: "Stock lengths", stockHdr: ["Length", "Qty on hand", "Cost / bar"], addStock: "+ length", cuts: "Lengths to cut", cutsHdr: ["Label", "Length", "Qty"], cutsHdrTube: ["Label", "Length", "Qty", "&ang;1", "&ang;2", "Extra", "Holes"], angHint: "Mitre angle at each end, degrees from square (0 = square cut). + = long point on the bottom face: 45 and 45 is a frame piece, 45 and -45 a parallelogram. Length = long point to long point.", across: "Mitres across", acrossOpts: { b: "Height", a: "Width" }, turn: "Turn pieces so mitres share a cut", turnHint: "Lets the plan turn a piece end for end or roll it upside down (180 degrees about the tube axis) so neighbouring mitres share one cut - a frame piece nests against the next one with no wedge of waste.", sawCut: "Saw time per cut (s)", sawLoad: "Load per bar (s)", draw: "Draw on canvas", print: "Print report", drawHint: "Open the bars to scale in a new tab", turned: "* turned (see the cut list)", addCut: "+ row",
+        stock: "Stock lengths", stockHdr: ["Length", "Qty on hand", "Cost / bar"], addStock: "+ length", cuts: "Lengths to cut", cutsHdr: ["Label", "Length", "Qty"], cutsHdrTube: ["Label", "Length", "Qty", "&ang;1", "&ang;2", "Extra", "Holes"], angHint: "Mitre angle at each end, degrees from square (0 = square cut). + = long point on the bottom face: 45 and 45 is a frame piece, 45 and -45 a parallelogram. Length = long point to long point.", across: "Mitres across", acrossOpts: { b: "Height", a: "Width" }, turn: "Turn pieces so mitres share a cut", turnHint: "Lets the plan turn a piece end for end or roll it upside down (180 degrees about the tube axis) so neighbouring mitres share one cut - a frame piece nests against the next one with no wedge of waste.", sawCut: "Saw time per cut (s)", sawLoad: "Load per bar (s)", draw: "Draw on canvas", print: "Print report", drawHint: "Open the bars to scale in a new tab", turned: "* turned (see the cut list)", manualHint: "Arrange by hand: drag a piece along its bar to reorder it, onto another bar to move it, or into the To cut tray to take it off. Click a piece to turn it. A bar that gets too long turns red.", manualOn: "Arranged by hand", replan: "Re-plan automatically", update: "Update", toCut: "To cut", toCutEmpty: "Every piece is on a bar - drag one here to take it off.", extra: "More than ordered", addBar: "+ bar", split: "Split one off", removeBar: "Remove bar", endForEnd: "Turn end for end", upsideDown: "Upside down", toTray: "To tray", selected: "Selected", over: "too long by", addCut: "+ row",
         calc: "Calculate", buy: "Get these bars", cutList: "Cut list", notPlaced: "Not placed", remnant: "drop", paste: "Paste list...", pasteHint: "One per line: length, qty, label (tab or comma separated)",
         tube: "Tube / profile", shape: "Shape", shapes: { round: "Round tube / pipe", square: "Square tube", rect: "Rectangular tube", angle: "Angle", channel: "Channel", flat: "Flat bar" }, a: { round: "Outside diameter", other: "Width" }, b: "Height", wall: "Wall", material: "Material",
         machine: "Tube laser", feed: "Feed (per min)", pierce: "Pierce (s)", index: "Index / rotate per cut (s)", load: "Bar load (s)", unload: "Part unload (s)", ppc: "Pierces per cut", fromFile: "from machine file", none: "None - enter values",
@@ -433,45 +442,151 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       }
       const BAR_COLORS = ["#4f7cff", "#3f8f5c", "#e0912f", "#a35bd6", "#d6536d", "#2aa3b5", "#8a8f3a", "#c26a3a"];
       /** One bar pattern from the side: stock, trim, each piece (a mitred one as a trapezoid), the drop. */
-      function barSvg(d, labels) {
+      function barSvg(d, labels, pat, kind) {
         if (!d || !(d.stock > 0)) return "";
-        const W = 1000, H = d.depth > 0 ? Math.max(40, Math.min(120, d.depth * W / d.stock * 4)) : 40;
-        const sx = W / d.stock, sy = d.depth > 0 ? H / d.depth : 0;
+        // Scaled to the bar - or past it when the pieces overrun it (the overrun shows red).
+        const span = Math.max(d.stock, d.used + d.tail);
+        const W = 1000, H = d.depth > 0 ? Math.max(40, Math.min(120, d.depth * W / span * 4)) : 40;
+        const sx = W / span;
         const X = (v) => (v * sx).toFixed(1);
         const yb = H + 2, yt = 2;
-        let g = "<rect x='0' y='2' width='" + W + "' height='" + H + "' fill='rgba(127,127,127,.12)' stroke='#888' stroke-width='1.5'/>";
+        let g = "<rect x='0' y='2' width='" + X(d.stock) + "' height='" + H + "' fill='rgba(127,127,127,.12)' stroke='#888' stroke-width='1.5'/>";
+        if (span > d.stock + 1e-6) g += "<rect x='" + X(d.stock) + "' y='2' width='" + X(span - d.stock) + "' height='" + H + "' fill='rgba(240,97,109,.35)' stroke='#f0616d' stroke-width='1.5'/>";
         if (d.trim > 0) g += "<rect x='0' y='2' width='" + X(d.trim) + "' height='" + H + "' fill='rgba(127,127,127,.45)'/>";
         if (d.tail > 0) g += "<rect x='" + X(d.stock - d.tail) + "' y='2' width='" + X(d.tail) + "' height='" + H + "' fill='rgba(127,127,127,.45)'/>";
-        d.pieces.forEach((p) => {
+        d.pieces.forEach((p, pi) => {
           const ci = Math.max(0, labels.indexOf(p.label)) % BAR_COLORS.length;
           const l1 = d.depth > 0 ? p.l1 : p.l0, r1 = d.depth > 0 ? p.r1 : p.r0;
-          g += "<polygon points='" + X(p.l0) + "," + yb + " " + X(p.r0) + "," + yb + " " + X(r1) + "," + yt + " " + X(l1) + "," + yt + "' fill='" + BAR_COLORS[ci] + "' fill-opacity='.8' stroke='#fff' stroke-width='1'><title>" + esc(p.label + (p.turned ? " - turned " + p.turned : "")) + "</title></polygon>";
+          const isSel = sel && sel.k === kind && sel.pat === pat && sel.pi === pi;
+          g += "<polygon data-ck='" + kind + "' data-pat='" + pat + "' data-pi='" + pi + "'" + (isSel ? " class='sel'" : "") + " points='" + X(p.l0) + "," + yb + " " + X(p.r0) + "," + yb + " " + X(r1) + "," + yt + " " + X(l1) + "," + yt + "' fill='" + BAR_COLORS[ci] + "' fill-opacity='.8' stroke='#fff' stroke-width='1'><title>" + esc(p.label + (p.turned ? " - turned " + p.turned : "")) + "</title></polygon>";
           const w = (Math.min(p.r0, r1) - Math.max(p.l0, l1)) * sx;
           const t = p.label + (p.turned ? "*" : "");
-          if (w > t.length * 13 + 4) g += "<text x='" + (((p.l0 + p.r0 + l1 + r1) / 4) * sx).toFixed(1) + "' y='" + (2 + H / 2 + 8) + "' text-anchor='middle' font-size='24' font-weight='600' fill='#fff'>" + esc(t) + "</text>";
+          if (w > t.length * 13 + 4) g += "<text x='" + (((p.l0 + p.r0 + l1 + r1) / 4) * sx).toFixed(1) + "' y='" + (2 + H / 2 + 8) + "' text-anchor='middle' font-size='24' font-weight='600' fill='#fff' pointer-events='none'>" + esc(t) + "</text>";
         });
-        return "<svg class='barsvg' viewBox='0 0 " + W + " " + (H + 4) + "' preserveAspectRatio='none'>" + g + "</svg>";
+        return "<svg class='barsvg" + (span > d.stock + 1e-6 ? " over" : "") + "' data-barsvg='" + pat + "' data-ck='" + kind + "' data-span='" + span + "' viewBox='0 0 " + W + " " + (H + 4) + "' preserveAspectRatio='none'>" + g + "</svg>";
       }
       let calcJobName = "";
+      let sel = null; // NT-06: the piece clicked on a bar: { k, pat, pi }
+      /** Tools for the selected piece: turn it, or put it back in the tray. */
+      function selTools(res, kind) {
+        if (!sel || sel.k !== kind || !res.bars[sel.pat] || !res.bars[sel.pat].draw.pieces[sel.pi]) return "";
+        const p = res.bars[sel.pat].draw.pieces[sel.pi];
+        return "<div class='seltools'><span class='muted'>" + TT.selected + ": <b>" + esc(p.label) + "</b>" + (p.turned ? " (" + esc(p.turned) + ")" : "") + "</span><button class='ghost sm' data-act='piece-flip' data-ck='" + kind + "'>" + TT.endForEnd + "</button><button class='ghost sm' data-act='piece-upside' data-ck='" + kind + "'>" + TT.upsideDown + "</button><button class='ghost sm' data-act='piece-tray' data-ck='" + kind + "'>" + TT.toTray + "</button></div>";
+      }
+      const resOf = (k) => (k === "tube" ? tubeRes : barRes);
+      /** The hand layout of a calculator, started from the last result's patterns the first time it is edited. */
+      function manualOf(k) {
+        const D = draftOf(k), res = resOf(k);
+        if (!D.manual && res && res.patterns) D.manual = clone(res.patterns);
+        return D.manual;
+      }
+      function recalc(k) { post({ type: k === "tube" ? "tube-calc" : "bar-calc", input: draftOf(k) }); }
+      /** Where on a bar's drawing a drop at clientX lands: the index to insert at, skipping skip (the piece being moved on the same bar). */
+      function dropIndex(svg, clientX, k, pat, skip) {
+        const res = resOf(k), d = res && res.bars[pat] && res.bars[pat].draw;
+        if (!d) return 0;
+        const r = svg.getBoundingClientRect();
+        const x = ((clientX - r.left) / Math.max(1, r.width)) * Number(svg.dataset.span || d.stock);
+        let idx = 0;
+        d.pieces.forEach((p, i) => { if (i !== skip && (p.l0 + p.r0) / 2 < x) idx++; });
+        return idx;
+      }
+      // Pointer drag (HTML5 drag-and-drop is unreliable in the sandboxed panel): pieces between bars and the tray.
+      let drag = null;
+      document.addEventListener("pointerdown", (e) => {
+        const pg = e.target.closest && e.target.closest("[data-pi]");
+        const chip = e.target.closest && e.target.closest("[data-tray-label]");
+        if (!pg && !chip) return;
+        e.preventDefault();
+        const k = (pg || chip).dataset.ck;
+        drag = pg ? { k, pat: Number(pg.dataset.pat), pi: Number(pg.dataset.pi), x0: e.clientX, y0: e.clientY, moved: false, ghost: null, text: (pg.querySelector("title") || {}).textContent || "" }
+                  : { k, tray: { label: chip.dataset.trayLabel, length: Number(chip.dataset.trayLen) }, x0: e.clientX, y0: e.clientY, moved: false, ghost: null, text: chip.textContent.replace(/ ×\d+$/, "") };
+      });
+      const clearTargets = () => document.querySelectorAll(".droptarget").forEach((el) => el.classList.remove("droptarget"));
+      const dropTargetAt = (x, y) => {
+        const el = document.elementFromPoint(x, y);
+        return el ? el.closest("[data-barsvg]") || el.closest("[data-tray]") : null;
+      };
+      document.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 4) return;
+        drag.moved = true;
+        if (!drag.ghost) { drag.ghost = document.createElement("div"); drag.ghost.className = "ghost-drag"; drag.ghost.textContent = drag.text; document.body.appendChild(drag.ghost); }
+        // Near the panel's top or bottom edge, scroll so a far bar can be reached.
+        const edge = 36;
+        if (e.clientY < edge) window.scrollBy(0, -12);
+        else if (e.clientY > window.innerHeight - edge) window.scrollBy(0, 12);
+        drag.ghost.style.left = e.clientX + 10 + "px";
+        drag.ghost.style.top = e.clientY + 8 + "px";
+        clearTargets();
+        const t = dropTargetAt(e.clientX, e.clientY);
+        if (t && t.dataset.ck === drag.k) t.classList.add("droptarget");
+      });
+      document.addEventListener("pointerup", (e) => {
+        if (!drag) return;
+        const d = drag;
+        drag = null;
+        if (d.ghost) d.ghost.remove();
+        clearTargets();
+        if (!d.moved) {
+          if (d.tray) return;
+          sel = sel && sel.k === d.k && sel.pat === d.pat && sel.pi === d.pi ? null : { k: d.k, pat: d.pat, pi: d.pi };
+          render();
+          return;
+        }
+        const t = dropTargetAt(e.clientX, e.clientY);
+        if (!t || t.dataset.ck !== d.k) return;
+        const M = manualOf(d.k);
+        if (!M) return;
+        let piece;
+        if (d.tray) piece = { label: d.tray.label, length: d.tray.length, flipped: false, upsideDown: false };
+        else {
+          const src = M.patterns[d.pat];
+          if (!src || !src.pieces[d.pi]) return;
+          piece = src.pieces[d.pi];
+        }
+        if (t.dataset.tray !== undefined) {
+          if (d.tray) return;
+          M.patterns[d.pat].pieces.splice(d.pi, 1);
+        } else {
+          const to = Number(t.dataset.barsvg);
+          if (!M.patterns[to]) return;
+          const idx = dropIndex(t, e.clientX, d.k, to, !d.tray && to === d.pat ? d.pi : -1);
+          if (!d.tray) M.patterns[d.pat].pieces.splice(d.pi, 1);
+          M.patterns[to].pieces.splice(Math.min(idx, M.patterns[to].pieces.length), 0, piece);
+        }
+        sel = null;
+        recalc(d.k);
+      });
       function calcResult(res, kind) {
         if (!res) return "";
         let h = "<div class='card'><h4>" + T.results + "</h4>";
         if (res.error) return h + "<div class='msg err'>" + esc(res.error) + "</div></div>";
         h += "<div class='kpis'>" + res.summary.map((x) => "<div class='kpi'><b>" + esc(x[1]) + "</b><span>" + esc(x[0]) + "</span></div>").join("") + "</div>";
         (res.warnings || []).forEach((w) => (h += "<div class='msg warn'>" + esc(w) + "</div>"));
-        if (res.unplaced.length) h += "<div class='msg err'>" + TT.notPlaced + ": " + res.unplaced.map(esc).join(", ") + "</div>";
+        if (res.unplaced.length && !res.manual) h += "<div class='msg err'>" + TT.notPlaced + ": " + res.unplaced.map(esc).join(", ") + "</div>";
         const hasCost = res.buy.some((b) => b.cost);
         h += "<h4 style='margin-top:6px'>" + TT.buy + "</h4><table><tr><th>Length</th><th>Bars</th>" + (hasCost ? "<th>Cost</th>" : "") + "</tr>" + res.buy.map((b) => "<tr><td>" + esc(b.length) + "</td><td><b>" + b.count + "</b></td>" + (hasCost ? "<td>" + esc(b.cost) + "</td>" : "") + "</tr>").join("") + "</table>";
         const labels = res.labels || [];
-        h += "<h4 style='margin-top:8px'>" + TT.cutList + "</h4>" + res.bars.map((b, i) => "<div class='barline'><b>" + (i + 1) + ". " + esc(b.stock) + "</b>" + (b.count > 1 ? "<span class='qtyb' title='Cut " + b.count + " bars this way'>CUT &times;" + b.count + "</span>" : "") + (b.time ? " <span class='muted'>&middot; " + esc(b.time) + " each</span>" : "") + barSvg(b.draw, labels) + "<div>" + esc(b.cuts) + "</div><div class='pdim'>" + TT.remnant + " " + esc(b.remnant) + "</div></div>").join("");
+        h += "<h4 style='margin-top:8px'>" + TT.cutList + (res.manual ? " <span class='qtyb' style='background:#e0912f'>" + TT.manualOn + "</span>" : "") + "</h4><div class='muted' style='font-size:10px'>" + TT.manualHint + "</div>";
+        h += "<div class='tray' data-tray='" + kind + "' data-ck='" + kind + "'><b style='font-size:11px'>" + TT.toCut + "</b> " + ((res.toCut || []).length ? res.toCut.map((t) => "<span class='chip' data-ck='" + kind + "' data-tray-label='" + esc(t.label) + "' data-tray-len='" + t.length + "' style='background:" + BAR_COLORS[Math.max(0, labels.indexOf(t.label)) % BAR_COLORS.length] + "' title='Drag onto a bar'>" + esc(t.text) + " &times;" + t.count + "</span>").join("") : "<span class='muted' style='font-size:10px'>" + TT.toCutEmpty + "</span>") + "</div>";
+        h += selTools(res, kind);
+        h += res.bars.map((b, i) => "<div class='barline" + (b.over ? " over" : "") + "'><div class='row tight'><b style='flex:1'>" + (i + 1) + ". " + esc(b.stock) + (b.over ? " - " + TT.over + " " + esc(b.over) : "") + "</b>" + (b.count > 1 ? "<span class='qtyb' title='Cut " + b.count + " bars this way'>CUT &times;" + b.count + "</span><button class='icon' data-act='bar-split' data-ck='" + kind + "' data-pat='" + i + "' title='" + TT.split + " - edit one of these bars on its own'>&#9986;</button>" : "") + "<button class='icon' data-act='bar-remove' data-ck='" + kind + "' data-pat='" + i + "' title='" + TT.removeBar + " (its pieces go to the tray)'>&#10005;</button></div>" + (b.time ? "<span class='muted'>" + esc(b.time) + " each</span>" : "") + barSvg(b.draw, labels, i, kind) + "<div>" + esc(b.cuts) + "</div><div class='pdim'>" + TT.remnant + " " + esc(b.remnant) + "</div></div>").join("");
+        h += "<div class='row tight' style='margin-top:4px'><select data-id='addbar-" + kind + "' style='width:auto;margin:0'>" + (res.stockMm || []).map((st) => "<option value='" + st.length + "'>" + esc(st.text) + "</option>").join("") + "</select><button class='ghost sm' data-act='bar-add' data-ck='" + kind + "'>" + TT.addBar + "</button></div>";
+        if ((res.extra || []).length) h += "<div class='msg warn'>" + TT.extra + ": " + res.extra.map(esc).join(", ") + "</div>";
         if (res.bars.some((b) => b.draw && b.draw.pieces.some((p) => p.turned))) h += "<div class='pdim'>" + TT.turned + "</div>";
         h += "<div class='row' style='margin-top:8px'><input data-id='calcjob' data-calcjob='1' placeholder='Job name (report title)' value='" + esc(calcJobName) + "' style='flex:1'><button class='ghost sm' data-act='calc-draw' data-ck='" + kind + "' title='" + esc(TT.drawHint) + "'>" + TT.draw + "</button><button class='ghost sm' data-act='calc-print' data-ck='" + kind + "'>" + TT.print + "</button></div>";
         return h + "</div>";
       }
+      /** Calculate; once pieces were arranged by hand, Update (keeps the layout, picks up edited settings) and Re-plan (discards it). */
+      function calcButtons(k) {
+        if (!draftOf(k).manual) return "<div class='row' style='margin-top:8px'><button class='go' data-act='calc' data-ck='" + k + "' style='flex:1'>" + TT.calc + "</button></div>";
+        return "<div class='row' style='margin-top:8px'><button class='go' data-act='calc-update' data-ck='" + k + "' style='flex:1' title='Recalculate with your layout (e.g. after changing kerf or the feed)'>" + TT.update + "</button><button class='warn' data-act='calc' data-ck='" + k + "' title='Throw away the hand layout and plan the bars again'>" + TT.replan + "</button></div>";
+      }
       function barsView() {
         return "<div class='card'><h4>" + T.tabs.bars + "</h4><div class='muted' style='font-size:10px;margin-bottom:6px'>Saw or any straight cut: how many bars to buy for a list of lengths, and what to cut from each.</div>" + calcCommon("bar") +
           "<div class='grid2' style='margin-top:6px'><label class='fld'><span class='t'>" + TT.sawCut + "</span>" + inp("data-ck='bar' data-cf='cutSec' data-id='bar-cutsec' placeholder='-'", BI.cutSec || "") + "</label><label class='fld'><span class='t'>" + TT.sawLoad + "</span>" + inp("data-ck='bar' data-cf='loadSec' data-id='bar-loadsec' placeholder='0'", BI.loadSec || "") + "</label></div>" +
-          "<div class='row' style='margin-top:8px'><button class='go' data-act='calc' data-ck='bar' style='flex:1'>" + TT.calc + "</button></div></div>" + calcResult(barRes, "bar");
+          calcButtons("bar") + "</div>" + calcResult(barRes, "bar");
       }
       function tubesView() {
         const D = TI, tubeProfiles = (V.profiles || []).filter((p) => p.type === "tube" || p.type === "laser");
@@ -492,7 +607,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         h += "<label class='fld'><span class='t'>" + TT.load + "</span>" + inp("data-ck='tube' data-cf='load' data-id='t-load'", D.load, ph) + "</label>";
         h += "<label class='fld'><span class='t'>" + TT.unload + "</span>" + inp("data-ck='tube' data-cf='unload' data-id='t-unload'", D.unload) + "</label>";
         h += "<label class='fld'><span class='t'>" + TT.ppc + "</span>" + inp("data-ck='tube' data-cf='piercesPerCut' data-id='t-ppc'", D.piercesPerCut) + "</label></div></div>";
-        h += "<div class='card'>" + calcCommon("tube") + "<div class='row' style='margin-top:8px'><button class='go' data-act='calc' data-ck='tube' style='flex:1'>" + TT.calc + "</button></div></div>";
+        h += "<div class='card'>" + calcCommon("tube") + calcButtons("tube") + "</div>";
         return h + calcResult(tubeRes, "tube");
       }
 
@@ -629,7 +744,25 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (!b) return;
         const a = b.dataset.act;
         if (a === "tab") { if (mSaveTimer) saveMachine(false); tab = b.dataset.v; render(); window.scrollTo(0, 0); return; }
-        if (a === "calc") { const k = b.dataset.ck; post({ type: k === "tube" ? "tube-calc" : "bar-calc", input: draftOf(k) }); return; }
+        if (a === "calc") { const k = b.dataset.ck; delete draftOf(k).manual; sel = null; post({ type: k === "tube" ? "tube-calc" : "bar-calc", input: draftOf(k) }); return; }
+        if (a === "calc-update") { recalc(b.dataset.ck); return; }
+        if (a === "bar-split" || a === "bar-remove" || a === "bar-add" || a === "piece-flip" || a === "piece-upside" || a === "piece-tray") {
+          const k = b.dataset.ck, M = manualOf(k);
+          if (!M) return;
+          const pat = Number(b.dataset.pat);
+          if (a === "bar-split") { const p = M.patterns[pat]; if (p && p.count > 1) { p.count -= 1; M.patterns.splice(pat + 1, 0, { count: 1, stock: p.stock, pieces: clone(p.pieces) }); } }
+          else if (a === "bar-remove") { M.patterns.splice(pat, 1); }
+          else if (a === "bar-add") { const v = Number((document.querySelector("[data-id='addbar-" + k + "']") || {}).value); if (v > 0) M.patterns.push({ count: 1, stock: v, pieces: [] }); }
+          else if (sel && sel.k === k && M.patterns[sel.pat] && M.patterns[sel.pat].pieces[sel.pi]) {
+            const p = M.patterns[sel.pat].pieces[sel.pi];
+            if (a === "piece-flip") p.flipped = !p.flipped;
+            else if (a === "piece-upside") p.upsideDown = !p.upsideDown;
+            else { M.patterns[sel.pat].pieces.splice(sel.pi, 1); sel = null; }
+          }
+          if (a === "bar-split" || a === "bar-remove") sel = null;
+          recalc(k);
+          return;
+        }
         if (a === "calc-draw" || a === "calc-print") { const k = b.dataset.ck; post({ type: a, kind: k, input: draftOf(k), jobName: calcJobName }); return; }
         if (a === "c-add") {
           const D = draftOf(b.dataset.ck);

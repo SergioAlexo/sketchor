@@ -6,7 +6,7 @@
  * Pure, never throw: a bad row is reported, not fatal.
  */
 import { tubeCutLength, tubeSectionArea, type BarCutItem, type BarStock, type TubeProfile, type TubeShape } from "./barCutting";
-import { groupMiterBars, miterCutLength, miterDepth, planMiterBars, type MiterBar, type MiterPlan } from "./miterNest";
+import { groupMiterBars, layPieces, miterCutLength, miterDepth, planMiterBars, type MiterBar, type MiterPlan } from "./miterNest";
 import type { MaterialId } from "./catalog";
 import { profileMotionMm, profileRowFor, type MachineProfile } from "./machineProfile";
 import { fmtDuration, fmtMm } from "./sheetNesting";
@@ -25,6 +25,19 @@ export interface BarCalcInput {
   /** Saw: seconds per cut and per bar loaded, for the time estimate (bars). */
   cutSec?: string;
   loadSec?: string;
+  /** NT-06: the bars as arranged by hand; absent = plan them automatically. */
+  manual?: ManualBars;
+}
+
+/** One bar pattern arranged by hand: cut `count` bars of `stock` mm, the pieces in this order and orientation. */
+export interface ManualBarPattern {
+  count: number;
+  stock: number;
+  pieces: { label: string; length: number; flipped: boolean; upsideDown: boolean }[];
+}
+
+export interface ManualBars {
+  patterns: ManualBarPattern[];
 }
 
 export interface TubeCalcInput extends BarCalcInput {
@@ -54,7 +67,7 @@ export interface BarDrawing {
   trim: number;
   tail: number;
   used: number;
-  pieces: { label: string; length: number; l0: number; l1: number; r0: number; r1: number; turned: string }[];
+  pieces: { label: string; length: number; l0: number; l1: number; r0: number; r1: number; turned: string; flipped?: boolean; upsideDown?: boolean }[];
 }
 
 export interface CalcResult {
@@ -62,8 +75,17 @@ export interface CalcResult {
   warnings: string[];
   summary: [string, string][];
   buy: { length: string; count: number; cost: string }[];
-  bars: { count: number; stock: string; cuts: string; remnant: string; time?: string; draw?: BarDrawing }[];
+  bars: { count: number; stock: string; cuts: string; remnant: string; time?: string; draw?: BarDrawing; over?: string }[];
   unplaced: string[];
+  /** The bar patterns of this result (mm) - what the panel starts from when the user rearranges pieces. */
+  patterns?: ManualBars;
+  /** Pieces ordered but on no bar (the tray), and pieces on bars beyond what was ordered. */
+  toCut?: { label: string; length: number; text: string; count: number }[];
+  extra?: string[];
+  /** The layout was arranged by hand. */
+  manual?: boolean;
+  /** Stock lengths (mm) with their display text, for adding a bar by hand. */
+  stockMm?: { length: number; text: string }[];
   /** Every label in first-seen order, so the preview gives each its own colour. */
   labels?: string[];
   /** Report header lines (label, value), already formatted. */
@@ -177,12 +199,91 @@ const money = (v: number | null) => (v === null ? "" : (Math.round(v * 100) / 10
 
 const turnText = (flipped: boolean, upsideDown: boolean) => [flipped ? "end for end" : "", upsideDown ? "upside down" : ""].filter(Boolean).join(", ");
 
-function planResult(p: Parsed, unit: CalcUnit, miter?: { depth: number; turn: boolean }): { res: CalcResult; plan: MiterPlan; groups: { count: number; bar: MiterBar }[] } {
+const sameLen = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+
+/**
+ * NT-06: the bars exactly as the user arranged them - each pattern's pieces
+ * laid in their order and orientation (`layPieces`), counted `count` times.
+ * Pieces whose cut row is gone are dropped (warned); what was ordered but is
+ * on no bar is left to cut (the tray); a bar the pieces overrun is flagged.
+ */
+function manualPlan(p: Parsed, manual: ManualBars, depth: number, warnings: string[]): { plan: MiterPlan; groups: { count: number; bar: MiterBar }[]; over: Map<MiterBar, number> } {
+  const groups: { count: number; bar: MiterBar }[] = [];
+  const over = new Map<MiterBar, number>();
+  let dropped = 0;
+  for (const pat of manual.patterns) {
+    const count = Math.max(1, Math.floor(pat.count));
+    const list = pat.pieces.flatMap((pc) => {
+      const it = p.items.find((x) => x.label === pc.label && sameLen(x.length, pc.length));
+      if (!it) {
+        dropped++;
+        return [];
+      }
+      return [{ label: it.label, length: it.length, a1: it.a1 ?? 0, a2: it.a2 ?? 0, flipped: !!pc.flipped, upsideDown: !!pc.upsideDown }];
+    });
+    const laid = layPieces(list, { kerf: p.kerf, trimStart: p.trim, depth });
+    let stockIndex = p.stock.findIndex((st) => sameLen(st.length, pat.stock));
+    if (stockIndex < 0) {
+      warnings.push(`A bar of ${Math.round(pat.stock)} mm is no longer in the stock list - its cost is not counted.`);
+      stockIndex = -1;
+    }
+    const bar: MiterBar = {
+      stockLength: pat.stock,
+      stockIndex,
+      cuts: laid.pieces.map((x) => ({ label: x.label, length: x.length })),
+      used: laid.used,
+      remnant: Math.max(0, pat.stock - laid.used),
+      pieces: laid.pieces,
+      cutAngles: laid.cutAngles,
+    };
+    const overBy = laid.used + p.tail - pat.stock;
+    if (overBy > 1e-6) over.set(bar, overBy);
+    groups.push({ count, bar });
+  }
+  if (dropped > 0) warnings.push(`${dropped} piece(s) on the bars no longer match a row in the cut list (label or length changed) and were taken off.`);
+  const bars = groups.flatMap((g) => Array.from({ length: g.count }, () => g.bar));
+  const placed = new Map<string, number>();
+  for (const b of bars) for (const c of b.cuts) placed.set(`${c.label}|${c.length}`, (placed.get(`${c.label}|${c.length}`) ?? 0) + 1);
+  const unplaced = p.items.map((it) => ({ label: it.label, length: it.length, count: Math.max(0, it.qty - (placed.get(`${it.label}|${it.length}`) ?? 0)) })).filter((u) => u.count > 0);
+  const byStockMap = new Map<number, { length: number; stockIndex: number; count: number; cost: number | null }>();
+  for (const b of bars) {
+    const st = b.stockIndex >= 0 ? p.stock[b.stockIndex] : undefined;
+    const key = b.stockIndex >= 0 ? b.stockIndex : -1 - Math.round(b.stockLength);
+    const e = byStockMap.get(key) ?? { length: b.stockLength, stockIndex: b.stockIndex, count: 0, cost: st?.cost !== undefined ? 0 : null };
+    e.count += 1;
+    if (e.cost !== null && st?.cost !== undefined) e.cost += st.cost;
+    byStockMap.set(key, e);
+  }
+  for (const e of byStockMap.values()) {
+    const st = e.stockIndex >= 0 ? p.stock[e.stockIndex] : undefined;
+    if (st && st.qty !== null && e.count > st.qty) warnings.push(`The bars use ${e.count} of the ${Math.round(e.length)} mm length but only ${st.qty} are on hand.`);
+  }
+  const totalStockLength = bars.reduce((n, b) => n + b.stockLength, 0);
+  const totalPieceLength = bars.reduce((n, b) => n + b.cuts.reduce((m, c) => m + c.length, 0), 0);
+  return {
+    plan: {
+      bars,
+      byStock: [...byStockMap.values()],
+      totalStockLength,
+      totalPieceLength,
+      utilisation: totalStockLength > 0 ? totalPieceLength / totalStockLength : 0,
+      unplaced,
+      pieces: bars.reduce((n, b) => n + b.cuts.length, 0),
+      mitred: depth > 0 && p.items.some((it) => !!it.a1 || !!it.a2),
+    },
+    groups,
+    over,
+  };
+}
+
+function planResult(p: Parsed, unit: CalcUnit, miter?: { depth: number; turn: boolean }, manual?: ManualBars): { res: CalcResult; plan: MiterPlan; groups: { count: number; bar: MiterBar }[] } {
   const f = (mm: number) => fmtMm(mm, DISPLAY[unit]);
-  const plan = planMiterBars(p.items, p.stock, { kerf: p.kerf, trimStart: p.trim, tail: p.tail, depth: miter?.depth ?? 0, allowTurn: miter?.turn ?? true });
+  const extraWarn: string[] = [];
+  const m = manual && manual.patterns.length > 0 ? manualPlan(p, manual, miter?.depth ?? 0, extraWarn) : null;
+  const plan = m ? m.plan : planMiterBars(p.items, p.stock, { kerf: p.kerf, trimStart: p.trim, tail: p.tail, depth: miter?.depth ?? 0, allowTurn: miter?.turn ?? true });
   const totalCost = plan.byStock.every((b) => b.cost !== null) && plan.byStock.length > 0 ? plan.byStock.reduce((n, b) => n + (b.cost ?? 0), 0) : null;
   const need = p.items.reduce((n, it) => n + it.qty, 0);
-  const groups = groupMiterBars(plan.bars);
+  const groups = m ? m.groups : groupMiterBars(plan.bars);
   const angleOf = (label: string) => p.items.find((it) => it.label === label);
   const res: CalcResult = {
     warnings: [...p.warnings],
@@ -209,22 +310,36 @@ function planResult(p: Parsed, unit: CalcUnit, miter?: { depth: number; turn: bo
         runs.push(`${j - i > 1 ? `${j - i} × ` : ""}${f(ps[i]!.length)} (${ps[i]!.label}${ang}${turned ? `, ${turned}` : ""})`);
         i = j;
       }
+      const overBy = m?.over.get(bar);
       return {
         count,
         stock: f(bar.stockLength),
         cuts: runs.join(", "),
-        remnant: f(bar.remnant),
+        remnant: overBy ? "none" : f(bar.remnant),
+        ...(overBy ? { over: f(overBy) } : {}),
         draw: {
           stock: bar.stockLength,
           depth: miter?.depth ?? 0,
           trim: p.trim,
           tail: p.tail,
           used: bar.used,
-          pieces: bar.pieces.map((pc) => ({ label: pc.label, length: pc.length, l0: pc.shape.l0, l1: pc.shape.l1, r0: pc.shape.r0, r1: pc.shape.r1, turned: turnText(pc.flipped, pc.upsideDown) })),
+          pieces: bar.pieces.map((pc) => ({ label: pc.label, length: pc.length, l0: pc.shape.l0, l1: pc.shape.l1, r0: pc.shape.r0, r1: pc.shape.r1, turned: turnText(pc.flipped, pc.upsideDown), flipped: pc.flipped, upsideDown: pc.upsideDown })),
         },
       };
     }),
     unplaced: plan.unplaced.map((u) => `${u.label} ${f(u.length)} × ${u.count}`),
+    patterns: { patterns: groups.map(({ count, bar }) => ({ count, stock: bar.stockLength, pieces: bar.pieces.map((pc) => ({ label: pc.label, length: pc.length, flipped: pc.flipped, upsideDown: pc.upsideDown })) })) },
+    toCut: plan.unplaced.map((u) => ({ label: u.label, length: u.length, text: `${u.label} ${f(u.length)}`, count: u.count })),
+    extra: (() => {
+      const placed = new Map<string, number>();
+      for (const b of plan.bars) for (const c of b.cuts) placed.set(`${c.label}|${c.length}`, (placed.get(`${c.label}|${c.length}`) ?? 0) + 1);
+      return p.items.flatMap((it) => {
+        const n = (placed.get(`${it.label}|${it.length}`) ?? 0) - it.qty;
+        return n > 0 ? [`${it.label} ${f(it.length)} +${n}`] : [];
+      });
+    })(),
+    manual: !!m,
+    stockMm: p.stock.map((st) => ({ length: st.length, text: f(st.length) })),
     labels: [...new Set(p.items.map((it) => it.label))],
     mitred: plan.mitred,
     details: [
@@ -234,14 +349,19 @@ function planResult(p: Parsed, unit: CalcUnit, miter?: { depth: number; turn: bo
       ["Stock", p.stock.map((s) => `${f(s.length)}${s.qty !== null ? ` (${s.qty} on hand)` : ""}`).join(", ")],
     ],
   };
-  if (plan.unplaced.length > 0) res.warnings.push("Some pieces did not fit: longer than every bar (after trim and tail), or the stock you have ran out.");
+  res.warnings.push(...extraWarn);
+  if (m) {
+    const overN = [...m.over.values()].length;
+    if (overN > 0) res.warnings.push(`${overN} bar pattern(s) are too long for their bar - flagged red. Move a piece off, or put it on a longer bar.`);
+    if (plan.unplaced.length > 0) res.warnings.push("Some pieces are not on any bar yet - drag them from the To cut tray onto a bar.");
+  } else if (plan.unplaced.length > 0) res.warnings.push("Some pieces did not fit: longer than every bar (after trim and tail), or the stock you have ran out.");
   return { res, plan, groups };
 }
 
 export function runBarCalc(inp: BarCalcInput): CalcResult {
   const p = parseCommon(inp);
   if ("error" in p) return { error: p.error, warnings: [], summary: [], buy: [], bars: [], unplaced: [] };
-  const { res, plan, groups } = planResult(p, inp.unit);
+  const { res, plan, groups } = planResult(p, inp.unit, undefined, inp.manual);
   // Saw time: seconds per cut and per bar loaded (blank = no estimate).
   const cutSec = numOr(inp.cutSec, NaN), loadSec = numOr(inp.loadSec, 0);
   if (Number.isFinite(cutSec)) {
@@ -263,7 +383,7 @@ export function runTubeCalc(inp: TubeCalcInput, profiles: MachineProfile[]): Cal
   if (!(a > 0) || !(wall > 0)) return { error: "Enter the tube size and wall thickness.", warnings: [], summary: [], buy: [], bars: [], unplaced: [] };
   const profile: TubeProfile = { shape: inp.shape, a, b, wall };
   const across = inp.across === "a" ? "a" : "b";
-  const { res, plan, groups } = planResult(p, u, { depth: miterDepth(profile, across), turn: inp.turn !== false });
+  const { res, plan, groups } = planResult(p, u, { depth: miterDepth(profile, across), turn: inp.turn !== false }, inp.manual);
   const prof = profiles.find((x) => x.id === inp.profileId) ?? null;
   const row = prof ? profileRowFor(prof, inp.material, wall) : null;
   const motion = prof ? profileMotionMm(prof) : null;
@@ -337,6 +457,26 @@ export function miterTubeTime(
   return { totalSec: cutSec + pierceSec + handling, cutSec, pierceSec, handlingSec: handling, cuts, cutLength };
 }
 
+/** A hand-arranged layout from the panel or storage: untrusted, so every number is checked and the size capped. */
+export function parseManualBars(v: unknown): ManualBars | undefined {
+  if (!v || typeof v !== "object" || !Array.isArray((v as { patterns?: unknown }).patterns)) return undefined;
+  const patterns: ManualBarPattern[] = [];
+  for (const raw of (v as { patterns: unknown[] }).patterns.slice(0, 500)) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    const stock = Number(r.stock), count = Math.floor(Number(r.count));
+    if (!(stock > 0) || !Number.isFinite(stock) || !(count >= 1)) continue;
+    const pieces = (Array.isArray(r.pieces) ? r.pieces.slice(0, 1000) : []).flatMap((q) => {
+      if (!q || typeof q !== "object") return [];
+      const x = q as Record<string, unknown>;
+      const length = Number(x.length);
+      return typeof x.label === "string" && length > 0 && Number.isFinite(length) ? [{ label: x.label.slice(0, 40), length, flipped: x.flipped === true, upsideDown: x.upsideDown === true }] : [];
+    });
+    patterns.push({ count: Math.min(count, 100000), stock, pieces });
+  }
+  return { patterns };
+}
+
 export function parseBarInput(v: unknown, d: BarCalcInput = defaultBarInput()): BarCalcInput {
   const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
   const s = (x: unknown, fb: string) => (typeof x === "string" ? x.slice(0, 40) : fb);
@@ -352,6 +492,7 @@ export function parseBarInput(v: unknown, d: BarCalcInput = defaultBarInput()): 
     cuts,
     cutSec: s(o.cutSec, d.cutSec ?? ""),
     loadSec: s(o.loadSec, d.loadSec ?? ""),
+    ...(parseManualBars(o.manual) ? { manual: parseManualBars(o.manual)! } : {}),
   };
 }
 
