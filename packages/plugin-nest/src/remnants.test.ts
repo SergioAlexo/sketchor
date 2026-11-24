@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyRemnantsToStock, findRemnants, largestEmptyRect } from "./remnants";
+import { applyRemnantsToStock, findRemnants, largestEmptyRect, matchingRemnants, parseRemnantLibrary, remnantStockRows, sameThickness, updateRemnantLibrary, type LibraryRemnant } from "./remnants";
 
 /**
  * Remnants (N-52): an offcut offered to the next job must be genuinely clear
@@ -76,5 +76,41 @@ describe("applyRemnantsToStock", () => {
     expect(twice[0]!.qty).toBe(2);
     expect(once[0]!.qty).toBe(1);
     expect(stock[0]!.qty).toBe(2);
+  });
+});
+
+describe("offcut library (N-52)", () => {
+  const lib: LibraryRemnant[] = [
+    { id: "r1", width: 600, height: 400, materialId: "cs", thickness: 3, qty: 2, from: "Job A", date: "2026-11-20" },
+    { id: "r2", width: 1000, height: 500, materialId: "cs", thickness: 3.05, qty: 1 },
+    { id: "r3", width: 800, height: 800, materialId: "ss", thickness: 3, qty: 1 },
+    { id: "r4", width: 900, height: 900, materialId: "cs", thickness: 6, qty: 1 },
+  ];
+
+  it("matches material and thickness (gauge round-off allowed), largest first", () => {
+    expect(matchingRemnants(lib, "cs", 3.0).map((r) => r.id)).toEqual(["r2", "r1"]);
+    expect(sameThickness(3.175, 3.2)).toBe(true);
+    expect(sameThickness(3, 4)).toBe(false);
+  });
+
+  it("turns offcuts into free stock rows that keep their count", () => {
+    const rows = remnantStockRows(matchingRemnants(lib, "cs", 3));
+    expect(rows.map((r) => [r.size.width, r.size.height, r.qty, r.cost])).toEqual([[1000, 500, 1, 0], [600, 400, 2, 0]]);
+    expect(rows[1]!.size.name).toBe("Offcut 600 × 400 (Job A)");
+  });
+
+  it("takes out what a job used and adds its new offcuts, merging same-size ones", () => {
+    let n = 10;
+    const next = updateRemnantLibrary(lib, new Map([["r1", 1], ["r2", 1]]), [{ width: 600.3, height: 399.8, materialId: "cs", thickness: 3, }, { width: 250, height: 300, materialId: "cs", thickness: 3 }], { from: "Job B", date: "2026-11-24" }, () => `r${n++}`);
+    expect(next.find((r) => r.id === "r1")!.qty).toBe(2); // 2 - 1 used + 1 new of the same size
+    expect(next.some((r) => r.id === "r2")).toBe(false);
+    expect(next.find((r) => r.id === "r10")).toMatchObject({ width: 250, height: 300, qty: 1, from: "Job B", date: "2026-11-24" });
+    expect(lib.find((r) => r.id === "r1")!.qty).toBe(2); // pure
+  });
+
+  it("rejects malformed library entries and de-duplicates ids", () => {
+    const parsed = parseRemnantLibrary([lib[0], { ...lib[0] }, { id: "x", width: -1, height: 1, materialId: "cs", thickness: 1, qty: 1 }, { id: "y", width: 1, height: 1, materialId: "C S!", thickness: 1, qty: 1 }, null]);
+    expect(parsed.map((r) => r.id)).toEqual(["r1", "r1x"]);
+    expect(parseRemnantLibrary("nope")).toEqual([]);
   });
 });

@@ -185,3 +185,98 @@ export function applyRemnantsToStock(
   }
   return kept;
 }
+
+// ---------- the offcut library (N-52) ----------
+
+/**
+ * One offcut kept in the library: a clear rectangle of a known material and
+ * thickness left over from an earlier job (or entered by hand), `qty` alike.
+ * The library lives across jobs; a job of the same material and thickness can
+ * cut from it before opening a fresh sheet.
+ */
+export interface LibraryRemnant {
+  id: string;
+  width: number;
+  height: number;
+  /** The job's material id (al5052, cs...). */
+  materialId: string;
+  /** mm. */
+  thickness: number;
+  qty: number;
+  /** Where it came from: the job name, or "by hand". */
+  from?: string;
+  /** ISO date it was added. */
+  date?: string;
+}
+
+export const MAX_LIBRARY_REMNANTS = 500;
+
+/** The library from storage or a file: untrusted, so every field is checked; ids made unique. */
+export function parseRemnantLibrary(v: unknown): LibraryRemnant[] {
+  if (!Array.isArray(v)) return [];
+  const out: LibraryRemnant[] = [];
+  const seen = new Set<string>();
+  for (const raw of v.slice(0, MAX_LIBRARY_REMNANTS)) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    const width = Number(r.width), height = Number(r.height), thickness = Number(r.thickness), qty = Math.floor(Number(r.qty));
+    if (!(width > 0 && height > 0 && thickness > 0 && qty >= 1) || ![width, height, thickness].every(Number.isFinite)) continue;
+    if (typeof r.materialId !== "string" || !/^[a-z0-9-]{1,30}$/.test(r.materialId)) continue;
+    let id = typeof r.id === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(r.id) ? r.id : `r${out.length + 1}`;
+    while (seen.has(id)) id = `${id}x`;
+    seen.add(id);
+    out.push({
+      id,
+      width,
+      height,
+      materialId: r.materialId,
+      thickness,
+      qty: Math.min(qty, 9999),
+      ...(typeof r.from === "string" && r.from.trim() ? { from: r.from.slice(0, 80) } : {}),
+      ...(typeof r.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? { date: r.date } : {}),
+    });
+  }
+  return out;
+}
+
+/** Same thickness: within 0.05 mm or 2 %, whichever is larger (gauge tables round). */
+export const sameThickness = (a: number, b: number) => Math.abs(a - b) <= Math.max(0.05, 0.02 * Math.max(a, b));
+
+/** The offcuts a job of this material and thickness can cut from, largest first (they are opened in this order). */
+export function matchingRemnants(lib: readonly LibraryRemnant[], materialId: string, thicknessMm: number): LibraryRemnant[] {
+  return lib.filter((r) => r.materialId === materialId && sameThickness(r.thickness, thicknessMm)).sort((a, b) => b.width * b.height - a.width * a.height);
+}
+
+/** Stock rows for offcuts (no cost - the steel is paid for), named so the report says where a sheet came from. */
+export function remnantStockRows(list: readonly LibraryRemnant[], fmt: (mm: number) => string = (mm) => String(Math.round(mm))): StockRow[] {
+  return list.map((r) => ({
+    size: { name: `Offcut ${fmt(r.width)} × ${fmt(r.height)}${r.from ? ` (${r.from})` : ""}`, width: r.width, height: r.height },
+    materialId: r.materialId,
+    thickness: r.thickness,
+    qty: r.qty,
+    cost: 0,
+  }));
+}
+
+/**
+ * The library after a job is cut: the offcuts it used are taken out (`used`
+ * by id) and its new offcuts added, merged into an entry of the same size
+ * (to 1 mm), material and thickness. Pure; `newId` names new entries.
+ */
+export function updateRemnantLibrary(
+  lib: readonly LibraryRemnant[],
+  used: ReadonlyMap<string, number>,
+  added: readonly { width: number; height: number; materialId: string; thickness: number }[],
+  meta: { from?: string; date?: string },
+  newId: () => string,
+): LibraryRemnant[] {
+  const out = lib.map((r) => ({ ...r, qty: r.qty - (used.get(r.id) ?? 0) })).filter((r) => r.qty > 0);
+  const r1 = (n: number) => Math.round(n);
+  for (const a of added) {
+    if (!(a.width > 0 && a.height > 0 && a.thickness > 0)) continue;
+    const same = out.find((r) => r1(r.width) === r1(a.width) && r1(r.height) === r1(a.height) && r.materialId === a.materialId && sameThickness(r.thickness, a.thickness));
+    if (same) same.qty += 1;
+    else if (out.length < MAX_LIBRARY_REMNANTS) out.push({ id: newId(), width: a.width, height: a.height, materialId: a.materialId, thickness: a.thickness, qty: 1, ...(meta.from ? { from: meta.from } : {}), ...(meta.date ? { date: meta.date } : {}) });
+  }
+  return out;
+}

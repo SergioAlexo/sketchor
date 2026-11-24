@@ -130,7 +130,9 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         manual: "Manual", groupsMode: "Groups from a list", bomHint: "Paste the parts list here (part number, quantity, material)...", loadCsv: "Load CSV", chooseFolder: "Choose folder", makeGroups: "Groups from the list",
         noFolder: "No drawing folder chosen - part numbers are looked up as DXF files in it.", noGroups: "No groups yet - paste a parts list and click Groups from the list.", group: "Group", of: "of",
         credit: "Nesting engine based on the Sheet Nesting Calculator by Oleksandr Borenko",
-        tabs: { sheets: "Sheets", tubes: "Tubes", bars: "Bars", machines: "Machines" },
+        tabs: { sheets: "Sheets", tubes: "Tubes", bars: "Bars", offcuts: "Offcuts", machines: "Machines" },
+        useOffcuts: "Cut from matching offcuts first", useOffcutsHint: "Offcuts in the library of this material and thickness are used before a fresh sheet - largest first. Manage them on the Offcuts tab.", offcutsAvail: "in the library", offcutsUsed: "Offcuts used from the library", newOffcuts: "New usable offcuts", updateLib: "Update offcut library", updateLibHint: "Takes the offcuts this nest used out of the library, adds its new offcuts, and takes the stock-on-hand sheets it used off the stock list. Do this once the sheets are cut.", libUpdated: "Offcut library updated.",
+        libHint: "Offcuts kept from earlier jobs, by material and thickness. Sheet Nesting cuts from the matching ones first when the job ticks Cut from matching offcuts first; after cutting, Update offcut library in the results takes the used ones out and adds the new ones.", libEmpty: "No offcuts yet - nest a job and click Update offcut library in the results, or add one here.", libAdd: "Add offcut", libMatch: "matches this job", libHdr: ["Size", "Material", "Thick.", "Qty", "From"],
         dropHere: "Drop DXF / DWG files here - each file is one part",
         machineFile: "Machine file", noMachineFile: "None - use the values below", manageMachines: "Machines...",
       };
@@ -217,6 +219,10 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
           h += "<div class='muted' style='font-size:10px'>Name / W / H (" + esc(V.bareUnit) + ") / Qty</div>";
           h += V.stockRows.map((r, i) => "<div class='stockrow' data-row='" + i + "'><input data-id='sn" + i + "' data-stock='name' value='" + esc(r.name) + "'><input data-id='sw" + i + "' data-stock='w' value='" + esc(r.w) + "'><input data-id='sh" + i + "' data-stock='h' value='" + esc(r.h) + "'><input data-id='sq" + i + "' data-stock='qty' value='" + esc(r.qty) + "' placeholder='&infin;'><button class='icon' data-act='stock-del' data-i='" + i + "'>&#10005;</button></div>").join("");
           h += "<div class='row'><button class='ghost sm' data-act='stock-add'>" + T.addRow + "</button><label style='margin:0'><input type='checkbox' data-set='buyExtra'" + (j.buyExtra ? " checked" : "") + ">" + T.buyExtra + "</label></div>";
+        }
+        {
+          const avail = (V.library || []).filter((r) => r.match).reduce((n, r) => n + r.qty, 0);
+          h += "<label style='display:block;margin:2px 0 6px' title='" + esc(T.useOffcutsHint) + "'><input type='checkbox' data-set='useRemnants'" + (j.useRemnants ? " checked" : "") + ">" + T.useOffcuts + " <span class='muted'>(" + avail + " " + T.offcutsAvail + ")</span></label>";
         }
         if (V.bedWarn) h += "<div class='msg warn'>" + T.bedWarn + "</div>";
         }
@@ -378,7 +384,9 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         h += manualCard();
         if (R.stopped) h += "<div class='msg warn'>Stopped early - showing the best layout found so far.</div>";
         (R.notes || []).forEach((n) => (h += "<div class='msg warn'>" + esc(n) + "</div>"));
-        if ((R.remnants || []).length) h += "<div class='row' style='margin-top:6px'><span class='muted'>" + T.offcuts + ": " + R.remnants.map((r) => esc(r.size)).join(", ") + "</span><button class='ghost sm' data-act='save-remnants'>" + T.saveOffcuts + "</button></div>";
+        if ((R.offcutsUsed || []).length) h += "<div class='msg ok'>" + T.offcutsUsed + ": " + R.offcutsUsed.map((o) => esc(o.size) + (o.n > 1 ? " &times;" + o.n : "")).join(", ") + "</div>";
+        if ((R.remnants || []).length || (R.offcutsUsed || []).length) h += "<div class='row' style='margin-top:6px'><span class='muted' style='flex:1'>" + ((R.remnants || []).length ? T.newOffcuts + ": " + R.remnants.map((r) => esc(r.size)).join(", ") : "") + "</span><button class='ghost sm' data-act='save-remnants' title='" + esc(T.updateLibHint) + "'>" + T.updateLib + "</button></div>";
+        if (R.libraryUpdated) h += "<div class='msg ok'>" + T.libUpdated + "</div>";
         h += "<h4 style='margin-top:6px'>" + T.stockUsage + "</h4><table><tr><th>Size</th><th>Used</th>" + (k.showPurchase ? "<th>Buy</th>" : "") + "<th>In stock</th></tr>" +
           R.stock.map((s) => "<tr><td>" + esc(s.size) + "</td><td>" + s.used + "</td>" + (k.showPurchase ? "<td>" + s.purchased + "</td>" : "") + "<td>" + (s.available == null ? "&infin;" : s.available) + "</td></tr>").join("") + "</table>";
         h += "<h4 style='margin-top:8px'>Sheets</h4>" + R.cards.map((c) =>
@@ -419,7 +427,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       const draftOf = (k) => (k === "tube" ? TI : BI);
 
       function tabsBar() {
-        return "<div class='tabs'>" + ["sheets", "tubes", "bars", "machines"].map((k) => "<button data-act='tab' data-v='" + k + "' class='" + (tab === k ? "on" : "") + "'>" + T.tabs[k] + "</button>").join("") + "</div>";
+        return "<div class='tabs'>" + ["sheets", "tubes", "bars", "offcuts", "machines"].map((k) => "<button data-act='tab' data-v='" + k + "' class='" + (tab === k ? "on" : "") + "'>" + T.tabs[k] + "</button>").join("") + "</div>";
       }
       function inp(attr, v, extra) { return "<input " + attr + " value='" + esc(v) + "'" + (extra || "") + ">"; }
 
@@ -612,6 +620,23 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         return h + calcResult(tubeRes, "tube");
       }
 
+      /** N-52: the offcut library - what is on the rack, by material and thickness; add, change the count, remove. */
+      function offcutsView() {
+        const lib = V.library || [];
+        let h = "<div class='card'><h4>" + T.tabs.offcuts + "</h4><div class='muted' style='font-size:10px;margin-bottom:6px'>" + T.libHint + "</div>";
+        h += "<div class='rows hdr' style='grid-template-columns:52px 52px 36px 1fr 52px'><span>W (" + esc(V.bareUnit) + ")</span><span>H</span><span>Qty</span><span>Material</span><span>Thick.</span></div>";
+        h += "<div class='rows' style='grid-template-columns:52px 52px 36px 1fr 52px'><input data-id='lib-w' data-libnew='w'><input data-id='lib-h' data-libnew='h'><input data-id='lib-q' data-libnew='qty' placeholder='1'><select data-libnew='material'>" + optionsHtml(T.materials, V.job.material, V.materials) + "</select><input data-id='lib-t' data-libnew='thickness' value='" + esc(V.job.thickness && V.job.thickness.v ? V.job.thickness.v + (V.job.thickness.u && V.job.thickness.u !== V.bareUnit ? " " + V.job.thickness.u : "") : "") + "'></div>";
+        h += "<button class='sm' data-act='lib-add'>" + T.libAdd + "</button></div>";
+        h += "<div class='card'>";
+        if (!lib.length) h += "<div class='muted'>" + T.libEmpty + "</div>";
+        else {
+          h += "<table><tr>" + T.libHdr.map((x) => "<th>" + x + "</th>").join("") + "<th></th></tr>" + lib.map((r) => "<tr" + (r.match ? " style='background:rgba(79,157,105,.15)' title='" + T.libMatch + "'" : "") + "><td><b>" + esc(r.size) + "</b></td><td>" + esc(r.material) + "</td><td>" + esc(r.thickness) + "</td><td><input type='number' min='0' step='1' value='" + r.qty + "' data-id='libq" + esc(r.id) + "' data-libq='" + esc(r.id) + "' style='width:44px;margin:0;padding:2px'></td><td class='pdim'>" + esc(r.from) + (r.date ? "<br>" + esc(r.date) : "") + "</td><td><button class='icon' data-act='lib-del' data-id='" + esc(r.id) + "'>&#10005;</button></td></tr>").join("") + "</table>";
+          const m = lib.filter((r) => r.match).reduce((n, r) => n + r.qty, 0);
+          h += "<div class='pdim' style='margin-top:4px'>" + m + " " + T.libMatch + (V.job.useRemnants ? "" : " - tick " + T.useOffcuts + " on the Sheets tab to use them") + "</div>";
+        }
+        return h + "</div>";
+      }
+
       function machinesView() {
         const list = V.profiles || [];
         let h = "<div class='card'><h4>" + T.tabs.machines + "</h4><div class='muted' style='font-size:10px;margin-bottom:6px'>" + TT.mHint + "</div>";
@@ -678,6 +703,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (tab === "bars") $("app").innerHTML = tabsBar() + barsView();
         else if (tab === "tubes") $("app").innerHTML = tabsBar() + tubesView();
         else if (tab === "machines") $("app").innerHTML = tabsBar() + machinesView();
+        else if (tab === "offcuts") $("app").innerHTML = tabsBar() + offcutsView();
         else $("app").innerHTML = tabsBar() + modeBar + jobCard() + cuttingCard() + body + actionsCard() + resultCard() + "<div class='credit'>" + T.credit + "</div>";
         const cut = document.querySelector("[data-cutting]");
         if (cut) cut.addEventListener("toggle", () => { cuttingOpen = cut.open; });
@@ -722,6 +748,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         else if (t.dataset.gthk) later("gt" + t.dataset.gid, () => post({ type: "group-set", id: t.dataset.gid, patch: { thickness: t.value }, refresh: false }));
         else if (t.dataset.inum) later("iq" + t.dataset.gid + t.dataset.inum, () => post({ type: "item-set", gid: t.dataset.gid, num: t.dataset.inum, qty: t.value, refresh: false }));
         else if (t.dataset.tabs) later(t.dataset.tabs, () => setJob({ [t.dataset.tabs]: t.value === "" ? 0 : Number(t.value) || 0 }));
+        else if (t.dataset.libq) later("libq" + t.dataset.libq, () => post({ type: "lib-set", id: t.dataset.libq, qty: t.value }), 500);
         else if (t.dataset.minhole) later("minhole", () => setJob({ minHoleSide: t.value === "" ? 0 : Number(t.value) || 0 }));
       });
       document.addEventListener("change", (e) => {
@@ -736,7 +763,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         else if (d.gset) post({ type: "group-set", id: d.gid, patch: { [d.gset]: t.value } });
         else if (d.gsheet) { const g = V.groups.find((x) => x.id === d.gid); const o = g && g.sheetOptions[Number(t.value)]; if (o) post({ type: "group-set", id: d.gid, patch: { sheet: { w: o.w, h: o.h } } }); }
         else if (d.sheet) { const o = V.sheetOptions[Number(t.value)]; if (o) setJob({ sheet: { w: o.w, h: o.h } }); }
-        else if (d.set) setJob({ [d.set]: d.set === "buyExtra" || d.set === "commonLine" ? t.checked : (d.set === "timeMs" ? Number(t.value) : t.value) });
+        else if (d.set) setJob({ [d.set]: d.set === "buyExtra" || d.set === "commonLine" || d.set === "useRemnants" ? t.checked : (d.set === "timeMs" ? Number(t.value) : t.value) });
         else if (d.pset) post({ type: "part-set", key: d.part, patch: { [d.pset]: d.pset === "mirror" || d.pset === "allowInHoles" ? t.checked : t.value } });
         else if (d.fileunit) post({ type: "file-unit", key: d.fileunit, unit: t.value === "" ? null : Number(t.value) });
       });
@@ -799,7 +826,9 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         else if (a === "remove") post({ type: "remove-part", key: b.dataset.k });
         else if (a === "nest") { message = null; progress = null; R = null; post({ type: "nest" }); }
         else if (a === "stop") post({ type: "cancel-nest" });
-        else if (a === "save-remnants") post({ type: "save-remnants" });
+        else if (a === "save-remnants") post({ type: "save-remnants", jobName });
+        else if (a === "lib-del") post({ type: "lib-delete", id: b.dataset.id });
+        else if (a === "lib-add") { const g = (k) => (document.querySelector("[data-libnew='" + k + "']") || {}).value || ""; post({ type: "lib-add", w: g("w"), h: g("h"), qty: g("qty") || "1", material: g("material"), thickness: g("thickness") }); }
         else if (a === "clear") post({ type: "clear" });
         else if (a === "check") post({ type: "check-nest" });
         else if (a === "save-job") post({ type: "save-job" });
