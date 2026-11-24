@@ -156,7 +156,7 @@ Decision: **upgrade `plugin-nest` in place** into "Sheet Metal Nest" rather than
 
 ## Phase 5 — Later
 
-Common-line cutting · remnant library (save offcuts as stock) · micro-joints/tabs (done, N-53) · save/reopen nest job file · part priority / due dates (done, N-55: priority + due date per part, nested first, shown in the report).
+Common-line cutting (done, N-51: parts one kerf apart, shared straight edges cut once) · remnant library (save offcuts as stock) · micro-joints/tabs (done, N-53) · save/reopen nest job file · part priority / due dates (done, N-55: priority + due date per part, nested first, shown in the report).
 
 ## Risks
 
