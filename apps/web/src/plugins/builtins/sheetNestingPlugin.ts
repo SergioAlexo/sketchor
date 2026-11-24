@@ -75,6 +75,12 @@ import {
   stockUsage,
   findRemnants,
   applyRemnantsToStock,
+  matchingRemnants,
+  parseRemnantLibrary,
+  remnantStockRows,
+  updateRemnantLibrary,
+  sameThickness,
+  type LibraryRemnant,
   type Remnant,
   thicknessesFor,
   checkNestOverlaps,
@@ -133,6 +139,7 @@ const KEY_BOM = "bom";
 const KEY_PROFILES = "machineProfiles";
 const KEY_BARCALC = "barCalc";
 const KEY_TUBECALC = "tubeCalc";
+const KEY_REMNANTS = "remnantLibrary";
 const MAX_PROFILES = 50;
 /** Groups mode looks up DXF drawings only (DWG needs a conversion step; add the file in Manual mode). */
 const DRAWING_EXTS = /\.dxf$/i;
@@ -401,6 +408,14 @@ const plugin: PluginModule = {
     let barInput = parseBarInput(await sketchor.storage.get(KEY_BARCALC).catch(() => undefined));
     let tubeInput = parseTubeInput(await sketchor.storage.get(KEY_TUBECALC).catch(() => undefined));
     const persistProfiles = () => void sketchor.storage.set(KEY_PROFILES, profiles).catch(() => undefined);
+    // N-52: the offcut library, kept across jobs.
+    let library: LibraryRemnant[] = parseRemnantLibrary(await sketchor.storage.get(KEY_REMNANTS).catch(() => undefined));
+    const persistLibrary = () => void sketchor.storage.set(KEY_REMNANTS, library).catch(() => undefined);
+    const newRemnantId = () => {
+      for (let i = library.length + 1; ; i++) if (!library.some((x) => x.id === `r${i}`)) return `r${i}`;
+    };
+    /** Offcuts used by the last result, by library id. */
+    let lastRemnantUse = new Map<string, number>();
     const newProfileId = () => {
       for (let i = profiles.length + 1; ; i++) if (!profiles.some((x) => x.id === `m${i}`)) return `m${i}`;
     };
@@ -428,7 +443,7 @@ const plugin: PluginModule = {
     /** Effective stock rows (with material / thickness) of the last result, for the G-code feed-rate lookup. */
     let lastStock: StockRow[] = [];
     /** N-52: offcuts of the last result and the inventory rows it consumed, until saved (or the next run). */
-    let lastRemnants: { rem: Remnant; material?: string; thickness?: number }[] = [];
+    let lastRemnants: { rem: Remnant; material?: string; materialId?: string; thickness?: number }[] = [];
     let lastUsed: number[] = [];
     let cancelRequested = false;
     let running = false;
@@ -708,6 +723,14 @@ const plugin: PluginModule = {
         speedAuto: speedAutoView(),
         postSpec: resolvePost(job.postId, custom.posts),
         stockRows: job.stock.map((s) => ({ name: s.size.name, w: num3(s.size.width), h: num3(s.size.height), qty: s.qty === null ? "" : String(s.qty), thickness: s.thickness })),
+        // N-52: the offcut library, matching ones (this job's material and thickness) first.
+        library: (() => {
+          const t = lengthMm(job.thickness);
+          const match = (r: LibraryRemnant) => r.materialId === job.material && t > 0 && sameThickness(r.thickness, t);
+          return [...library]
+            .sort((a, b) => Number(match(b)) - Number(match(a)) || a.materialId.localeCompare(b.materialId) || a.thickness - b.thickness || b.width * b.height - a.width * a.height)
+            .map((r) => ({ id: r.id, size: `${fmt(r.width)} × ${fmt(r.height)}`, material: MATERIAL_NAMES[r.materialId] ?? r.materialId, thickness: fmt(r.thickness), qty: r.qty, from: r.from ?? "", date: r.date ?? "", match: match(r) }));
+        })(),
         bareUnit: bareUnitFor(job.outputUnit),
         credit: NEST_CREDIT,
         profiles,
@@ -761,6 +784,8 @@ const plugin: PluginModule = {
       if (patch.tabCount !== undefined) { const n = Math.max(0, Math.min(99, Math.floor(num(patch.tabCount)))); if (n >= 1) next.tabCount = n; else delete next.tabCount; }
       if (patch.tabWidth !== undefined) { const w = Math.max(0, Math.min(1000, num(patch.tabWidth))); if (w > 0) next.tabWidth = w; else delete next.tabWidth; }
       if (patch.searchLevel === "quick" || patch.searchLevel === "normal" || patch.searchLevel === "thorough") next.searchLevel = patch.searchLevel;
+      if (patch.useRemnants === true) next.useRemnants = true;
+      else if (patch.useRemnants === false) delete next.useRemnants;
       if (patch.commonLine === true) next.commonLine = true;
       else if (patch.commonLine === false) delete next.commonLine;
       if (patch.leadIn === "arc") next.leadIn = "arc";
@@ -845,6 +870,8 @@ const plugin: PluginModule = {
       label: string;
       job: NestJob;
       recs: Map<string, PartRec>;
+      /** N-52: library offcuts put ahead of the job's stock (stock rows 0..n-1), by id. */
+      remnantIds?: string[];
     }
 
     const tagStock = (r: RasterNestResult, run: Run): RasterNestResult => {
@@ -1055,12 +1082,21 @@ const plugin: PluginModule = {
       lastStock = result.stock;
       lastRemnants = findRemnants(result, (id) => recByKey.get(id)?.outer, { clearance: 2 }).map((rem) => {
         const row = result.stock[result.sheets[rem.sheet]!.stockIndex];
-        return { rem, material: row?.material, thickness: row?.thickness };
+        return { rem, material: row?.material, materialId: row?.materialId, thickness: row?.thickness };
       });
+      // N-52: offcuts the nest cut from (stock rows ahead of the job's own), and the job's own inventory sheets it used.
+      const offcutIds = runs.length === 1 ? (runs[0]!.remnantIds ?? []) : [];
+      lastRemnantUse = new Map();
       lastUsed = [];
       if (source === "stock" && runs.length === 1) {
         result.sheets.forEach((sh, i) => {
-          if (!result.purchased[i]) lastUsed[sh.stockIndex] = (lastUsed[sh.stockIndex] ?? 0) + 1;
+          if (sh.stockIndex < offcutIds.length) {
+            const id = offcutIds[sh.stockIndex]!;
+            lastRemnantUse.set(id, (lastRemnantUse.get(id) ?? 0) + 1);
+          } else if (!result.purchased[i] && job.sheetSource === "stock") {
+            const k = sh.stockIndex - offcutIds.length;
+            lastUsed[k] = (lastUsed[k] ?? 0) + 1;
+          }
         });
       }
 
@@ -1105,6 +1141,10 @@ const plugin: PluginModule = {
         stock: usage.map((u) => ({ name: u.name, size: `${fmt(u.width)} × ${fmt(u.height)}`, used: u.used, purchased: u.purchased, available: u.available })),
         unplaced,
         remnants: lastRemnants.map((r) => ({ sheet: r.rem.sheet + 1, size: `${fmt(r.rem.width)} × ${fmt(r.rem.height)}` })),
+        offcutsUsed: [...lastRemnantUse].map(([id, n]) => {
+          const r = library.find((x) => x.id === id);
+          return { n, size: r ? `${fmt(r.width)} × ${fmt(r.height)}` : id };
+        }),
         notes: result.notes,
         unsupported,
         stopped,
@@ -1145,6 +1185,13 @@ const plugin: PluginModule = {
           return null;
         }
         notify(`${missing.length} part(s) no longer exist and were dropped from the list.`, true);
+      }
+      // N-52: matching offcuts go first in the stock; the job's own sheets (or the standard size, unlimited) after them.
+      const offcuts = job.useRemnants ? matchingRemnants(library, job.material, lengthMm(job.thickness)) : [];
+      if (offcuts.length > 0) {
+        const rows = remnantStockRows(offcuts, fmt);
+        const runJob: NestJob = job.sheetSource === "stock" && job.stock.length > 0 ? { ...job, mode: "manual", stock: [...rows, ...job.stock] } : { ...job, mode: "manual", sheetSource: "stock", stock: rows, buyExtra: true };
+        return [{ label: "", job: runJob, recs, remnantIds: offcuts.map((o) => o.id) }];
       }
       return [{ label: "", job: { ...job, mode: "manual" }, recs }];
     };
@@ -1700,18 +1747,50 @@ const plugin: PluginModule = {
         return;
       }
 
+      // N-52: after cutting - the offcuts used come out of the library, the new ones go in, and the job's own inventory sheets used are taken off its stock.
       if (type === "save-remnants") {
-        if (lastRemnants.length === 0) return fail("No usable offcuts in the last result.");
-        const n = lastRemnants.length;
-        job = { ...job, stock: applyRemnantsToStock(job.stock, lastRemnants.map((r) => ({ width: r.rem.width, height: r.rem.height, material: r.material, thickness: r.thickness })), lastUsed) };
+        if (lastRemnants.length === 0 && lastRemnantUse.size === 0 && !lastUsed.some((n) => n > 0)) return fail("Nothing to update - the last result made no usable offcuts and used none.");
+        const added = lastRemnants.map((r) => ({ width: r.rem.width, height: r.rem.height, materialId: r.materialId ?? job.material, thickness: r.thickness ?? lengthMm(job.thickness) }));
+        const usedN = [...lastRemnantUse.values()].reduce((n, k) => n + k, 0);
+        library = updateRemnantLibrary(library, lastRemnantUse, added, { from: (typeof msg.jobName === "string" && msg.jobName.trim()) || "Nest", date: new Date().toISOString().slice(0, 10) }, newRemnantId);
+        persistLibrary();
+        if (lastUsed.some((n) => n > 0)) {
+          job = { ...job, stock: applyRemnantsToStock(job.stock, [], lastUsed) };
+          persistJob();
+        }
+        const n = added.length;
         lastRemnants = [];
         lastUsed = [];
-        if (lastView) lastView = { ...lastView, remnants: [] };
-        persistJob();
+        lastRemnantUse = new Map();
+        if (lastView) lastView = { ...lastView, remnants: [], offcutsUsed: [], libraryUpdated: true };
         await pushView();
         if (lastView) post({ type: "result", ...lastView });
-        notify(job.sheetSource === "stock" ? `Saved ${n} offcut(s) to Stock on hand.` : `Saved ${n} offcut(s) to the stock list - switch Sheet to "Stock on hand" to cut from them.`);
+        notify(`Offcut library updated: ${n} new offcut${n === 1 ? "" : "s"} added${usedN ? `, ${usedN} used taken out` : ""}.${job.useRemnants ? "" : ' Tick "Cut from matching offcuts first" to use them in the next job.'}`);
         return;
+      }
+      if (type === "lib-set" || type === "lib-delete") {
+        const r = library.find((x) => x.id === str(msg.id));
+        if (!r) return;
+        if (type === "lib-delete") library = library.filter((x) => x !== r);
+        else {
+          const q = Math.floor(num(msg.qty, r.qty));
+          if (q <= 0) library = library.filter((x) => x !== r);
+          else r.qty = Math.min(9999, q);
+        }
+        persistLibrary();
+        return void (await pushView());
+      }
+      if (type === "lib-add") {
+        const bu = bareUnitFor(job.outputUnit);
+        const toMm = (v: unknown) => parseLen(str(v), bu) * MM_PER_IN;
+        const w = toMm(msg.w), h = toMm(msg.h), t = toMm(msg.thickness);
+        const q = Math.max(1, Math.floor(num(msg.qty, 1)));
+        const materialId = MATERIALS.some((m) => m.id === msg.material) ? (msg.material as string) : job.material;
+        if (!(w > 0 && h > 0)) return fail("Enter the offcut's width and height.");
+        if (!(t > 0)) return fail("Enter the offcut's thickness.");
+        library = [...parseRemnantLibrary([...library, { id: newRemnantId(), width: w, height: h, materialId, thickness: t, qty: q, from: "by hand", date: new Date().toISOString().slice(0, 10) }])];
+        persistLibrary();
+        return void (await pushView());
       }
 
       if (type === "export-dxf") return void (await exportDxf(msg));
