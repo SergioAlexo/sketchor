@@ -1,21 +1,13 @@
-import { canvasFontFamily, layoutMText, layoutOf, resolveTextLook, textWidth, type TableRecord } from "@sketchor/core";
+import { drawEntity as drawEntityCore, drawFillHatch, type DrawEnv, type TableRecord } from "@sketchor/core";
 import type { Bounds, BoxSelectMode, CanvasTokens, ClosedRegion, Entity, EntityId, Point, SketchDocument } from "@sketchor/core";
 import {
   arcPointAt,
   arcSweep,
-  builtinLinetype,
-  bulgeToArc,
   DEFAULT_DARK,
   dist,
-  entityPoints,
   gripsOf,
-  insertContents,
-  kindTessellate,
   layerOf,
-  polylineSegments,
   resolveLinetype,
-  screenDashPattern,
-  effectiveLtscale,
   transformed,
   translated,
   drawOrderOf,
@@ -33,10 +25,10 @@ import {
 import { drawSheet, viewportScreenView } from "./sheetRender";
 import type { MeasureResult } from "../state/store";
 import { gridStep, worldToScreen, type View } from "./view";
-import { classifyForView, GREEK_TEXT_PX, regionWorthDrawing, viewWorldRect, type WorldRect } from "./cull";
+import { classifyForView, regionWorthDrawing, viewWorldRect, type WorldRect } from "./cull";
 import type { Snap } from "./snapping";
 import { getCachedImage } from "./imageCache";
-import { beginHatchFrame, drawHatchEntity } from "./hatchRender";
+import { beginHatchFrame } from "./hatchRender";
 
 /** A pending rigid transform (rotate about a pivot) previewed dashed over the real geometry. */
 export interface TransformPreview {
@@ -432,55 +424,9 @@ function drawClosedRegions(ctx: CanvasRenderingContext2D, view: View, regions: r
   }
 }
 
-/**
- * Fills a closed shape (a `closed` polyline or a circle) with a 45° line hatch
- * in `fill`. Clips to the shape and strokes parallel diagonals across its
- * screen bounding box — cheap, resolution-independent, and reads as a fill
- * without hiding the geometry underneath. Open shapes are skipped by the caller.
- */
+/** An entity's `fill` as a 45° line hatch (core `drawFillHatch`). */
 function drawHatch(ctx: CanvasRenderingContext2D, view: View, entity: Entity, fill: string): void {
-  ctx.save();
-  ctx.beginPath();
-  if (entity.type === "circle") {
-    const c = worldToScreen(view, entity.center);
-    ctx.arc(c.x, c.y, entity.radius * view.scale, 0, Math.PI * 2);
-  } else if (entity.type === "polyline" && entity.closed && entity.points.length >= 3) {
-    const p0 = worldToScreen(view, entity.points[0]);
-    ctx.moveTo(p0.x, p0.y);
-    for (let i = 1; i < entity.points.length; i++) {
-      const p = worldToScreen(view, entity.points[i]);
-      ctx.lineTo(p.x, p.y);
-    }
-    ctx.closePath();
-  } else {
-    ctx.restore();
-    return;
-  }
-  ctx.clip();
-
-  const pts = entityPoints(entity).map((p) => worldToScreen(view, p));
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const p of pts) {
-    minX = Math.min(minX, p.x);
-    minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x);
-    maxY = Math.max(maxY, p.y);
-  }
-  const span = maxX - minX + (maxY - minY);
-  const gap = 7;
-  ctx.strokeStyle = fill;
-  ctx.globalAlpha = 0.32;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let d = -span; d <= span; d += gap) {
-    ctx.moveTo(minX + d, minY);
-    ctx.lineTo(minX + d + (maxY - minY), maxY);
-  }
-  ctx.stroke();
-  ctx.restore();
+  drawFillHatch(ctx, view, entity, fill);
 }
 
 function drawGroupHandle(
@@ -867,249 +813,34 @@ function drawOrigin(ctx: CanvasRenderingContext2D, width: number, height: number
 /** D-01: set at the start of each frame so `drawEntity` (which has no document) can resolve a text's style. */
 let textStyleLookup: ((name: string) => TableRecord | undefined) | undefined;
 
+/** E-01: what core `drawEntity` reads from the app: the theme's colours, this frame's text styles and the decoded-image cache. */
+const ENV: DrawEnv = {
+  get ink() {
+    return COLORS.entity;
+  },
+  get bg() {
+    return COLORS.bg;
+  },
+  textStyle: (name) => textStyleLookup?.(name),
+  image: getCachedImage,
+};
+
+/**
+ * Core `drawEntity` with the app's environment. Z-04: `linetypeName` is
+ * BYLAYER-resolved by the main loop; other callers (tool previews, grip
+ * previews, the measure overlay) draw document-less entities and fall back
+ * to the entity's own linetype.
+ */
 function drawEntity(
   ctx: CanvasRenderingContext2D,
   view: View,
   entity: Entity,
   color: string,
   lineWidth: number,
-  // Z-04: BYLAYER-resolved by the caller when it has a document to resolve
-  // against (the main loop); other callers (tool previews, grip previews,
-  // the measure overlay) draw transient, document-less entities and just
-  // fall back to the entity's own linetype — BYLAYER there would have
-  // nothing to resolve against anyway.
   linetypeName: string | undefined = entity.linetype,
   ltscale = 1,
 ): void {
-  ctx.strokeStyle = color;
-  ctx.lineWidth = lineWidth;
-
-  if (entity.type === "insert") {
-    // B-01: draw what the block stands for; a sub-entity keeps its own colour unless the instance is highlighted.
-    const plain = color === (entity.color ?? COLORS.entity);
-    for (const part of insertContents(entity)) {
-      if (part.fill) drawHatch(ctx, view, part, part.fill);
-      drawEntity(ctx, view, part, plain ? (part.color ?? color) : color, lineWidth, part.linetype ?? linetypeName, ltscale);
-    }
-    return;
-  }
-
-  if (entity.type === "hatch") {
-    drawHatchEntity(ctx, view, entity, color, lineWidth);
-    return;
-  }
-
-  if (entity.type === "text") {
-    const p = worldToScreen(view, entity.at);
-    const px = entity.height * view.scale;
-    if (px < GREEK_TEXT_PX) {
-      // Greeked: a faint stroke where the string sits, so a zoomed-out sheet keeps its texture without drawing glyphs nobody can read.
-      const w = textWidth(entity.text, entity.height) * view.scale;
-      const x0 = entity.halign === "center" ? -w / 2 : entity.halign === "right" ? -w : 0;
-      const yMid = entity.valign === "top" ? px / 2 : entity.valign === "middle" ? 0 : -px / 2;
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate(-entity.rotation);
-      ctx.globalAlpha *= 0.6;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(0.5, px * 0.6);
-      ctx.beginPath();
-      ctx.moveTo(x0, yMid);
-      ctx.lineTo(x0 + w, yMid);
-      ctx.stroke();
-      ctx.restore();
-      return;
-    }
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate(-entity.rotation); // world CCW → screen CW
-    ctx.fillStyle = color;
-    // D-01: the named style's font/shape, with the entity's own overrides on top.
-    const look = resolveTextLook(entity, textStyleLookup);
-    ctx.textBaseline = entity.valign === "middle" ? "middle" : entity.valign === "top" ? "top" : entity.valign === "bottom" ? "bottom" : "alphabetic";
-    ctx.textAlign = entity.halign ?? "left";
-    ctx.font = `${Math.max(1, entity.height * view.scale)}px ${canvasFontFamily(look.font)}`;
-    if (look.oblique) ctx.transform(1, 0, -Math.tan((look.oblique * Math.PI) / 180), 1, 0, 0);
-    if (look.widthFactor !== 1 || look.backwards || look.upsideDown) {
-      ctx.scale(look.widthFactor * (look.backwards ? -1 : 1), look.upsideDown ? -1 : 1);
-    }
-    ctx.fillText(entity.text, 0, 0);
-    ctx.restore();
-    return;
-  }
-
-  if (entity.type === "mtext") {
-    // D-04: the same layout the exporters use (core mtext/layout.ts) - runs at baseline positions, rules as segments.
-    const lay = layoutMText(entity);
-    if (entity.background) {
-      ctx.fillStyle = entity.background.color ?? COLORS.bg;
-      ctx.beginPath();
-      lay.box.forEach((pt, i) => {
-        const s = worldToScreen(view, pt);
-        if (i === 0) ctx.moveTo(s.x, s.y);
-        else ctx.lineTo(s.x, s.y);
-      });
-      ctx.closePath();
-      ctx.fill();
-    }
-    const look = resolveTextLook({ style: entity.style } as never, textStyleLookup);
-    ctx.textBaseline = "alphabetic";
-    ctx.textAlign = "left";
-    for (const r of lay.runs) {
-      const p = worldToScreen(view, r.at);
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate(-r.rotation);
-      ctx.fillStyle = r.color && r.color.startsWith("#") ? r.color : color;
-      const family = r.font && !/^sketchor/i.test(r.font) ? `"${r.font}", ${canvasFontFamily(look.font)}` : canvasFontFamily(look.font);
-      ctx.font = `${r.italic ? "italic " : ""}${r.bold ? "bold " : ""}${Math.max(1, r.height * view.scale)}px ${family}`;
-      const wf = (r.widthFactor ?? 1) * look.widthFactor;
-      if (wf !== 1) ctx.scale(wf, 1);
-      ctx.fillText(r.text, 0, 0);
-      ctx.restore();
-    }
-    ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(1, entity.height * view.scale * 0.06);
-    ctx.setLineDash([]);
-    for (const seg of lay.lines) {
-      ctx.beginPath();
-      seg.forEach((pt, i) => {
-        const s = worldToScreen(view, pt);
-        if (i === 0) ctx.moveTo(s.x, s.y);
-        else ctx.lineTo(s.x, s.y);
-      });
-      ctx.stroke();
-    }
-    return;
-  }
-
-  if (entity.type === "dimension") {
-    // D-02a: the same layout the exporters use (core dimensions/layout.ts) — strokes, filled arrow heads, centred text.
-    const layout = layoutOf(entity);
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = lineWidth;
-    ctx.setLineDash([]);
-    for (const run of layout.lines) {
-      ctx.beginPath();
-      run.forEach((pt, i) => {
-        const s = worldToScreen(view, pt);
-        if (i === 0) ctx.moveTo(s.x, s.y);
-        else ctx.lineTo(s.x, s.y);
-      });
-      ctx.stroke();
-    }
-    for (const poly of layout.fills) {
-      ctx.beginPath();
-      poly.forEach((pt, i) => {
-        const s = worldToScreen(view, pt);
-        if (i === 0) ctx.moveTo(s.x, s.y);
-        else ctx.lineTo(s.x, s.y);
-      });
-      ctx.closePath();
-      ctx.fill();
-    }
-    if (layout.text && layout.text.text) {
-      const p = worldToScreen(view, layout.text.at);
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate(-layout.text.rotation);
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.font = `${Math.max(1, layout.text.height * view.scale)}px ui-sans-serif, system-ui, sans-serif`;
-      ctx.fillText(layout.text.text, 0, 0);
-      ctx.restore();
-    }
-    return;
-  }
-
-  if (entity.type === "image") {
-    const p = worldToScreen(view, entity.insert);
-    const w = entity.width * view.scale;
-    const h = entity.height * view.scale;
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate(-entity.rotation); // world CCW → screen CW
-    const img = getCachedImage(entity.dataUrl);
-    if (img) {
-      // `insert` is the bottom-left corner; canvas Y grows down, so the image
-      // spans upward (negative local y) from the origin.
-      ctx.drawImage(img, 0, -h, w, h);
-    } else {
-      ctx.strokeStyle = color;
-      ctx.setLineDash([4, 3]);
-      ctx.strokeRect(0, -h, w, h);
-      ctx.setLineDash([]);
-    }
-    ctx.restore();
-    return;
-  }
-
-  // Infinite construction lines always draw dashed, regardless of linetype — they're a drawing aid, not real geometry.
-  ctx.setLineDash(
-    entity.type === "line" && entity.infinite ? [6, 4] : screenDashPattern(builtinLinetype(linetypeName).pattern, effectiveLtscale(ltscale, entity), view.scale),
-  );
-  ctx.beginPath();
-  if (entity.type === "line") {
-    let a = worldToScreen(view, entity.a);
-    let b = worldToScreen(view, entity.b);
-    if (entity.infinite) {
-      // Extend far past any screen the canvas could be; the browser clips the rest.
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const l = Math.hypot(dx, dy) || 1;
-      const reach = 1e5;
-      const ux = (dx / l) * reach;
-      const uy = (dy / l) * reach;
-      a = { x: a.x - ux, y: a.y - uy };
-      b = { x: b.x + ux, y: b.y + uy };
-    }
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-  } else if (entity.type === "circle") {
-    const c = worldToScreen(view, entity.center);
-    ctx.arc(c.x, c.y, entity.radius * view.scale, 0, Math.PI * 2);
-  } else if (entity.type === "point") {
-    // Fixed screen size regardless of zoom, like a CAD PDMODE marker.
-    const p = worldToScreen(view, entity.p);
-    ctx.moveTo(p.x - 5, p.y);
-    ctx.lineTo(p.x + 5, p.y);
-    ctx.moveTo(p.x, p.y - 5);
-    ctx.lineTo(p.x, p.y + 5);
-  } else if (entity.type === "arc") {
-    // World angles increase CCW in a Y-up plane; screen Y is flipped, so
-    // angles negate and the sweep direction flips (canvas's own
-    // "counterclockwise" flag already matches our ccw once negated).
-    const c = worldToScreen(view, entity.center);
-    ctx.arc(c.x, c.y, entity.radius * view.scale, -entity.startAngle, -entity.endAngle, entity.ccw);
-  } else if (entity.type !== "polyline") {
-    // A kind outside the built-in seven (kinds/registry.ts): its tessellation to ~half a pixel.
-    for (const run of kindTessellate(entity, 0.5 / view.scale)) {
-      run.forEach((q, i) => {
-        const p = worldToScreen(view, q);
-        if (i === 0) ctx.moveTo(p.x, p.y);
-        else ctx.lineTo(p.x, p.y);
-      });
-    }
-  } else {
-    // One continuous stroke through every vertex; a bulged segment draws as
-    // its real arc rather than the straight chord.
-    polylineSegments(entity).forEach((seg, i) => {
-      const a = worldToScreen(view, seg.a);
-      if (i === 0) ctx.moveTo(a.x, a.y);
-      const bulgeArc = bulgeToArc(seg.a, seg.b, seg.bulge);
-      if (!bulgeArc) {
-        const b = worldToScreen(view, seg.b);
-        ctx.lineTo(b.x, b.y);
-        return;
-      }
-      const c = worldToScreen(view, bulgeArc.center);
-      ctx.arc(c.x, c.y, bulgeArc.radius * view.scale, -bulgeArc.startAngle, -bulgeArc.endAngle, bulgeArc.ccw);
-    });
-    if (entity.closed) ctx.closePath();
-  }
-  ctx.stroke();
-  ctx.setLineDash([]);
+  drawEntityCore(ctx, view, entity, color, lineWidth, ENV, linetypeName, ltscale);
 }
 
 /** Grips (T-27): a filled square per handle; midpoint/center grips are hollow so they read as "move", not "stretch". */

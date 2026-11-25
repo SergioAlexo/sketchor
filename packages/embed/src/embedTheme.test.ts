@@ -40,6 +40,12 @@ describe("embedPalette", () => {
     expect(p.stage).not.toBe(DEFAULT_LIGHT.model3d.bg);
     expect(p.fg).toBe(DEFAULT_LIGHT.ui.text);
   });
+  it("a 2D drawing gets the theme's drawing sheet and ink (white on dark, black on light)", () => {
+    expect(defaultPalette("dark").sheet).toBe(DEFAULT_DARK.canvas.bg);
+    expect(defaultPalette("dark").ink).toBe(DEFAULT_DARK.canvas.entity);
+    expect(defaultPalette("light").sheet).toBe(DEFAULT_LIGHT.canvas.bg);
+    expect(defaultPalette("light").ink).toBe(DEFAULT_LIGHT.canvas.entity);
+  });
   it("a background the theme set on purpose is the stage", () => {
     expect(embedPalette(DEFAULT_LIGHT, "light", "#ddeeff").stage).toBe("#ddeeff");
   });
@@ -70,5 +76,7 @@ describe("theme files", () => {
     const p = await loadThemePalette("blueprint", "https://site.test/");
     expect(p.stage).toBe(file.tokens.model3d?.bg ?? file.tokens.canvas!.bg);
     expect(p.stage).not.toBe(DEFAULT_DARK.model3d.bg);
+    expect(p.sheet).toBe(resolveTheme(file).canvas.bg);
+    expect(p.ink).toBe(resolveTheme(file).canvas.entity);
   });
 });

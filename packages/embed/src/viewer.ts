@@ -29,6 +29,7 @@ export interface StageOptions {
 const RESUME_AFTER_S = 2;
 
 export class Stage {
+  readonly kind = "3d" as const;
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(32, 1, 0.1, 1000);

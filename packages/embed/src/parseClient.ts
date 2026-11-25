@@ -6,11 +6,12 @@
  * failing to import) falls back to parsing on the main thread — slower to
  * look at, never a broken preview.
  */
-import type { PreviewFormat } from "./load";
+import type { DrawingFormat, PreviewFormat } from "./load";
+import type { Drawing2D } from "./parse2d";
 import type { Model3D } from "./three/types";
 import type { UpAxis } from "./three/upAxis";
 
-type Pending = { resolve(m: Model3D): void; reject(e: Error): void; fallback(): void };
+type Pending = { resolve(v: Model3D | Drawing2D): void; reject(e: Error): void; fallback(): void };
 
 let worker: Promise<Worker | null> | null = null;
 let nextId = 1;
@@ -50,11 +51,12 @@ function startWorker(): Promise<Worker | null> {
         }, { once: true });
       });
       URL.revokeObjectURL(url);
-      w.addEventListener("message", (e: MessageEvent<{ id?: number; model?: Model3D; error?: string }>) => {
+      w.addEventListener("message", (e: MessageEvent<{ id?: number; model?: Model3D; drawing?: Drawing2D; error?: string }>) => {
         const p = e.data.id !== undefined ? pending.get(e.data.id) : undefined;
         if (!p) return;
         pending.delete(e.data.id!);
-        if (e.data.model) p.resolve(e.data.model);
+        const v = e.data.model ?? e.data.drawing;
+        if (v) p.resolve(v);
         else p.reject(new Error(e.data.error ?? "parse failed"));
       });
       w.addEventListener("error", failAll);
@@ -79,7 +81,26 @@ export async function parseOffThread(bytes: Uint8Array, name: string, format: Pr
   const copy = bytes.slice();
   return new Promise<Model3D>((resolve, reject) => {
     const id = nextId++;
-    pending.set(id, { resolve, reject, fallback: () => parseHere(bytes, name, format, up).then(resolve, reject) });
-    w.postMessage({ id, bytes: copy, name, format, up }, [copy.buffer]);
+    pending.set(id, { resolve: (v) => resolve(v as Model3D), reject, fallback: () => parseHere(bytes, name, format, up).then(resolve, reject) });
+    w.postMessage({ id, kind: "mesh", bytes: copy, name, format, up }, [copy.buffer]);
+  });
+}
+
+async function parseDrawingHere(bytes: Uint8Array, name: string, format: DrawingFormat): Promise<Drawing2D> {
+  const { parseDrawing } = await import("./parse2d");
+  return parseDrawing(bytes, name, format);
+}
+
+/** E-01: a 2D drawing, parsed in the worker — except SVG, whose importer needs the main thread's DOMParser. */
+export async function parseDrawingOffThread(bytes: Uint8Array, name: string, format: DrawingFormat): Promise<Drawing2D> {
+  if (workerDisabled || format === "svg") return parseDrawingHere(bytes, name, format);
+  worker ??= startWorker();
+  const w = await worker;
+  if (!w) return parseDrawingHere(bytes, name, format);
+  const copy = bytes.slice();
+  return new Promise<Drawing2D>((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve: (v) => resolve(v as Drawing2D), reject, fallback: () => parseDrawingHere(bytes, name, format).then(resolve, reject) });
+    w.postMessage({ id, kind: "drawing", bytes: copy, name, format }, [copy.buffer]);
   });
 }

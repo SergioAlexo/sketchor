@@ -31,6 +31,9 @@ export const CSS = `
 canvas { display: block; width: 100%; height: 100%; touch-action: pan-y; cursor: grab; }
 canvas:active { cursor: grabbing; }
 :host([data-full]) canvas { touch-action: none; }
+/* A drawing inline is a picture: nothing to drag, and the page keeps every gesture. */
+:host([data-kind="2d"]:not([data-full])) canvas { cursor: default; touch-action: auto; }
+:host([data-kind="2d"]) canvas { will-change: transform; }
 
 .vignette {
   position: absolute; inset: 0; pointer-events: none;

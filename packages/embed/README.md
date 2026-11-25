@@ -1,21 +1,32 @@
 # @sketchor/embed
 
 `<sketchor-view>` — a drop-in, animated preview of a CAD file, drawn by
-Sketchor's own 3D renderer (the same one a Sketchor model tab uses).
+Sketchor's own renderers: the 3D renderer a Sketchor model tab uses, and the
+Canvas 2D renderer of the drawing canvas (core `render2d`).
 
 ```html
 <script type="module" src="/sketchor-embed/sketchor-embed.js"></script>
 
 <sketchor-view src="/models/bracket.glb" autoplay></sketchor-view>
+<sketchor-view src="/drawings/flange.dxf" motion="draw" autoplay></sketchor-view>
 ```
 
 The element is sized by the page (`aspect-ratio: 4/3` by default — set
-`width`/`height` or CSS). Before it scrolls into view it costs ~6 kB; three.js
-and the parsers are a lazy chunk fetched when the first preview loads.
+`width`/`height` or CSS). Before it scrolls into view it costs ~12 kB; the
+renderer and parsers are lazy chunks fetched when the first preview loads —
+three.js only for 3D, and each 2D importer only for its own format (a DXF page
+downloads ~95 kB in all, never three.js).
 
-**Formats today:** glTF/GLB, STL, OBJ, PLY, 3MF. STEP/IGES, DXF, SVG and other
-2D formats show a card that opens the file in Sketchor instead (roadmap E-01).
-Draco-compressed glTF works; meshopt-compressed glTF isn't supported yet.
+**Formats today:**
+
+- 3D: glTF/GLB, STL, OBJ, PLY, 3MF. Draco-compressed glTF works;
+  meshopt-compressed glTF isn't supported yet.
+- 2D: DXF (ASCII and binary, with blocks, hatches, dimensions, text and
+  linetypes), SVG, EPS, Illustrator (`.ai`, PostScript or PDF-based) and PDF
+  (first page). Lines take the theme's ink — white on dark, black on light —
+  unless the file gives them a colour. Paper-space layouts aren't shown yet
+  (model space only).
+- STEP/IGES, BREP, 3DM and DWG show a card that opens the file in Sketchor.
 
 ## Auto-upgrade (no new markup)
 
@@ -54,8 +65,8 @@ CORS, since the frame fetches it from the Sketchor site's origin.
 | --- | --- | --- |
 | `src` | URL of the file (cross-origin hosts must send CORS headers) | — |
 | `format` | force a format (`glb`, `stl`, …) instead of sniffing | sniffed |
-| `autoplay` | start the turntable when loaded (ignored under reduced motion) | off |
-| `motion` | `turntable`, `none` | `turntable` |
+| `autoplay` | start moving when loaded (ignored under reduced motion) | off |
+| `motion` | 3D: `turntable`, `none`. 2D: `float` (slow drift + lean toward the pointer), `draw` (draws itself in, then floats), `none`; `turntable` floats | `turntable` / `float` |
 | `background` | any CSS colour, or `transparent` | Sketchor stage grey |
 | `controls` | `minimal` (play + full view), `none` | `minimal` |
 | `full-url` | `auto` (Sketchor web app `?open=`), `none`, or a URL | `auto` |

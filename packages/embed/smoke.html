@@ -73,6 +73,23 @@
         return out;
       };
 
+      /* ------------------------- 2D fixtures (E-01: drawings) ------------------------- */
+      const dxf = () => enc(["0","SECTION","2","ENTITIES",
+        "0","LINE","8","0","10","0","20","0","11","100","21","50",
+        "0","CIRCLE","8","0","62","1","10","50","20","25","40","20",
+        "0","LWPOLYLINE","8","0","90","4","70","1","10","0","20","0","10","100","20","0","10","100","20","50","10","0","20","50",
+        "0","ENDSEC","0","EOF",""].join("\n"));
+      const svg = () => enc('<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="60mm" viewBox="0 0 100 60"><rect x="5" y="5" width="90" height="50" fill="none" stroke="#000"/><circle cx="50" cy="30" r="15" fill="none" stroke="#c00"/></svg>');
+      const eps = () => enc("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 200 120\n%%EndComments\nnewpath 10 10 moveto 190 10 lineto 190 110 lineto 10 110 lineto closepath stroke\nnewpath 100 60 40 0 360 arc stroke\nshowpage\n%%EOF\n");
+      /** Pixels on the element's canvas that differ from its top-left corner (the background). */
+      const inked = (el) => {
+        const c = el.shadowRoot.querySelector("canvas");
+        const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - d[0]) + Math.abs(d[i + 1] - d[1]) + Math.abs(d[i + 2] - d[2]) > 60) n++;
+        return n;
+      };
+
       /* ---------------------------------- harness ---------------------------------- */
       const results = [];
       const table = document.getElementById("results");
@@ -119,6 +136,84 @@
           return `${d.parts} part(s)`;
         });
       }
+
+      for (const [name, make] of [["plate.dxf", dxf], ["plate.svg", svg], ["plate.eps", eps]]) {
+        await check(`draws ${name} in 2D`, async () => {
+          const el = view({ cache: "off" });
+          const d = await loadInto(el, make(), name);
+          assert(d.kind === "2d", `kind ${d.kind}`);
+          assert(d.entities >= 2, `entities = ${d.entities}`);
+          assert(el.getAttribute("data-kind") === "2d", `data-kind ${el.getAttribute("data-kind")}`);
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+          const n = inked(el);
+          assert(n > 200, `only ${n} inked pixels`);
+          return `${d.entities} objects, ${n} inked px`;
+        });
+      }
+
+      await check("a drawing plays (float), tilts toward the pointer and pauses", async () => {
+        const el = view({ cache: "off" });
+        await loadInto(el, dxf(), "f.dxf");
+        const play = nextEvent(el, "play"); el.play(); await play;
+        assert(el.getAttribute("data-state") === "playing", "not playing");
+        const r = el.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent("pointermove", { clientX: r.right - 2, clientY: r.top + 2, bubbles: true }));
+        await new Promise((res) => setTimeout(res, 700));
+        const t = el.shadowRoot.querySelector("canvas").style.transform;
+        if (!matchMedia("(prefers-reduced-motion: reduce)").matches) assert(/rotateY\((?!0\.000)/.test(t), `canvas transform "${t}"`);
+        const pause = nextEvent(el, "pause"); el.pause(); await pause;
+        assert(el.getAttribute("data-state") === "paused", "not paused");
+        return t;
+      });
+
+      await check("motion=draw puts the drawing on screen, then floats", async () => {
+        const el = view({ motion: "draw", cache: "off" });
+        await loadInto(el, dxf(), "d.dxf");
+        el.play();
+        await new Promise((res) => setTimeout(res, 3000));
+        assert(el.getAttribute("data-state") === "playing", "not playing");
+        assert(inked(el) > 200, "nothing drawn after the draw-in");
+      });
+
+      await check("one element switches from a 3D model to a drawing and back", async () => {
+        const el = view({ cache: "off" });
+        const a = await loadInto(el, stl(), "s.stl");
+        const b = await loadInto(el, dxf(), "s.dxf");
+        assert(a.kind === "3d" && b.kind === "2d", `${a.kind} then ${b.kind}`);
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        assert(inked(el) > 200, "the drawing did not show after the model");
+        const c = await loadInto(el, stl(), "s2.stl");
+        assert(c.kind === "3d", c.kind);
+      });
+
+      await check("full view on a drawing pans and zooms", async () => {
+        const el = view({ cache: "off" });
+        await loadInto(el, dxf(), "z.dxf");
+        el.shadowRoot.querySelector(".full").click();
+        await new Promise((res) => setTimeout(res, 400));
+        assert(el.hasAttribute("data-full"), "full view did not open");
+        const hint = el.shadowRoot.querySelector(".hint").textContent;
+        assert(/pan/.test(hint) && !/orbit/.test(hint), `hint "${hint}"`);
+        const c = el.shadowRoot.querySelector("canvas");
+        const r = c.getBoundingClientRect();
+        const before = inked(el);
+        c.dispatchEvent(new WheelEvent("wheel", { deltaY: -600, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true }));
+        await new Promise((res) => setTimeout(res, 200));
+        const after = inked(el);
+        el.shadowRoot.querySelector(".full").click();
+        await new Promise((res) => setTimeout(res, 300));
+        assert(!el.hasAttribute("data-full"), "full view did not close");
+        assert(after !== before, `zoom changed nothing (${before} px)`);
+        return `${before} → ${after} inked px`;
+      });
+
+      await check("DWG shows the open-in-Sketchor card", async () => {
+        const el = view();
+        const err = nextEvent(el, "error");
+        el.load(enc("AC1032\0\0\0"), "plan.dwg");
+        await err;
+        assert(/open in sketchor/i.test(el.shadowRoot.querySelector(".msg").textContent), el.shadowRoot.querySelector(".msg").textContent);
+      });
 
       await check("play / pause / reset fire their events and states", async () => {
         const el = view({ cache: "off" });

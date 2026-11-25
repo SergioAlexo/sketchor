@@ -37,6 +37,10 @@ describe("frameAttrs", () => {
   it("rejects CSS strings in background and non-http theme/full-url URLs", () => {
     const r = frameAttrs({ src: "https://c/a.stl", background: "red; background-image:url(https://evil)", theme: "javascript:alert(1)", "full-url": "javascript:x" });
     expect(r.ok && r.attrs).toEqual({ src: "https://c/a.stl" });
+    // E-01: the 2D motions pass; anything else does not.
+    expect((frameAttrs({ src: "https://c/a.dxf", motion: "draw" }) as { attrs: Record<string, string> }).attrs.motion).toBe("draw");
+    expect((frameAttrs({ src: "https://c/a.dxf", motion: "float" }) as { attrs: Record<string, string> }).attrs.motion).toBe("float");
+    expect((frameAttrs({ src: "https://c/a.dxf", motion: "spin" }) as { attrs: Record<string, string> }).attrs.motion).toBeUndefined();
     expect(frameAttrs({ src: "https://c/a.stl", background: "rgba(10, 20, 30, 0.5)" }).ok && true).toBe(true);
     expect((frameAttrs({ src: "https://c/a.stl", background: "rgba(10, 20, 30, 0.5)" }) as { attrs: Record<string, string> }).attrs.background).toBe("rgba(10, 20, 30, 0.5)");
   });

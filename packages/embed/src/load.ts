@@ -8,14 +8,22 @@
 export const SKETCHOR_APP = "https://sketchor.sergioalexo.com/app";
 export const SKETCHOR_SITE = "https://sketchor.sergioalexo.com/";
 
-/** Formats the embed can preview today: triangle meshes, read by the core parsers. */
+/** 3D formats the embed can preview today: triangle meshes, read by the core parsers. */
 export const PREVIEW_FORMATS = ["stl", "obj", "ply", "3mf", "gltf", "glb"] as const;
 export type PreviewFormat = (typeof PREVIEW_FORMATS)[number];
 
-/** Formats Sketchor opens that the embed does not draw yet (STEP needs the OCCT wasm, 2D needs render2d). */
-const APP_ONLY = new Set(["step", "stp", "iges", "igs", "brep", "3dm", "dxf", "dwg", "svg", "eps", "ai", "pdf"]);
+/** E-01: 2D drawings, read by the core parsers and drawn by the shared Canvas 2D renderer (core render2d). */
+export const DRAWING_FORMATS = ["dxf", "svg", "eps", "ai", "pdf"] as const;
+export type DrawingFormat = (typeof DRAWING_FORMATS)[number];
 
-export type FormatVerdict = { kind: "preview"; format: PreviewFormat } | { kind: "app-only"; ext: string } | { kind: "unknown" };
+/** Formats Sketchor opens that the embed does not draw yet (STEP/IGES/BREP/3DM need the OCCT wasm; DWG needs LibreDWG, which is GPL and stays out of the MIT embed). */
+const APP_ONLY = new Set(["step", "stp", "iges", "igs", "brep", "brp", "3dm", "dwg"]);
+
+export type FormatVerdict =
+  | { kind: "preview"; format: PreviewFormat }
+  | { kind: "drawing"; format: DrawingFormat }
+  | { kind: "app-only"; ext: string }
+  | { kind: "unknown" };
 
 export function extensionOf(name: string): string {
   const base = name.split(/[?#]/)[0].split(/[\\/]/).pop() ?? "";
@@ -33,8 +41,15 @@ export function sniffFormat(name: string, bytes: Uint8Array | null, override?: s
   if (forced) return verdictForExt(forced);
   if (bytes && bytes.length >= 4) {
     if (bytes[0] === 0x67 && bytes[1] === 0x6c && bytes[2] === 0x54 && bytes[3] === 0x46) return { kind: "preview", format: "glb" };
-    const head = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 64)));
+    const head = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 512)));
     if (head.startsWith("ISO-10303-21")) return { kind: "app-only", ext: "step" };
+    const ext = extensionOf(name);
+    // A PDF (including an Illustrator 9+ .ai, which is a PDF inside) is read by the PDF importer.
+    if (head.startsWith("%PDF-")) return { kind: "drawing", format: "pdf" };
+    // PostScript, or a DOS EPS binary header (C5 D0 D3 C6).
+    if (head.startsWith("%!PS") || (bytes[0] === 0xc5 && bytes[1] === 0xd0 && bytes[2] === 0xd3 && bytes[3] === 0xc6)) return { kind: "drawing", format: ext === "ai" ? "ai" : "eps" };
+    if (head.startsWith("AutoCAD Binary DXF")) return { kind: "drawing", format: "dxf" };
+    if (ext !== "svg" && /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE svg[^>]*>\s*)?<svg[\s>]/i.test(head)) return { kind: "drawing", format: "svg" };
     if (bytes[0] === 0x50 && bytes[1] === 0x4b && extensionOf(name) !== "3mf") {
       // A zip that isn't named .3mf: 3MF is the only zip the embed reads.
       return { kind: "preview", format: "3mf" };
@@ -45,6 +60,7 @@ export function sniffFormat(name: string, bytes: Uint8Array | null, override?: s
 
 function verdictForExt(ext: string): FormatVerdict {
   if ((PREVIEW_FORMATS as readonly string[]).includes(ext)) return { kind: "preview", format: ext as PreviewFormat };
+  if ((DRAWING_FORMATS as readonly string[]).includes(ext)) return { kind: "drawing", format: ext as DrawingFormat };
   if (APP_ONLY.has(ext)) return { kind: "app-only", ext };
   return { kind: "unknown" };
 }

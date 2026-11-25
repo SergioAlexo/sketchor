@@ -6,15 +6,36 @@
 
 export type PreviewFormat = "stl" | "obj" | "ply" | "3mf" | "gltf" | "glb";
 
-export type FormatVerdict = { kind: "preview"; format: PreviewFormat } | { kind: "app-only"; ext: string } | { kind: "unknown" };
+/** 2D drawings, drawn by Sketchor's own Canvas 2D renderer (since 0.3.0). */
+export type DrawingFormat = "dxf" | "svg" | "eps" | "ai" | "pdf";
 
-export interface SketchorViewLoadDetail {
+export type FormatVerdict =
+  | { kind: "preview"; format: PreviewFormat }
+  | { kind: "drawing"; format: DrawingFormat }
+  | { kind: "app-only"; ext: string }
+  | { kind: "unknown" };
+
+/** `load` for a 3D model. */
+export interface SketchorViewModelLoadDetail {
   name: string;
+  kind: "3d";
   /** Number of parts (meshes / bodies) in the model. */
   parts: number;
   /** True when the parsed model came from the IndexedDB cache. */
   cached: boolean;
 }
+
+/** `load` for a 2D drawing. */
+export interface SketchorViewDrawingLoadDetail {
+  name: string;
+  kind: "2d";
+  /** Number of objects drawn (lines, arcs, texts, block instances…). */
+  entities: number;
+  /** What the importer could not read exactly, if anything. */
+  warnings: string[];
+}
+
+export type SketchorViewLoadDetail = SketchorViewModelLoadDetail | SketchorViewDrawingLoadDetail;
 
 export interface SketchorViewErrorDetail {
   message: string;
@@ -28,8 +49,10 @@ export type SketchorViewEventMap = Omit<HTMLElementEventMap, "load" | "error"> &
 };
 
 /**
- * `<sketchor-view src="part.glb" autoplay>` — an animated, orbitable preview
- * of a CAD file. Attributes: `src`, `format`, `autoplay`, `motion`, `theme`,
+ * `<sketchor-view src="part.glb" autoplay>` — an animated preview of a CAD
+ * file: orbitable 3D for meshes, a floating 2D view for drawings. `motion`:
+ * `turntable` | `none` (3D), `float` | `draw` | `none` (2D). Attributes:
+ * `src`, `format`, `autoplay`, `motion`, `theme`,
  * `background`, `controls`, `full-url`, `logo`, `up`, `max-size`, `loading`,
  * `label`, `cache`.
  */
@@ -49,6 +72,7 @@ export declare class SketchorView extends HTMLElement {
 }
 
 export declare const PREVIEW_FORMATS: readonly PreviewFormat[];
+export declare const DRAWING_FORMATS: readonly DrawingFormat[];
 export declare function sniffFormat(name: string, bytes: Uint8Array | null, override?: string | null): FormatVerdict;
 export declare function resolveFullUrl(attr: string | null, absoluteSrc: string | null): string | null;
 export declare function fileNameFromSrc(src: string): string;
