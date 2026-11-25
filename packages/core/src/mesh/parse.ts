@@ -20,6 +20,8 @@ export interface MeshPart {
 export interface MeshParseResult {
   parts: MeshPart[];
   warnings: string[];
+  /** F-11: what the file says about itself (3MF `<metadata>`: Title, Designer, Application…). */
+  metadata?: Record<string, string>;
 }
 
 export type MeshFormat = "stl" | "obj" | "ply";
@@ -40,53 +42,130 @@ const dec = (b: Uint8Array): string => new TextDecoder("utf-8").decode(b);
 
 /* ----------------------------------- STL ---------------------------------- */
 
-export function parseStl(bytes: Uint8Array, name = "Part"): MeshParseResult {
-  const warnings: string[] = [];
+/** Triangles past this are not read (≈ 1 GB of binary STL); the file is reported as too big. */
+export const MAX_STL_TRIANGLES = 20_000_000;
+
+/**
+ * F-11: binary or ASCII? Many binary STLs start with "solid" (SolidWorks
+ * writes its part name there), so the prefix proves nothing. A binary file
+ * whose size is exactly 84 + 50 × count is binary; otherwise it is ASCII only
+ * if its head reads as text with STL keywords and no NUL bytes.
+ */
+export function stlIsBinary(bytes: Uint8Array): boolean {
+  if (bytes.length < 84) return false;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let binary = false;
-  if (bytes.length >= 84) {
-    const n = view.getUint32(80, true);
-    if (84 + n * 50 === bytes.length) binary = true;
-    else if (!/^\s*solid/i.test(dec(bytes.subarray(0, 5)))) binary = true; // "solid" header absent: can only be binary
-    else if (!dec(bytes.subarray(0, Math.min(bytes.length, 4096))).includes("facet")) binary = true;
-  }
-  const pos: number[] = [];
-  if (binary) {
-    if (bytes.length < 84) throw new Error("not an STL file (too short)");
-    let n = view.getUint32(80, true);
-    const fit = Math.floor((bytes.length - 84) / 50);
-    if (n > fit) {
-      warnings.push(`STL is truncated: header says ${n} triangles, ${fit} present`);
-      n = fit;
-    }
-    for (let t = 0; t < n; t++) {
-      const o = 84 + t * 50 + 12; // skip the stored normal
-      for (let k = 0; k < 9; k++) pos.push(view.getFloat32(o + k * 4, true));
-    }
-  } else {
-    const re = /vertex\s+(\S+)\s+(\S+)\s+(\S+)/gi;
-    const text = dec(bytes);
-    for (let m = re.exec(text); m; m = re.exec(text)) pos.push(+m[1], +m[2], +m[3]);
-    if (pos.length % 9 !== 0) {
-      warnings.push("STL ends mid-facet; the last incomplete triangle was dropped");
-      pos.length -= pos.length % 9;
-    }
-  }
-  return { parts: [soupToPart(name, pos)], warnings };
+  const n = view.getUint32(80, true);
+  if (84 + n * 50 === bytes.length) return true;
+  const head = bytes.subarray(0, Math.min(bytes.length, 4096));
+  if (head.includes(0)) return true;
+  const text = dec(head);
+  return !(/^\s*solid/i.test(text) && /\bfacet\b/i.test(text) && /\bvertex\b/i.test(text));
 }
 
-/** Triangle soup (9 floats per triangle) -> a part; non-finite triangles are dropped. */
-function soupToPart(name: string, pos: number[]): MeshPart {
+export function parseStl(bytes: Uint8Array, name = "Part"): MeshParseResult {
+  return stlIsBinary(bytes) ? parseStlBinary(bytes, name) : parseStlAscii(bytes, name);
+}
+
+/** RGB555 → 0–255. */
+const c5 = (v: number): number => Math.round(((v & 31) * 255) / 31);
+/** Facets with no colour of their own in a file where others have one. */
+const STL_DEFAULT_GREY: [number, number, number] = [180, 180, 180];
+
+function parseStlBinary(bytes: Uint8Array, name: string): MeshParseResult {
+  const warnings: string[] = [];
+  if (bytes.length < 84) throw new Error("not an STL file (too short)");
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const header = new TextDecoder("latin1").decode(bytes.subarray(0, 80));
+  const stated = view.getUint32(80, true);
+  const room = Math.floor((bytes.length - 84) / 50);
+  let n = stated;
+  if ((bytes.length - 84) % 50 === 0 && stated !== room) {
+    // The body is whole facets: the header count is the thing that's wrong (0 is common).
+    warnings.push(`STL header says ${stated.toLocaleString("en-US")} triangles but the file holds ${room.toLocaleString("en-US")}; all of them were read`);
+    n = room;
+  } else if (stated > room) {
+    warnings.push(`STL is truncated: header says ${stated} triangles, ${room} present`);
+    n = room;
+  } else if (84 + stated * 50 < bytes.length) {
+    warnings.push(`STL has ${bytes.length - 84 - stated * 50} extra bytes after its ${stated} triangles; they were ignored`);
+  }
+  if (n > MAX_STL_TRIANGLES) throw new Error(`the STL has ${n.toLocaleString("en-US")} triangles — more than the ${MAX_STL_TRIANGLES.toLocaleString("en-US")} Sketchor reads`);
+
+  // Colour in the 2-byte attribute: Materialise Magics marks its files with "COLOR=r g b a" in the
+  // header (a default colour; bit 15 *clear* = the facet's own RGB, red in the low bits); otherwise
+  // VisCAM/SolidView (bit 15 *set* = valid, blue in the low bits).
+  const magicsAt = header.indexOf("COLOR=");
+  const magics = magicsAt >= 0 && magicsAt + 10 <= 80;
+  const magicsDefault: [number, number, number] = magics ? [bytes[magicsAt + 6], bytes[magicsAt + 7], bytes[magicsAt + 8]] : STL_DEFAULT_GREY;
+  const pos = new Float32Array(n * 9);
+  const facetColor = new Uint8Array(n * 3);
+  let colored = 0;
+  for (let t = 0; t < n; t++) {
+    const o = 84 + t * 50;
+    // The stored normal (o .. o+12) is ignored: renderers recompute it from the winding.
+    for (let k = 0; k < 9; k++) pos[t * 9 + k] = view.getFloat32(o + 12 + k * 4, true);
+    const attr = view.getUint16(o + 48, true);
+    let rgb: [number, number, number] | null = null;
+    if (magics) rgb = attr & 0x8000 ? magicsDefault : [c5(attr), c5(attr >> 5), c5(attr >> 10)];
+    else if (attr & 0x8000) rgb = [c5(attr >> 10), c5(attr >> 5), c5(attr)];
+    if (rgb) colored++;
+    facetColor.set(rgb ?? STL_DEFAULT_GREY, t * 3);
+  }
+  const part = soupToPart(name, pos, colored > 0 || magics ? facetColor : undefined);
+  return { parts: [part], warnings };
+}
+
+function parseStlAscii(bytes: Uint8Array, fallbackName: string): MeshParseResult {
+  const warnings: string[] = [];
+  const text = dec(bytes);
+  // One part per `solid … endsolid` block (multi-body exports put several in one file).
+  const parts: MeshPart[] = [];
+  const solidRe = /(^|\n)\s*solid\b([^\n]*)/gi;
+  const starts: { at: number; name: string }[] = [];
+  for (let m = solidRe.exec(text); m; m = solidRe.exec(text)) starts.push({ at: m.index, name: m[2].trim() });
+  if (starts.length === 0) starts.push({ at: 0, name: "" });
+  let dropped = false;
+  let total = 0;
+  for (let i = 0; i < starts.length; i++) {
+    const body = text.slice(starts[i].at, i + 1 < starts.length ? starts[i + 1].at : text.length);
+    const pos: number[] = [];
+    const re = /vertex\s+(\S+)\s+(\S+)\s+(\S+)/gi;
+    for (let m = re.exec(body); m; m = re.exec(body)) pos.push(+m[1], +m[2], +m[3]);
+    if (pos.length % 9 !== 0) {
+      dropped = true;
+      pos.length -= pos.length % 9;
+    }
+    total += pos.length / 9;
+    if (total > MAX_STL_TRIANGLES) throw new Error(`the STL has more than the ${MAX_STL_TRIANGLES.toLocaleString("en-US")} triangles Sketchor reads`);
+    if (pos.length === 0) continue;
+    const label = starts[i].name || (starts.length > 1 ? `${fallbackName} ${parts.length + 1}` : fallbackName);
+    parts.push(soupToPart(label, pos));
+  }
+  if (dropped) warnings.push("STL ends mid-facet; the last incomplete triangle was dropped");
+  if (parts.length === 0) parts.push(soupToPart(fallbackName, []));
+  return { parts, warnings };
+}
+
+/** Triangle soup (9 floats per triangle) -> a part; non-finite triangles are dropped. `facetRgb` (3 bytes per triangle) becomes per-vertex colour. */
+function soupToPart(name: string, pos: ArrayLike<number>, facetRgb?: Uint8Array): MeshPart {
   const keep: number[] = [];
+  const keepColor: number[] = [];
   for (let t = 0; t + 9 <= pos.length; t += 9) {
     let ok = true;
     for (let k = 0; k < 9; k++) if (!Number.isFinite(pos[t + k])) ok = false;
-    if (ok) for (let k = 0; k < 9; k++) keep.push(pos[t + k]);
+    if (!ok) continue;
+    for (let k = 0; k < 9; k++) keep.push(pos[t + k]);
+    if (facetRgb) {
+      const f = (t / 9) * 3;
+      for (let c = 0; c < 3; c++) keepColor.push(facetRgb[f], facetRgb[f + 1], facetRgb[f + 2]);
+    }
   }
   const positions = Float32Array.from(keep);
   const indices = new Uint32Array(positions.length / 3);
   for (let i = 0; i < indices.length; i++) indices[i] = i;
-  return { name, positions, indices };
+  const part: MeshPart = { name, positions, indices };
+  if (facetRgb) part.colors = Uint8Array.from(keepColor);
+  return part;
 }
 
 /* ----------------------------------- OBJ ---------------------------------- */

@@ -321,7 +321,20 @@ export function parseGltf(bytes: Uint8Array, name = "Part", opts: MeshParseOptio
 
 /* ---------------------------------- ZIP ----------------------------------- */
 
-export async function unzip(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
+/** F-11: hostile-archive limits. One entry may inflate to this much… */
+export const MAX_ZIP_ENTRY_BYTES = 512 * 1024 * 1024;
+/** …and the entries one file reads, together, to this. */
+export const MAX_ZIP_TOTAL_BYTES = 1024 * 1024 * 1024;
+const MAX_ZIP_ENTRIES = 10_000;
+
+/** A ZIP's entries by name, each inflated only when read (a 3MF's textures and thumbnail are never touched). */
+export interface ZipReader {
+  names: string[];
+  has(name: string): boolean;
+  read(name: string): Promise<Uint8Array | undefined>;
+}
+
+export function openZip(bytes: Uint8Array, limits: { maxEntryBytes?: number; maxTotalBytes?: number } = {}): ZipReader {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let eocd = -1;
   for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65535); i--) {
@@ -329,8 +342,9 @@ export async function unzip(bytes: Uint8Array): Promise<Map<string, Uint8Array>>
   }
   if (eocd < 0) throw new Error("not a ZIP archive");
   const count = dv.getUint16(eocd + 10, true);
+  if (count > MAX_ZIP_ENTRIES) throw new Error(`the archive lists ${count} files — too many to be a model`);
   let o = dv.getUint32(eocd + 16, true);
-  const out = new Map<string, Uint8Array>();
+  const entries = new Map<string, { method: number; raw: Uint8Array }>();
   for (let i = 0; i < count; i++) {
     if (o + 46 > bytes.length || dv.getUint32(o, true) !== 0x02014b50) break;
     const method = dv.getUint16(o + 10, true);
@@ -341,23 +355,90 @@ export async function unzip(bytes: Uint8Array): Promise<Map<string, Uint8Array>>
     o += 46 + nlen + xlen + clen;
     if (lho + 30 > bytes.length || dv.getUint32(lho, true) !== 0x04034b50) continue;
     const start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
-    const raw = bytes.subarray(start, start + csize);
-    if (method === 0) out.set(fname, raw);
-    else if (method === 8) out.set(fname, await inflateRaw(raw));
+    if (method === 0 || method === 8) entries.set(fname, { method, raw: bytes.subarray(start, start + csize) });
   }
+  let budget = limits.maxTotalBytes ?? MAX_ZIP_TOTAL_BYTES;
+  const perEntry = limits.maxEntryBytes ?? MAX_ZIP_ENTRY_BYTES;
+  const cache = new Map<string, Promise<Uint8Array>>();
+  // Part names are case-insensitive in OPC (3MF's packaging), and may be written with a leading slash.
+  const byLower = new Map([...entries.keys()].map((k) => [k.replace(/^\//, "").toLowerCase(), k]));
+  const resolve = (name: string) => byLower.get(name.replace(/^\//, "").toLowerCase());
+  return {
+    names: [...entries.keys()],
+    has: (name) => resolve(name) !== undefined,
+    read(name) {
+      const key = resolve(name);
+      if (key === undefined) return Promise.resolve(undefined);
+      let p = cache.get(key);
+      if (!p) {
+        const e = entries.get(key)!;
+        p = (async () => {
+          const out = e.method === 0 ? e.raw : await inflateRaw(e.raw, Math.min(perEntry, budget));
+          budget -= out.length;
+          return out;
+        })();
+        cache.set(key, p);
+      }
+      return p;
+    },
+  };
+}
+
+/** Every entry, inflated (small archives and tests; parsers use {@link openZip}). */
+export async function unzip(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
+  const z = openZip(bytes);
+  const out = new Map<string, Uint8Array>();
+  for (const n of z.names) out.set(n, (await z.read(n))!);
   return out;
 }
 
-async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
-  const stream = new Blob([data as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+/** Inflates, giving up as soon as the output passes `limit` — a zip bomb costs its first `limit` bytes, not all of memory. */
+async function inflateRaw(data: Uint8Array, limit: number): Promise<Uint8Array> {
+  const reader = new Blob([data as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > limit) {
+      await reader.cancel().catch(() => {});
+      throw new Error("a file inside the archive inflates to more than a model can be (a zip bomb?)");
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.length;
+  }
+  return out;
 }
 
 /* ----------------------------------- 3MF ---------------------------------- */
 
 const UNIT_MM: Record<string, number> = { micron: 0.001, millimeter: 1, centimeter: 10, meter: 1000, inch: 25.4, foot: 304.8 };
 
-interface ObjDef { id: string; name: string; pid?: string; pindex?: number; positions: number[]; tris: number[]; triColors: (string | undefined)[]; comps: { id: string; m: M }[] }
+/** Total vertices + triangles one 3MF may declare; past it the file is refused rather than exhausting memory. */
+export const MAX_3MF_ELEMENTS = 60_000_000;
+
+const REL_3DMODEL = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel";
+
+interface Tri { v: [number, number, number]; pid?: string; p?: [number | undefined, number | undefined, number | undefined] }
+interface ObjDef {
+  key: string;
+  path: string;
+  name: string;
+  type: string;
+  pid?: string;
+  pindex?: number;
+  positions: number[];
+  tris: Tri[];
+  comps: { key: string; m: M }[];
+}
+/** A property group: colours by index, or a texture group (drawn in the fallback colour). */
+type PropGroup = { kind: "colors"; colors: ([number, number, number] | null)[] } | { kind: "texture" };
 
 /** 3MF affine "m00 m01 m02 m10 … m32" (row-vector convention) -> column-major 4x4. */
 function affine3mf(s: string | undefined): M {
@@ -366,85 +447,219 @@ function affine3mf(s: string | undefined): M {
   return [v[0], v[1], v[2], 0, v[3], v[4], v[5], 0, v[6], v[7], v[8], 0, v[9], v[10], v[11], 1];
 }
 
+const det3 = (m: M): number => m[0] * (m[5] * m[10] - m[9] * m[6]) - m[4] * (m[1] * m[10] - m[9] * m[2]) + m[8] * (m[1] * m[6] - m[5] * m[2]);
+
+/** Attributes of a tag; namespace prefixes are kept as written (`p:path`) and also stored bare. */
 const attrs = (s: string): Record<string, string> => {
   const o: Record<string, string> = {};
-  for (const m of s.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) o[m[1].replace(/^.*:/, "")] = m[2];
+  for (const m of s.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) {
+    const v = unxml(m[2]);
+    o[m[1]] = v;
+    const bare = m[1].replace(/^.*:/, "");
+    if (!(bare in o)) o[bare] = v;
+  }
   return o;
 };
+const unxml = (s: string): string =>
+  s.replace(/&(lt|gt|amp|quot|apos|#\d+|#x[0-9a-f]+);/gi, (_, e: string) =>
+    e === "lt" ? "<" : e === "gt" ? ">" : e === "amp" ? "&" : e === "quot" ? '"' : e === "apos" ? "'" : String.fromCodePoint(e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : +e.slice(1)),
+  );
 
-export async function parse3mf(bytes: Uint8Array, name = "Part"): Promise<MeshParseResult> {
-  const warnings: string[] = [];
-  const files = await unzip(bytes);
-  let modelPath = "3D/3dmodel.model";
-  const rels = files.get("_rels/.rels");
+/** "#RRGGBB" or "#RRGGBBAA" → RGB. */
+const hexRgb = (s: string | undefined): [number, number, number] | null => {
+  const m = s && /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(s.trim());
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null;
+};
+
+/** The root model part a 3MF's `_rels/.rels` names (falling back to the usual path, then any `.model`). */
+function rootModelPath(z: ZipReader, rels: string | null): string | undefined {
   if (rels) {
-    const m = /Target="([^"]*3dmodel[^"]*)"/i.exec(new TextDecoder().decode(rels));
-    if (m) modelPath = m[1].replace(/^\//, "");
+    for (const m of rels.matchAll(/<Relationship\b([^>]*)>/gi)) {
+      const a = attrs(m[1]);
+      if ((a.Type ?? "").toLowerCase() === REL_3DMODEL && a.Target && z.has(a.Target)) return a.Target.replace(/^\//, "");
+    }
   }
-  const raw = files.get(modelPath) ?? [...files.entries()].find(([k]) => /\.model$/i.test(k))?.[1];
-  if (!raw) throw new Error("3MF archive has no 3D model part");
-  const xml = new TextDecoder().decode(raw);
+  if (z.has("3D/3dmodel.model")) return "3D/3dmodel.model";
+  return z.names.find((k) => /\.model$/i.test(k));
+}
 
-  const unit = UNIT_MM[/<model[^>]*\bunit="(\w+)"/i.exec(xml)?.[1]?.toLowerCase() ?? "millimeter"] ?? 1;
-  const materials = new Map<string, string[]>(); // basematerials id -> colour hex per index
-  const objs = new Map<string, ObjDef>();
-  const buildItems: { id: string; m: M }[] = [];
-  let cur: ObjDef | null = null;
-  let curMat: string | null = null;
-  let inBuild = false;
-  for (const t of xml.matchAll(/<(\/?)([\w:.-]+)([^>]*?)(\/?)>/g)) {
-    const closing = t[1] === "/";
-    const tag = t[2].replace(/^.*:/, "");
-    const a = attrs(t[3]);
-    if (tag === "basematerials") {
-      curMat = closing ? null : a.id ?? null;
-      if (curMat) materials.set(curMat, []);
-    } else if (tag === "base" && curMat) materials.get(curMat)!.push(a.displaycolor ?? "");
-    else if (tag === "object" && !closing) {
-      cur = { id: a.id, name: a.name || "", pid: a.pid, pindex: a.pindex !== undefined ? +a.pindex : undefined, positions: [], tris: [], triColors: [], comps: [] };
-      objs.set(a.id, cur);
-      if (t[4] === "/") cur = null;
-    } else if (tag === "object" && closing) cur = null;
-    else if (tag === "vertex" && cur) cur.positions.push(+a.x, +a.y, +a.z);
-    else if (tag === "triangle" && cur) {
-      cur.tris.push(+a.v1, +a.v2, +a.v3);
-      cur.triColors.push(a.p1 !== undefined && a.pid ? `${a.pid}:${a.p1}` : undefined);
-    } else if (tag === "component" && cur) cur.comps.push({ id: a.objectid, m: affine3mf(a.transform) });
-    else if (tag === "build") inBuild = !closing;
-    else if (tag === "item" && inBuild) buildItems.push({ id: a.objectid, m: affine3mf(a.transform) });
-  }
+/**
+ * F-05/F-11: a 3MF package — the Core spec plus what slicers write:
+ * `_rels` resolution, the production extension's `p:path` (objects in other
+ * `.model` parts), components, build-item transforms (mirrors keep their
+ * outward winding), units, object types (support and other non-model
+ * objects are left out), `basematerials` and `colorgroup` colours per object,
+ * triangle or corner, and the model's metadata. Textures draw in their
+ * fallback colour; beam lattices and slices are named in a warning.
+ */
+export async function parse3mf(bytes: Uint8Array, name = "Part"): Promise<MeshParseResult> {
+  const warnings = new Set<string>();
+  const z = openZip(bytes);
+  const relsBytes = await z.read("_rels/.rels");
+  const root = rootModelPath(z, relsBytes ? new TextDecoder().decode(relsBytes) : null);
+  if (!root) throw new Error("3MF archive has no 3D model part");
+
+  const groups = new Map<string, PropGroup>(); // "<path>#<id>"
+  const objs = new Map<string, ObjDef>(); // "<path>#<id>"
+  const metadata: Record<string, string> = {};
+  let elements = 0;
+  let unit = 1;
+  const loaded = new Set<string>();
+
+  const loadModel = async (path: string, depth: number): Promise<void> => {
+    const norm = path.replace(/^\//, "");
+    if (loaded.has(norm.toLowerCase()) || depth > 8) return;
+    loaded.add(norm.toLowerCase());
+    const raw = await z.read(norm);
+    if (!raw) {
+      warnings.add(`the 3MF refers to a model part it doesn't contain (${norm})`);
+      return;
+    }
+    const xml = new TextDecoder().decode(raw);
+    if (/<!ENTITY/i.test(xml)) throw new Error("the 3MF declares XML entities, which a model never needs — refused");
+    if (depth === 0) {
+      unit = UNIT_MM[/<model\b[^>]*\bunit="(\w+)"/i.exec(xml)?.[1]?.toLowerCase() ?? "millimeter"] ?? 1;
+      for (const m of xml.matchAll(/<metadata\b([^>]*)>([^<]*)<\/metadata>/gi)) {
+        const a = attrs(m[1]);
+        const v = unxml(m[2]).trim();
+        if (a.name && v && Object.keys(metadata).length < 64) metadata[a.name.replace(/^.*:/, "")] = v.slice(0, 500);
+      }
+    }
+    if (/<([\w-]+:)?beamlattice\b/i.test(xml)) warnings.add("beam lattices in this 3MF are not shown (only the triangle mesh is)");
+    if (/<([\w-]+:)?slicestack\b/i.test(xml)) warnings.add("slice data in this 3MF is ignored; the triangle mesh is shown");
+    if (/<([\w-]+:)?texture2dgroup\b/i.test(xml)) warnings.add("textures are not shown; textured faces use their fallback colour");
+
+    const key = (id: string | undefined, p?: string) => `${(p ?? norm).replace(/^\//, "").toLowerCase()}#${id ?? ""}`;
+    const refs: string[] = [];
+    let cur: ObjDef | null = null;
+    let curGroup: PropGroup | null = null;
+    for (const t of xml.matchAll(/<(\/?)([\w:.-]+)([^>]*?)(\/?)>/g)) {
+      const closing = t[1] === "/";
+      const tag = t[2].replace(/^.*:/, "");
+      if (tag === "basematerials" || tag === "colorgroup" || tag === "texture2dgroup" || tag === "compositematerials" || tag === "multiproperties") {
+        if (closing) curGroup = null;
+        else {
+          const a = attrs(t[3]);
+          curGroup = tag === "basematerials" || tag === "colorgroup" ? { kind: "colors", colors: [] } : { kind: "texture" };
+          if (a.id) groups.set(key(a.id), curGroup);
+          if (t[4] === "/") curGroup = null;
+        }
+        continue;
+      }
+      if (closing) {
+        if (tag === "object") cur = null;
+        continue;
+      }
+      if ((tag === "base" || tag === "color") && curGroup?.kind === "colors") {
+        const a = attrs(t[3]);
+        curGroup.colors.push(hexRgb(tag === "base" ? a.displaycolor : a.color));
+      } else if (tag === "object") {
+        const a = attrs(t[3]);
+        cur = { key: key(a.id), path: norm, name: a.name || "", type: (a.type || "model").toLowerCase(), pid: a.pid, pindex: a.pindex !== undefined ? +a.pindex : undefined, positions: [], tris: [], comps: [] };
+        objs.set(cur.key, cur);
+        if (t[4] === "/") cur = null;
+      } else if (tag === "vertex" && cur) {
+        if (++elements > MAX_3MF_ELEMENTS) throw new Error("the 3MF is too large to open (over 60 million vertices and triangles)");
+        const a = attrs(t[3]);
+        cur.positions.push(+a.x, +a.y, +a.z);
+      } else if (tag === "triangle" && cur) {
+        if (++elements > MAX_3MF_ELEMENTS) throw new Error("the 3MF is too large to open (over 60 million vertices and triangles)");
+        const a = attrs(t[3]);
+        const tri: Tri = { v: [+a.v1, +a.v2, +a.v3] };
+        if (a.pid !== undefined || a.p1 !== undefined) {
+          tri.pid = a.pid;
+          const n = (v: string | undefined) => (v === undefined ? undefined : +v);
+          tri.p = [n(a.p1), n(a.p2), n(a.p3)];
+        }
+        cur.tris.push(tri);
+      } else if (tag === "component" && cur) {
+        const a = attrs(t[3]);
+        const p = a["p:path"];
+        if (p) refs.push(p);
+        cur.comps.push({ key: key(a.objectid, p), m: affine3mf(a.transform) });
+      } else if (tag === "item") {
+        const a = attrs(t[3]);
+        if (depth === 0) {
+          const p = a["p:path"];
+          if (p) refs.push(p);
+          buildItems.push({ key: key(a.objectid, p), m: affine3mf(a.transform) });
+        }
+      }
+    }
+    for (const r of refs) await loadModel(r, depth + 1);
+  };
+  const buildItems: { key: string; m: M }[] = [];
+  await loadModel(root, 0);
 
   const parts: MeshPart[] = [];
-  const hex = (s: string | undefined): [number, number, number] | null => {
-    const m = s && /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(s);
-    return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null;
+  let leftOut = 0;
+  const colorOf = (path: string, pid: string | undefined, index: number | undefined): [number, number, number] | null => {
+    if (pid === undefined || index === undefined || !Number.isInteger(index)) return null;
+    const g = groups.get(`${path.toLowerCase()}#${pid}`);
+    return g?.kind === "colors" ? g.colors[index] ?? null : null;
   };
   const emit = (o: ObjDef, m: M, label: string, depth: number): void => {
     if (depth > 16 || parts.length > 5000) return;
+    if (o.type !== "model") {
+      leftOut++;
+      return;
+    }
     if (o.tris.length) {
       const nv = o.positions.length / 3;
-      const idx: number[] = [];
-      for (let i = 0; i + 2 < o.tris.length; i += 3) {
-        const a = o.tris[i], b = o.tris[i + 1], c = o.tris[i + 2];
-        if ([a, b, c].every((x) => Number.isInteger(x) && x >= 0 && x < nv)) idx.push(a, b, c);
-      }
-      const part: MeshPart = { name: label || o.name || `${name} ${parts.length + 1}`, positions: applyM(m, Float32Array.from(o.positions)), indices: Uint32Array.from(idx) };
-      // Per-object colour (pid/pindex) -> uniform vertex colour; per-triangle colours are not tracked.
-      const mat = o.pid !== undefined && o.pindex !== undefined ? hex(materials.get(o.pid)?.[o.pindex]) : null;
-      if (mat) {
-        const c = new Uint8Array(nv * 3);
-        for (let i = 0; i < nv; i++) c.set(mat, i * 3);
-        part.colors = c;
+      const objColor = colorOf(o.path, o.pid, o.pindex);
+      const flip = det3(m) < 0; // a mirroring transform turns the winding inside out
+      const good = o.tris.filter((t) => t.v.every((x) => Number.isInteger(x) && x >= 0 && x < nv));
+      // Corner colours: a triangle's own pid/p1..p3, else the object's default.
+      const corner = (t: Tri, k: number): [number, number, number] | null => {
+        if (!t.p) return objColor;
+        const idx = t.p[k] ?? t.p[0];
+        return colorOf(o.path, t.pid ?? o.pid, idx) ?? objColor;
+      };
+      const perTriangle = good.some((t) => t.p);
+      let part: MeshPart;
+      const pname = label || o.name || `${name} ${parts.length + 1}`;
+      if (!perTriangle) {
+        const idx = new Uint32Array(good.length * 3);
+        good.forEach((t, i) => idx.set(flip ? [t.v[0], t.v[2], t.v[1]] : t.v, i * 3));
+        part = { name: pname, positions: applyM(m, Float32Array.from(o.positions)), indices: idx };
+        if (objColor) {
+          const c = new Uint8Array(nv * 3);
+          for (let i = 0; i < nv; i++) c.set(objColor, i * 3);
+          part.colors = c;
+        }
+      } else {
+        // Colours that change from triangle to triangle: every corner gets its own vertex.
+        const pos = new Float32Array(good.length * 9);
+        const col = new Uint8Array(good.length * 9);
+        good.forEach((t, i) => {
+          const order = flip ? [0, 2, 1] : [0, 1, 2];
+          order.forEach((k, j) => {
+            const v = t.v[k];
+            pos.set(o.positions.slice(v * 3, v * 3 + 3), i * 9 + j * 3);
+            col.set(corner(t, k) ?? [180, 180, 180], i * 9 + j * 3);
+          });
+        });
+        const idx = new Uint32Array(good.length * 3);
+        for (let i = 0; i < idx.length; i++) idx[i] = i;
+        part = { name: pname, positions: applyM(m, pos), indices: idx, colors: col };
       }
       parts.push(part);
     }
     for (const c of o.comps) {
-      const child = objs.get(c.id);
+      const child = objs.get(c.key);
       if (child) emit(child, mul(m, c.m), child.name, depth + 1);
     }
   };
   const base = scaleM(unit);
-  if (buildItems.length) for (const it of buildItems) { const o = objs.get(it.id); if (o) emit(o, mul(base, it.m), o.name, 0); }
-  else for (const o of objs.values()) emit(o, base, o.name, 0);
-  return { parts, warnings };
+  if (buildItems.length) {
+    for (const it of buildItems) {
+      const o = objs.get(it.key);
+      if (o) emit(o, mul(base, it.m), o.name, 0);
+      else warnings.add("a build item names an object the 3MF doesn't define");
+    }
+  } else for (const o of objs.values()) if (o.path === root) emit(o, base, o.name, 0);
+  if (leftOut) warnings.add(`${leftOut} support or non-model object${leftOut === 1 ? " was" : "s were"} left out`);
+  const result: MeshParseResult = { parts, warnings: [...warnings] };
+  if (Object.keys(metadata).length) result.metadata = metadata;
+  return result;
 }

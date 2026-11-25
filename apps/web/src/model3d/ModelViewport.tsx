@@ -221,6 +221,9 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
   const density = useViewer((v) => v.density);
   const setDensity = useViewer((v) => v.setDensity);
   const [showEdges, setShowEdges] = useState(true);
+  // F-11: the reader's notes for this file, until dismissed (per model, so the next file shows its own).
+  const [notesDismissedFor, setNotesFor] = useState<string | null>(null);
+  const notes = notesDismissedFor === model.hash ? [] : (model.importNotes ?? []);
   /** The span the current selection measures; the overlay re-projects it every frame. */
   const segmentRef = useRef<MeasureSegment | null>(null);
   /** The overlay's re-projection, so a new measurement can draw itself without waiting for a frame. */
@@ -961,7 +964,7 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
     .join(" ↔ ");
 
   return (
-    <div className="model-stage" ref={hostRef} data-testid="model-viewport">
+    <div className={`model-stage${notes.length > 0 ? " has-notes" : ""}`} ref={hostRef} data-testid="model-viewport">
       <canvas
         ref={canvasRef}
         className="model-canvas"
@@ -986,6 +989,14 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
       <div ref={labelRef} className="model-measure-label" data-testid="model-measure-label" style={{ display: "none" }}>
         {spanLength}
       </div>
+      {notes.length > 0 && (
+        <div className="import-banner warn model-import-notes" data-testid="model-import-notes" role="status">
+          <span className="import-banner-summary">{notes.join(" · ")}</span>
+          <button className="btn ghost" onClick={() => setNotesFor(model.hash)} title="Dismiss">
+            ✕
+          </button>
+        </div>
+      )}
       <div className="model-toolbar" data-testid="model-toolbar">
         <ToolButton title="Isometric (1)" label="Iso" icon={ICONS.iso} onClick={() => fitAll("iso")} testId="model-view-iso" />
         <ToolButton title="Top (2)" label="Top" icon={ICONS.top} onClick={() => fitAll("top")} testId="model-view-top" />

@@ -5,61 +5,12 @@
  */
 import { describe, expect, it } from "vitest";
 import { anyMeshFormatOf, gltfUsesDraco, parse3mf, parseAnyMesh, parseGltf, unzip } from "./parse2";
+import { writeZip } from "./zipWrite";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
-function crc32(b: Uint8Array): number {
-  let c, crc = ~0;
-  for (let i = 0; i < b.length; i++) {
-    c = (crc ^ b[i]) & 0xff;
-    for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xedb88320 : c >>> 1;
-    crc = (crc >>> 8) ^ c;
-  }
-  return ~crc >>> 0;
-}
-
-/** Minimal ZIP writer: files are stored, or deflated when `deflate` is set. */
-async function zip(files: Record<string, string>, deflate = false): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = [];
-  const central: Uint8Array[] = [];
-  let offset = 0;
-  for (const [name, text] of Object.entries(files)) {
-    const data = enc(text);
-    let body = data;
-    if (deflate) body = new Uint8Array(await new Response(new Blob([data as BlobPart]).stream().pipeThrough(new CompressionStream("deflate-raw"))).arrayBuffer());
-    const n = enc(name);
-    const lh = new DataView(new ArrayBuffer(30));
-    lh.setUint32(0, 0x04034b50, true);
-    lh.setUint16(8, deflate ? 8 : 0, true);
-    lh.setUint32(14, crc32(data), true);
-    lh.setUint32(18, body.length, true);
-    lh.setUint32(22, data.length, true);
-    lh.setUint16(26, n.length, true);
-    const cd = new DataView(new ArrayBuffer(46));
-    cd.setUint32(0, 0x02014b50, true);
-    cd.setUint16(10, deflate ? 8 : 0, true);
-    cd.setUint32(16, crc32(data), true);
-    cd.setUint32(20, body.length, true);
-    cd.setUint32(24, data.length, true);
-    cd.setUint16(28, n.length, true);
-    cd.setUint32(42, offset, true);
-    chunks.push(new Uint8Array(lh.buffer), n, body);
-    central.push(new Uint8Array(cd.buffer), n);
-    offset += 30 + n.length + body.length;
-  }
-  const cdSize = central.reduce((s, c) => s + c.length, 0);
-  const end = new DataView(new ArrayBuffer(22));
-  end.setUint32(0, 0x06054b50, true);
-  end.setUint16(8, Object.keys(files).length, true);
-  end.setUint16(10, Object.keys(files).length, true);
-  end.setUint32(12, cdSize, true);
-  end.setUint32(16, offset, true);
-  const all = [...chunks, ...central, new Uint8Array(end.buffer)];
-  const out = new Uint8Array(all.reduce((s, c) => s + c.length, 0));
-  let o = 0;
-  for (const c of all) { out.set(c, o); o += c.length; }
-  return out;
-}
+/** Stored, or deflated when `deflate` is set (the core writer, which F-11's 3MF export uses). */
+const zip = (files: Record<string, string>, deflate = false) => writeZip(files, { deflate });
 
 const MODEL = (unit: string) => `<?xml version="1.0"?><model unit="${unit}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
 <resources>
