@@ -65,6 +65,15 @@ Nothing here changes Sketchor's own AGPL-3.0 license.
 
 three.js (MIT) renders the result.
 
+## SVG thumbnails in Windows Explorer — Apache-2.0 OR MIT
+
+The Explorer thumbnail DLL (`native/dxf-thumbnailer`) rasterises `.svg` files
+with [resvg](https://github.com/linebender/resvg) and its `usvg` / `tiny-skia`
+stack (the linebender project; **Apache-2.0 OR MIT**), through
+`native/svg-raster`. These are regular Cargo dependencies, statically linked
+into the DLL. Both licences are compatible with the GPL/AGPL. Sketchor uses
+them under MIT.
+
 ## Built-in theme palettes
 
 The Nord, Solarized (Dark/Light) and Monokai themes in

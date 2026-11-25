@@ -74,7 +74,7 @@ Write-Host "Verified thumbnail handler registration."
 # elevation once (UAC prompt); declining leaves Explorer showing icons.
 $thumbCat = "{E357FCCD-A995-4576-B01F-234630154E96}"
 $clsid = "{6F9E2A31-7C4B-4D8E-9A1F-2B3C4D5E6F70}"
-$exts = ".dxf", ".step", ".stp", ".iges", ".igs", ".eps", ".ai"
+$exts = ".dxf", ".step", ".stp", ".iges", ".igs", ".eps", ".ai", ".svg"
 $missing = $exts | Where-Object { -not (Test-Path "HKLM:\Software\Classes\$_\ShellEx\$thumbCat") }
 if ($missing) {
   Write-Host "Creating machine-wide thumbnail markers for $($missing -join ', ') (administrator approval)..."

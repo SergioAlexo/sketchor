@@ -1,5 +1,6 @@
-//! Windows Explorer thumbnail provider for `.dxf` drawings, `.eps`/`.ai`
-//! (the embedded TIFF preview — see eps.rs) and `.step`/`.iges` 3D models.
+//! Windows Explorer thumbnail provider for `.dxf` drawings, `.svg` (resvg —
+//! see native/svg-raster), `.eps`/`.ai` (the embedded TIFF preview — see
+//! eps.rs) and `.step`/`.iges` 3D models.
 //!
 //! Implements an in-process COM server exposing `IThumbnailProvider`
 //! (initialised via `IInitializeWithFile`). Explorer calls `GetThumbnail`;
@@ -128,6 +129,22 @@ fn thumbnail_for(path: &str, size: u32) -> Option<windows::Win32::Graphics::Gdi:
         trace(&format!("  eps preview {}", if p.is_some() { "found" } else { "none" }));
         let p = p?;
         return render::bitmap_from_rgba(&p.rgba, p.size, size).ok();
+    }
+    if svg_raster::is_svg(path) {
+        // SV-07: the preview Sketchor rendered for this exact file when there is one (tier 1), else resvg (tier 2).
+        if std::fs::metadata(path).map(|m| m.len() as usize > svg_raster::MAX_SVG_BYTES).unwrap_or(true) {
+            trace("  svg missing or too big");
+            return None;
+        }
+        let bytes = std::fs::read(path).ok()?;
+        if let Some(p) = model::sidecar(&bytes) {
+            trace(&format!("  svg sidecar {}px", p.size));
+            return render::bitmap_from_rgba(&p.rgba, p.size, size).ok();
+        }
+        let r = svg_raster::render_svg(&bytes, size.clamp(16, 1024));
+        trace(&format!("  svg resvg {}", if r.is_some() { "ok" } else { "nothing drawn" }));
+        let r = r?;
+        return render::bitmap_from_rgba(&r.rgba, r.size, size).ok();
     }
     if model::is_model(path) {
         let bytes = match std::fs::read(path) {
@@ -343,7 +360,12 @@ fn set_dword(path: &str, name: &str, value: u32) -> Result<(), ()> {
 /// Extensions this provider handles. STEP/IGES previews come from the
 /// sidecar cache or the wireframe fallback — see model.rs; EPS/AI from the
 /// file's own TIFF preview — see eps.rs.
-const EXTENSIONS: [&str; 7] = [".dxf", ".step", ".stp", ".iges", ".igs", ".eps", ".ai"];
+const EXTENSIONS: [&str; 8] = [".dxf", ".step", ".stp", ".iges", ".igs", ".eps", ".ai", ".svg"];
+/// SV-07: extensions other programs commonly preview (PowerToys, Inkscape for
+/// SVG). These are registered only under `SystemFileAssociations`, which the
+/// shell consults after `<ext>\ShellEx` — so an installed SVG handler keeps
+/// winning and uninstalling Sketchor never deletes its keys.
+const SYSASSOC_ONLY: [&str; 1] = [".svg"];
 
 fn register(clsid: &str, dll: &str) -> Result<(), ()> {
     let base = format!("CLSID\\{clsid}");
@@ -357,7 +379,9 @@ fn register(clsid: &str, dll: &str) -> Result<(), ()> {
     // extension level and under SystemFileAssociations (the shell consults
     // both, and the latter survives even if another app owns the ProgID).
     for ext in EXTENSIONS {
-        set_string(&format!("{ext}\\ShellEx\\{SHELLEX_THUMB}"), None, clsid)?;
+        if !SYSASSOC_ONLY.contains(&ext) {
+            set_string(&format!("{ext}\\ShellEx\\{SHELLEX_THUMB}"), None, clsid)?;
+        }
         set_string(
             &format!("SystemFileAssociations\\{ext}\\ShellEx\\{SHELLEX_THUMB}"),
             None,
@@ -378,7 +402,9 @@ fn unregister(clsid: &str) -> Result<(), ()> {
             "SystemFileAssociations\\{ext}\\ShellEx\\{SHELLEX_THUMB}"
         )));
         unsafe {
-            let _ = RegDeleteTreeW(HKEY_CURRENT_USER, RegStr(assoc.as_ptr()));
+            if !SYSASSOC_ONLY.contains(&ext) {
+                let _ = RegDeleteTreeW(HKEY_CURRENT_USER, RegStr(assoc.as_ptr()));
+            }
             let _ = RegDeleteTreeW(HKEY_CURRENT_USER, RegStr(sysassoc.as_ptr()));
         }
     }
