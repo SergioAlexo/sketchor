@@ -82,7 +82,7 @@ CSS custom properties on the element: `--sketchor-accent`, `--sketchor-bg`,
 `--sketchor-radius` — they always win over `theme`. A theme file is validated
 (colour values only, 64 kB max) and must be served with CORS when it's on
 another host; one that fails falls back to `auto` with a console warning. Parts: `stage`, `canvas`, `play-button`, `full-button`,
-`logo`, `full-bar`, `open-link`, `status`, `measure`.
+`logo`, `full-bar`, `open-link`, `status`, `measure`, `layers`.
 
 ## API
 
@@ -99,6 +99,12 @@ Drag orbits; in full view the wheel zooms, right-drag pans, and a click measures
 a face gives its area, an edge its length or diameter, a vertex its position;
 Shift-click a second for the distance and angle between them (mm). Esc clears
 the measurement, then closes full view.
+
+A drawing's full view pans (drag), zooms (wheel, at the cursor) and fits
+(double-click). Click two points to measure between them — the pointer snaps to
+ends, midpoints, centres and quadrants — for the distance, ΔX, ΔY and angle
+(mm). A drawing with more than one layer gets a **Layers** list to switch them
+off; leaving full view shows them all again.
 
 ## Versions and hosting
 

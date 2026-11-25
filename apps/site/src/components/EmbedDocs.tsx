@@ -49,7 +49,7 @@ export default function EmbedDocs() {
             <p className="sub">
               <code>&lt;sketchor-view&gt;</code> is Sketchor&apos;s viewer as one web component. A 3D part turns on a turntable, leans
               toward the cursor, orbits when dragged, opens full screen — where a click measures faces, edges and the distance between them — and opens in Sketchor with one click.
-              A DXF, SVG, EPS or PDF drawing floats, or draws itself in, and pans and zooms in full view. About 12 kB until a preview
+              A DXF, SVG, EPS or PDF drawing floats, or draws itself in; in full view it pans, zooms, measures point to point with snapping and switches layers off. About 12 kB until a preview
               scrolls into view. MIT licensed.
             </p>
             <EmbedConfigurator />
@@ -107,7 +107,7 @@ export default function EmbedDocs() {
             <p>
               Set <code>--sketchor-bg</code>, <code>--sketchor-accent</code> and <code>--sketchor-radius</code> on the element; they always
               win over <code>theme</code>. Buttons are reachable with <code>::part(play-button)</code>, <code>full-button</code>,{" "}
-              <code>logo</code>, <code>open-link</code>, <code>stage</code>, <code>canvas</code>, <code>measure</code> and <code>status</code>. A theme file is
+              <code>logo</code>, <code>open-link</code>, <code>stage</code>, <code>canvas</code>, <code>measure</code>, <code>layers</code> and <code>status</code>. A theme file is
               validated (colour values only) and must be served with CORS from another host.
             </p>
 

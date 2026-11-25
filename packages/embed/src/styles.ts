@@ -123,6 +123,33 @@ button:focus-visible, a.btn:focus-visible { outline: 2px solid var(--sketchor-ac
 .measure .v { font-weight: 650; text-align: right; white-space: nowrap; }
 :host([data-full]) .hint { display: block; }
 
+/* E-06: layer toggles, for a drawing with more than one layer, in full view only. */
+.layers { position: absolute; left: 12px; top: 52px; display: none; max-width: min(300px, calc(100% - 24px)); }
+:host([data-full][data-layers]) .layers { display: grid; gap: 6px; justify-items: start; }
+.layers-btn { display: inline-flex; height: 30px; padding: 0 12px; border-radius: 999px; font-weight: 600; }
+.layer-list {
+  display: none; grid-template-columns: auto auto 1fr auto; gap: 2px 8px; align-items: center;
+  max-height: calc(100vh - 170px); overflow: auto; overscroll-behavior: contain;
+  padding: 8px 10px; border-radius: 10px;
+  background: color-mix(in srgb, var(--sk-chrome, #141519) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sk-fg, #fff) 14%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.layers.open .layer-list { display: grid; }
+.layer-list label { display: contents; cursor: pointer; }
+.layer-list input { margin: 0; accent-color: var(--sketchor-accent, var(--sk-accent, #5a8dff)); cursor: pointer; }
+.layer-list .sw { width: 10px; height: 10px; border-radius: 3px; background: var(--sk-fg, #fff); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sk-fg, #fff) 25%, transparent); }
+.layer-list .ln { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; padding: 3px 0; }
+.layer-list .lc { color: var(--sk-dim, #9a9da6); font-variant-numeric: tabular-nums; text-align: right; }
+.layer-list label:has(input:not(:checked)) .ln, .layer-list label:has(input:not(:checked)) .sw { opacity: .4; }
+.layer-list .show-all { display: none; grid-column: 1 / -1; justify-self: start; margin-top: 6px; height: 26px; padding: 0 10px; border-radius: 999px; font-weight: 600; }
+.layer-list.some-off .show-all { display: inline-flex; }
+/* Measuring is what a click does in a drawing's full view. */
+:host([data-kind="2d"][data-full]) canvas { cursor: crosshair; }
+:host([data-kind="2d"][data-full]) canvas:active { cursor: grabbing; }
+/* A drawing doesn't float in full view, so play has nothing to do there — and it would sit on the drawing. */
+:host([data-kind="2d"][data-full]) .play { display: none; }
+
 .status {
   position: absolute; inset: 0;
   display: none; place-items: center; text-align: center; padding: 16px;

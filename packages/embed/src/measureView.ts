@@ -11,16 +11,10 @@
  */
 import { measureSelection, type Formatters, type Measurement, type SelRef } from "./three/measure";
 import type { Model3D } from "./three/types";
-
-function num(v: number): string {
-  const a = Math.abs(v);
-  const places = a >= 1000 ? 0 : a >= 100 ? 1 : a >= 1 ? 2 : 3;
-  const s = v.toFixed(places);
-  return s === "-0" || /^-0\.0+$/.test(s) ? s.slice(1) : s;
-}
+import { mm, num } from "./fmt";
 
 export const EMBED_FORMATTERS: Formatters = {
-  length: (v) => `${num(v)} mm`,
+  length: mm,
   area: (v) => `${num(v)} mm²`,
   volume: (v) => (Math.abs(v) >= 1000 ? `${num(v / 1000)} cm³` : `${num(v)} mm³`),
   mass: () => "",

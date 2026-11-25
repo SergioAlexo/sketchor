@@ -13,6 +13,7 @@ import {
 import type { Stage } from "./viewer";
 import type { Motion2D, Stage2D } from "./viewer2d";
 import type { Measurement } from "./three/measure";
+import type { LayerInfo } from "./measure2d";
 
 type ViewerModule = typeof import("./viewer");
 let viewerModule: Promise<ViewerModule> | null = null;
@@ -24,7 +25,7 @@ let viewer2dModule: Promise<Viewer2DModule> | null = null;
 const loadViewer2d = (): Promise<Viewer2DModule> => (viewer2dModule ??= import("./viewer2d"));
 
 const HINT_3D = "Drag to orbit · scroll to zoom · right-drag to pan · click to measure, Shift-click a second";
-const HINT_2D = "Drag to pan · scroll to zoom · double-click to fit";
+const HINT_2D = "Drag to pan · scroll to zoom · double-click to fit · click two points to measure";
 
 const ICON_PLAY = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>`;
 const ICON_PAUSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.6v14H7zM13.4 5H17v14h-3.6z" fill="currentColor"/></svg>`;
@@ -44,6 +45,10 @@ const TEMPLATE = `
   <div class="bar" part="full-bar"><span class="name"></span><a class="btn open" part="open-link" target="_blank" rel="noopener">Open in Sketchor ↗</a></div>
   <span class="hint">${HINT_3D}</span>
   <div class="measure" part="measure" aria-live="polite"></div>
+  <div class="layers" part="layers">
+    <button class="layers-btn" type="button" aria-expanded="false"></button>
+    <div class="layer-list" role="group" aria-label="Layers"></div>
+  </div>
   <button class="play" part="play-button" type="button" aria-label="Play">${ICON_PLAY}</button>
   <button class="full" part="full-button" type="button" aria-label="Full view">${ICON_EXPAND}</button>
   <a class="logo" part="logo" href="${SKETCHOR_SITE}" target="_blank" rel="noopener" aria-label="Made with Sketchor">${LOGO}Sketchor</a>
@@ -101,8 +106,15 @@ export class SketchorView extends HTMLElement {
       e.stopPropagation();
       void this.toggleFull();
     });
+    this.$(".layers-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = this.$(".layers").classList.toggle("open");
+      this.$(".layers-btn").setAttribute("aria-expanded", String(open));
+    });
+    this.$(".layer-list").addEventListener("change", () => this.applyLayerToggles());
     this.addEventListener("keydown", (e) => {
-      if (e.target !== this) return;
+      // Keys typed on the controls inside (a layer checkbox, a button) are theirs, not the preview's.
+      if (e.composedPath()[0] !== this) return;
       if (e.key === " " || e.key === "Enter") {
         e.preventDefault();
         this.toggle();
@@ -271,7 +283,7 @@ export class SketchorView extends HTMLElement {
   private applyStageColors(): void {
     this.style.setProperty("--sk-stage", this.kind === "2d" ? this.palette.sheet : this.palette.stage);
     if (!this.stage) return;
-    if (this.stage.kind === "2d") this.stage.setColors(this.stageBackground(), this.palette.ink);
+    if (this.stage.kind === "2d") this.stage.setColors(this.stageBackground(), this.palette.ink, this.accentColor());
     else this.stage.setColors(this.stageBackground(), this.palette.edge, this.accentColor());
   }
 
@@ -314,6 +326,66 @@ export class SketchorView extends HTMLElement {
       box.append(k, v);
     }
     box.classList.add("on");
+  }
+
+  /**
+   * E-06: the full view's layer list, for a drawing with more than one layer.
+   * Built with textContent only — layer names come from the file.
+   */
+  private buildLayerList(layers: LayerInfo[]): void {
+    const list = this.$(".layer-list");
+    list.replaceChildren();
+    this.$(".layers").classList.remove("open");
+    this.$(".layers-btn").setAttribute("aria-expanded", "false");
+    if (layers.length < 2) {
+      this.removeAttribute("data-layers");
+      return;
+    }
+    for (const l of layers) {
+      const row = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = true;
+      box.value = l.name;
+      const sw = document.createElement("span");
+      sw.className = "sw";
+      if (l.color) sw.style.background = l.color;
+      const name = document.createElement("span");
+      name.className = "ln";
+      name.textContent = l.name;
+      name.title = l.name;
+      const n = document.createElement("span");
+      n.className = "lc";
+      n.textContent = l.count.toLocaleString("en-US");
+      row.append(box, sw, name, n);
+      list.append(row);
+    }
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "show-all";
+    all.textContent = "Show all";
+    all.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.resetLayerToggles();
+    });
+    list.append(all);
+    this.setAttribute("data-layers", "");
+    this.applyLayerToggles();
+  }
+
+  /** Reads the checkboxes into the stage and the button's count. */
+  private applyLayerToggles(): void {
+    const boxes = [...this.root.querySelectorAll<HTMLInputElement>(".layer-list input")];
+    const hidden = boxes.filter((b) => !b.checked).map((b) => b.value);
+    const btn = this.$(".layers-btn");
+    btn.textContent = hidden.length ? `Layers ${boxes.length - hidden.length}/${boxes.length}` : `Layers (${boxes.length})`;
+    this.$(".layer-list").classList.toggle("some-off", hidden.length > 0);
+    if (this.stage?.kind === "2d") this.stage.setHiddenLayers(hidden);
+  }
+
+  private resetLayerToggles(): void {
+    for (const b of this.root.querySelectorAll<HTMLInputElement>(".layer-list input")) b.checked = true;
+    this.applyLayerToggles();
   }
 
   /** The clear colour: `background` attribute, then the page's `--sketchor-bg`, then the theme (its drawing sheet for 2D). null = transparent. */
@@ -374,12 +446,16 @@ export class SketchorView extends HTMLElement {
         const stage = new viewer2d.Stage2D(canvas, {
           background: this.stageBackground(),
           ink: this.palette.ink,
+          accent: this.accentColor(),
           reducedMotion: this.reducedMotion,
           motion: this.motion2d(),
         });
         this.stage = stage;
+        stage.onMeasure = (m) => this.showMeasure(m);
+        this.showMeasure(null);
         this.resize();
         stage.setDrawing(drawing);
+        this.buildLayerList(viewer2d.layerList(drawing.entities));
         stage.setVisible(this.seen && !document.hidden);
         stage.renderOnce();
         this.setState("idle");
@@ -410,6 +486,7 @@ export class SketchorView extends HTMLElement {
         this.freshCanvas();
       }
       this.setAttribute("data-kind", "3d");
+      this.buildLayerList([]);
       this.$(".hint").textContent = HINT_3D;
       this.applyStageColors();
       this.stage = new viewer.Stage(this.canvas, {
@@ -471,6 +548,10 @@ export class SketchorView extends HTMLElement {
     this.$(".full").innerHTML = ICON_EXPAND;
     this.$(".full").setAttribute("aria-label", "Full view");
     this.stage?.setInteractive(false);
+    // The inline preview is the drawing as its author made it, whatever was switched off in full view.
+    this.resetLayerToggles();
+    this.$(".layers").classList.remove("open");
+    this.$(".layers-btn").setAttribute("aria-expanded", "false");
     this.stage?.fit();
     requestAnimationFrame(() => this.resize());
   }
