@@ -79,3 +79,31 @@ export function entitiesBounds(entities: readonly Entity[]): Bounds | null {
   }
   return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
 }
+
+export interface DrawFittedOptions extends DrawEntitiesOptions {
+  /** Fraction of the smaller side kept clear on each edge. Default 0.08. */
+  padding?: number;
+}
+
+/**
+ * E-01: draws a whole drawing fitted into `width × height` (a thumbnail or a
+ * still preview) and returns the view it used, or null when nothing has
+ * extent. Unlike the app's `fitToBounds` the scale is not clamped to the
+ * viewport's zoom limits, so a 1 mm part and a 10 km site plan both fill the
+ * frame. Call it inside `withBlocks` when the drawing has inserts.
+ */
+export function drawFitted(ctx: CanvasRenderingContext2D, entities: readonly Entity[], opts: DrawFittedOptions): View | null {
+  const bb = entitiesBounds(entities);
+  if (!bb) return null;
+  const pad = Math.min(opts.width, opts.height) * (opts.padding ?? 0.08);
+  const w = Math.max(bb.maxX - bb.minX, 1e-9);
+  const h = Math.max(bb.maxY - bb.minY, 1e-9);
+  const scale = Math.max(1e-12, Math.min((opts.width - pad * 2) / w, (opts.height - pad * 2) / h));
+  const view: View = {
+    scale,
+    ox: opts.width / 2 - ((bb.minX + bb.maxX) / 2) * scale,
+    oy: opts.height / 2 + ((bb.minY + bb.maxY) / 2) * scale,
+  };
+  drawEntities(ctx, entities, view, opts);
+  return view;
+}
