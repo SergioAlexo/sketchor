@@ -41,7 +41,7 @@ export function safeUrl(v: string): string | null {
 const COLOR = /^(#[0-9a-f]{3,8}|[a-z]{3,20}|(rgb|hsl)a?\(\s*[-\d.]+(deg)?%?(\s*[,\s/]\s*[-\d.]+%?){2,3}\s*\))$/i;
 
 const CHECKS: Record<string, Check> = {
-  motion: oneOf("turntable", "none"),
+  motion: oneOf("turntable", "float", "draw", "none"),
   controls: oneOf("minimal", "none"),
   logo: oneOf("on", "off"),
   up: oneOf("auto", "y", "z"),

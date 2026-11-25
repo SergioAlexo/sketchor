@@ -15,6 +15,7 @@ export type CheckSniff = Assert<Satisfies<typeof Real.sniffFormat, typeof Publis
 export type CheckFullUrl = Assert<Satisfies<typeof Real.resolveFullUrl, typeof Published.resolveFullUrl>>;
 export type CheckName = Assert<Satisfies<typeof Real.fileNameFromSrc, typeof Published.fileNameFromSrc>>;
 export type CheckFormats = Assert<Satisfies<typeof Real.PREVIEW_FORMATS, typeof Published.PREVIEW_FORMATS>>;
+export type CheckDrawingFormats = Assert<Satisfies<typeof Real.DRAWING_FORMATS, typeof Published.DRAWING_FORMATS>>;
 export type CheckUpgrade = Assert<Satisfies<typeof Real.upgrade, typeof Published.upgrade>>;
 export type CheckAuto = Assert<Satisfies<typeof Real.autoUpgrade, typeof Published.autoUpgrade>>;
 export type CheckPlan = Assert<Satisfies<typeof Real.upgradePlan, typeof Published.upgradePlan>>;

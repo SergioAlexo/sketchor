@@ -130,3 +130,4 @@ export * from "./layouts/titleBlock";
 export * from "./layouts/plot";
 export * from "./projection/outline";
 export * from "./projection/view";
+export * from "./render2d/index";

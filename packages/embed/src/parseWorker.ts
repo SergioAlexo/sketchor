@@ -7,26 +7,28 @@
  * The parser is imported inside the worker only, so the page fetching this
  * chunk for its URL doesn't download the parser too.
  */
-import type { PreviewFormat } from "./load";
+import type { DrawingFormat, PreviewFormat } from "./load";
 import type { UpAxis } from "./three/upAxis";
 
 export const WORKER_MODULE_URL: string = import.meta.url;
 
-export interface ParseRequest {
-  id: number;
-  bytes: Uint8Array;
-  name: string;
-  format: PreviewFormat;
-  up: UpAxis | "auto";
-}
+export type ParseRequest =
+  | { id: number; kind: "mesh"; bytes: Uint8Array; name: string; format: PreviewFormat; up: UpAxis | "auto" }
+  | { id: number; kind: "drawing"; bytes: Uint8Array; name: string; format: DrawingFormat };
 
 export function startParseWorker(): void {
   const scope = self as unknown as { onmessage: ((e: MessageEvent<ParseRequest>) => void) | null; postMessage(msg: unknown, transfer?: Transferable[]): void };
   scope.onmessage = async (e) => {
-    const { id, bytes, name, format, up } = e.data;
+    const req = e.data;
+    const id = req.id;
     try {
+      if (req.kind === "drawing") {
+        const { parseDrawing } = await import("./parse2d");
+        scope.postMessage({ id, drawing: await parseDrawing(req.bytes, req.name, req.format) });
+        return;
+      }
       const { parseModel, transferablesOf } = await import("./parse");
-      const model = await parseModel(bytes, name, format, up);
+      const model = await parseModel(req.bytes, req.name, req.format, req.up);
       scope.postMessage({ id, model }, transferablesOf(model));
     } catch (err) {
       scope.postMessage({ id, error: (err as Error)?.message ?? String(err) });

@@ -24,6 +24,9 @@ export interface EmbedPalette {
   stage: string;
   /** B-rep edge lines. */
   edge: string;
+  /** E-01: a 2D drawing's sheet (theme `canvas.bg`) and default line colour (`canvas.entity`, inverting like ACI 7). */
+  sheet: string;
+  ink: string;
   fg: string;
   dim: string;
   /** Floating button / card fill, before translucency. */
@@ -57,6 +60,8 @@ export function embedPalette(tokens: ThemeTokens, mode: ThemeMode, stage?: strin
     mode,
     stage,
     edge: tokens.model3d.edge,
+    sheet: tokens.canvas.bg,
+    ink: tokens.canvas.entity,
     fg: tokens.ui.text,
     dim: tokens.ui.textDim,
     chrome: tokens.ui.panel,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Entity } from "@sketchor/core";
-import { classifyForView, regionWorthDrawing, SPECK_PX, viewWorldRect } from "./cull";
+import type { Entity } from "../entities";
+import { classifyForView, regionWorthDrawing, SPECK_PX, viewWorldRect } from "./index";
 
 /**
  * Culling decides what a frame never draws. Too eager and geometry vanishes

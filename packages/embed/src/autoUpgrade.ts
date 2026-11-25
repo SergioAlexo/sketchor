@@ -14,7 +14,7 @@
  *
  * `upgradePlan` is the pure decision (tested); `upgrade` applies it to a DOM.
  */
-import { extensionOf, PREVIEW_FORMATS } from "./load";
+import { DRAWING_FORMATS, extensionOf, PREVIEW_FORMATS } from "./load";
 
 /** `<sketchor-view>` attributes a `data-sketchor-*` attribute may set. */
 export const PASSTHROUGH = [
@@ -35,8 +35,8 @@ export const PASSTHROUGH = [
 /** Presentation attributes carried over so the preview takes the original's place in the layout. */
 const KEEP = ["id", "class", "style", "width", "height", "title"] as const;
 
-/** Extensions worth upgrading: previewable meshes plus what shows the "opens in Sketchor" card. */
-const KNOWN = new Set<string>([...PREVIEW_FORMATS, "step", "stp", "iges", "igs", "brep", "3dm", "dxf", "dwg", "svg", "eps", "ai", "pdf"]);
+/** Extensions worth upgrading: previewable meshes and drawings, plus what shows the "opens in Sketchor" card. */
+const KNOWN = new Set<string>([...PREVIEW_FORMATS, ...DRAWING_FORMATS, "step", "stp", "iges", "igs", "brep", "3dm", "dwg"]);
 
 export interface UpgradeSource {
   /** Lower-case tag name. */

@@ -1,6 +1,6 @@
 import { defaultPalette, needsThemeFile, paletteCss, pickMode, type EmbedPalette } from "./embedTheme";
 import { cacheKey, getCachedModel, putCachedModel, sha256Hex } from "./modelCache";
-import { parseOffThread } from "./parseClient";
+import { parseDrawingOffThread, parseOffThread } from "./parseClient";
 import { CSS } from "./styles";
 import {
   DEFAULT_MAX_MB,
@@ -11,12 +11,20 @@ import {
   sniffFormat,
 } from "./load";
 import type { Stage } from "./viewer";
+import type { Motion2D, Stage2D } from "./viewer2d";
 import type { Measurement } from "./three/measure";
 
 type ViewerModule = typeof import("./viewer");
 let viewerModule: Promise<ViewerModule> | null = null;
 /** three.js + parsers, fetched once per page, on the first element that needs them. */
 const loadViewer = (): Promise<ViewerModule> => (viewerModule ??= import("./viewer"));
+type Viewer2DModule = typeof import("./viewer2d");
+let viewer2dModule: Promise<Viewer2DModule> | null = null;
+/** E-01: the 2D renderer — its own chunk, so a page of drawings never downloads three.js. */
+const loadViewer2d = (): Promise<Viewer2DModule> => (viewer2dModule ??= import("./viewer2d"));
+
+const HINT_3D = "Drag to orbit · scroll to zoom · right-drag to pan · click to measure, Shift-click a second";
+const HINT_2D = "Drag to pan · scroll to zoom · double-click to fit";
 
 const ICON_PLAY = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>`;
 const ICON_PAUSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.6v14H7zM13.4 5H17v14h-3.6z" fill="currentColor"/></svg>`;
@@ -34,7 +42,7 @@ const TEMPLATE = `
     <div class="card"><strong class="msg"></strong><span class="detail"></span><a class="btn open-err" target="_blank" rel="noopener">Open in Sketchor ↗</a></div>
   </div>
   <div class="bar" part="full-bar"><span class="name"></span><a class="btn open" part="open-link" target="_blank" rel="noopener">Open in Sketchor ↗</a></div>
-  <span class="hint">Drag to orbit · scroll to zoom · right-drag to pan · click to measure, Shift-click a second</span>
+  <span class="hint">${HINT_3D}</span>
   <div class="measure" part="measure" aria-live="polite"></div>
   <button class="play" part="play-button" type="button" aria-label="Play">${ICON_PLAY}</button>
   <button class="full" part="full-button" type="button" aria-label="Full view">${ICON_EXPAND}</button>
@@ -44,10 +52,12 @@ const TEMPLATE = `
 type State = "empty" | "loading" | "idle" | "playing" | "paused" | "error";
 
 /**
- * `<sketchor-view src="part.glb" autoplay>` — an animated, orbitable preview
- * of a CAD file, drawn by Sketchor's own 3D renderer.
+ * `<sketchor-view src="part.glb" autoplay>` — an animated preview of a CAD
+ * file, drawn by Sketchor's own renderers: orbitable 3D for meshes, the
+ * app's Canvas 2D renderer for drawings (DXF, SVG, EPS/AI, PDF).
  *
- * Attributes: `src`, `format`, `autoplay`, `motion` (`turntable` | `none`),
+ * Attributes: `src`, `format`, `autoplay`, `motion` (`turntable` | `none`
+ * for 3D; `float` | `draw` | `none` for drawings — `turntable` floats),
  * `background` (CSS colour or `transparent`), `controls` (`minimal` | `none`),
  * `full-url` (`auto` | `none` | URL), `logo` (`on` | `off`), `theme` (`auto` |
  * `dark` | `light` | built-in theme id | theme JSON URL), `up` (`auto` |
@@ -61,7 +71,9 @@ export class SketchorView extends HTMLElement {
 
   private root: ShadowRoot;
   private canvas: HTMLCanvasElement;
-  private stage: Stage | null = null;
+  private stage: Stage | Stage2D | null = null;
+  /** What the current stage draws: decides its colours, label and hint. */
+  private kind: "2d" | "3d" = "3d";
   private state: State = "empty";
   private loadToken = 0;
   private abort: AbortController | null = null;
@@ -203,7 +215,8 @@ export class SketchorView extends HTMLElement {
 
   private updateLabel(): void {
     const src = this.getAttribute("src");
-    const label = this.getAttribute("label") || (src ? `3D model ${fileNameFromSrc(src)}` : "3D model");
+    const what = src && sniffFormat(fileNameFromSrc(src), null, this.getAttribute("format")).kind === "drawing" ? "Drawing" : "3D model";
+    const label = this.getAttribute("label") || (src ? `${what} ${fileNameFromSrc(src)}` : what);
     this.setAttribute("aria-label", label);
     this.$(".name").textContent = this.getAttribute("label") || (src ? fileNameFromSrc(src) : "");
   }
@@ -251,7 +264,31 @@ export class SketchorView extends HTMLElement {
     this.palette = p;
     for (const [k, v] of Object.entries(paletteCss(p))) this.style.setProperty(k, v);
     this.setAttribute("data-theme", p.mode);
-    this.stage?.setColors(this.stageBackground(), p.edge, this.accentColor());
+    this.applyStageColors();
+  }
+
+  /** Pushes the theme to the live stage, and makes the host's own background match what it draws on. */
+  private applyStageColors(): void {
+    this.style.setProperty("--sk-stage", this.kind === "2d" ? this.palette.sheet : this.palette.stage);
+    if (!this.stage) return;
+    if (this.stage.kind === "2d") this.stage.setColors(this.stageBackground(), this.palette.ink);
+    else this.stage.setColors(this.stageBackground(), this.palette.edge, this.accentColor());
+  }
+
+  /** `motion` for a drawing: `draw` traces it in first, `none` keeps it still; anything else floats. */
+  private motion2d(): Motion2D {
+    const m = this.getAttribute("motion");
+    return m === "draw" || m === "none" ? m : "float";
+  }
+
+  /** A fresh canvas: one that has had a WebGL context can never give a 2D one, and the other way round. */
+  private freshCanvas(): HTMLCanvasElement {
+    const c = document.createElement("canvas");
+    c.setAttribute("part", "canvas");
+    c.setAttribute("aria-hidden", "true");
+    this.canvas.replaceWith(c);
+    this.canvas = c;
+    return c;
   }
 
   /** Highlight colour: the page's `--sketchor-accent`, else the theme's. */
@@ -279,12 +316,12 @@ export class SketchorView extends HTMLElement {
     box.classList.add("on");
   }
 
-  /** The 3D clear colour: `background` attribute, then the page's `--sketchor-bg`, then the theme. null = transparent. */
+  /** The clear colour: `background` attribute, then the page's `--sketchor-bg`, then the theme (its drawing sheet for 2D). null = transparent. */
   private stageBackground(): string | null {
     const attr = this.getAttribute("background");
     if (attr === "transparent") return null;
     if (attr) return attr;
-    return getComputedStyle(this).getPropertyValue("--sketchor-bg").trim() || this.palette.stage;
+    return getComputedStyle(this).getPropertyValue("--sketchor-bg").trim() || (this.kind === "2d" ? this.palette.sheet : this.palette.stage);
   }
 
   private resize(): void {
@@ -318,8 +355,39 @@ export class SketchorView extends HTMLElement {
       if (token !== this.loadToken) return;
 
       const verdict = sniffFormat(name, bytes, this.getAttribute("format"));
-      if (verdict.kind === "app-only") throw new EmbedError(`.${verdict.ext.toUpperCase()} files open in Sketchor`, "This preview shows 3D meshes (glTF, GLB, STL, OBJ, PLY, 3MF) for now.");
+      if (verdict.kind === "app-only") throw new EmbedError(`.${verdict.ext.toUpperCase()} files open in Sketchor`, "This preview shows drawings (DXF, SVG, EPS, AI, PDF) and meshes (glTF, GLB, STL, OBJ, PLY, 3MF) for now.");
       if (verdict.kind === "unknown") throw new EmbedError("Unrecognised file type", `${name} isn't a format the preview can read.`);
+
+      if (verdict.kind === "drawing") {
+        const viewer2dP = loadViewer2d();
+        const drawing = await parseDrawingOffThread(bytes, name, verdict.format);
+        const viewer2d = await viewer2dP;
+        if (token !== this.loadToken || !this.connected) return;
+        this.stage?.dispose();
+        this.stage = null;
+        const kindChanged = this.kind !== "2d";
+        this.kind = "2d";
+        const canvas = kindChanged ? this.freshCanvas() : this.canvas;
+        this.setAttribute("data-kind", "2d");
+        this.$(".hint").textContent = HINT_2D;
+        this.applyStageColors();
+        const stage = new viewer2d.Stage2D(canvas, {
+          background: this.stageBackground(),
+          ink: this.palette.ink,
+          reducedMotion: this.reducedMotion,
+          motion: this.motion2d(),
+        });
+        this.stage = stage;
+        this.resize();
+        stage.setDrawing(drawing);
+        stage.setVisible(this.seen && !document.hidden);
+        stage.renderOnce();
+        this.setState("idle");
+        this.setAttribute("data-ready", "");
+        this.dispatchEvent(new CustomEvent("load", { detail: { name, kind: "2d", entities: drawing.entities.length, warnings: drawing.warnings } }));
+        if (this.hasAttribute("autoplay") && !this.reducedMotion) this.play();
+        return;
+      }
 
       const upAttr = this.getAttribute("up");
       const up = upAttr === "y" || upAttr === "z" ? upAttr : "auto";
@@ -336,6 +404,14 @@ export class SketchorView extends HTMLElement {
       if (token !== this.loadToken || !this.connected) return;
 
       this.stage?.dispose();
+      this.stage = null;
+      if (this.kind !== "3d") {
+        this.kind = "3d";
+        this.freshCanvas();
+      }
+      this.setAttribute("data-kind", "3d");
+      this.$(".hint").textContent = HINT_3D;
+      this.applyStageColors();
       this.stage = new viewer.Stage(this.canvas, {
         background: this.stageBackground(),
         edge: this.palette.edge,
@@ -350,7 +426,7 @@ export class SketchorView extends HTMLElement {
       this.stage.renderOnce();
       this.setState("idle");
       this.setAttribute("data-ready", "");
-      this.dispatchEvent(new CustomEvent("load", { detail: { name, parts: model.parts.length, cached: !!cachedHit } }));
+      this.dispatchEvent(new CustomEvent("load", { detail: { name, kind: "3d", parts: model.parts.length, cached: !!cachedHit } }));
       if (this.hasAttribute("autoplay") && !this.reducedMotion) this.play();
     } catch (err) {
       if (token !== this.loadToken || (err as Error)?.name === "AbortError") return;
