@@ -160,6 +160,7 @@ async function handleMesh(req: ParseRequest, t0: number): Promise<void> {
     return;
   }
   model.detectedUp = req.format === "gltf" || req.format === "glb" ? "y" : "z"; // glTF is Y-up by spec
+  if (parsed.warnings.length) model.importNotes = parsed.warnings.slice(0, 20);
   try {
     await putCachedModel(model);
   } catch (err) {

@@ -802,6 +802,18 @@ body {
   color: #7fe0ab;
 }
 
+/* F-11: a 3D file's import notes, over the top of the model view. */
+.model-import-notes {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 15;
+}
+.model-stage.has-notes .model-toolbar {
+  top: 42px;
+}
+
 .import-banner.warn {
   background: rgba(230, 160, 60, 0.14);
   color: #f0b968;

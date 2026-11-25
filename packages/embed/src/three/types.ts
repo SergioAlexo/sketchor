@@ -54,6 +54,8 @@ export interface Model3D {
   triangleCount: number;
   /** Up axis guessed from the STEP header (upAxis.ts); the viewer starts there unless the user overrode it for this file. Absent = Z. */
   detectedUp?: "z" | "y";
+  /** F-11: what the reader had to say about the file (a truncated STL, support objects left out, textures not shown). Shown once in the viewer. */
+  importNotes?: string[];
 }
 
 export type ModelFormat = "step" | "iges" | "brep" | "3dm" | "stl" | "obj" | "ply" | "3mf" | "gltf" | "glb";
