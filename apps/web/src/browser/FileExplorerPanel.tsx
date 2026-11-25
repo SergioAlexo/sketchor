@@ -6,7 +6,7 @@ import { TextCache, entryMatchesSaved, onFileSaved, type SavedFile } from "../io
 import { bindDxfVersion, bindSaveHandle, bindSavePath, fileDxfText, openModelBytes } from "../io/drawingFile";
 import { isModelFile } from "../model3d/stepImport";
 import { acceptList, browserAddFilter, mimeOf } from "../io/formats";
-import { epsEntitiesToSvg, fileToSvg, isDrawingFile, isEpsFile, queueThumbnail } from "./thumbnail";
+import { epsThumbnail, fileThumbnail, fileToSvg, isDrawingFile, isEpsFile, queueThumbnail } from "./thumbnail";
 import { blobReader, epsThumbnailDataUrl, importEpsFromReader, tauriReader, type RangeReader } from "../io/epsImport";
 
 interface Entry {
@@ -336,9 +336,9 @@ const PREFETCH_COUNT = 24;
 
 /**
  * Left-dock "mini-Explorer" (R9): geometry thumbnails of every .dxf/.svg
- * drawing in a folder, click to open into a new tab. Reuses the same
- * dxfToSvg/entitiesToSvg headless renderer as the native Explorer
- * thumbnailer, so previews everywhere agree. Drag the right edge to resize.
+ * drawing in a folder, click to open into a new tab. Drawings are drawn by
+ * core `render2d`, the canvas's own renderer (E-01), so a card looks like the
+ * drawing will once opened. Drag the right edge to resize.
  *
  * Folder access, in order of preference: on desktop, a directory (from a
  * file opened via Explorer/file-association) is read in Rust with no
@@ -989,8 +989,8 @@ function SortHeader({
 
 /**
  * Lazily renders a geometry preview once the element scrolls into view.
- * Returns markup: an inline SVG for drawings, an `<img>` (isometric PNG)
- * for 3D models — see model3d/modelThumbnail.ts, loaded on first use.
+ * Returns markup: an `<img>` drawn by render2d for drawings (inline SVG
+ * where there's no canvas), an `<img>` (isometric PNG) for 3D models — see model3d/modelThumbnail.ts, loaded on first use.
  */
 function useThumbnail(
   entry: Entry,
@@ -1049,7 +1049,7 @@ function useThumbnail(
                 if (url) setSvg(`<img src="${url}" alt="" draggable="false" />`);
                 else {
                   const eps = await importEpsFromReader(reader);
-                  setSvg(epsEntitiesToSvg(eps.entities, { size, background: canvasTheme.bg, stroke: canvasTheme.entity }));
+                  setSvg(epsThumbnail(eps.entities, size, { bg: canvasTheme.bg, ink: canvasTheme.entity }));
                 }
               } catch {
                 setSvg(fileToSvg(entry.name, "", { size }));
@@ -1058,7 +1058,7 @@ function useThumbnail(
             }
             try {
               const text = await getText();
-              setSvg(fileToSvg(entry.name, text, { size, background: canvasTheme.bg, stroke: canvasTheme.entity }));
+              setSvg(fileThumbnail(entry.name, text, size, { bg: canvasTheme.bg, ink: canvasTheme.entity }));
             } catch {
               setSvg(fileToSvg(entry.name, "", { size }));
             }
