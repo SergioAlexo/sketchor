@@ -3,7 +3,7 @@ name = "dxf-thumbnailer"
 version = "0.1.0"
 license = "AGPL-3.0-or-later"
 edition = "2021"
-description = "Windows Explorer thumbnail provider for DXF drawings and STEP/IGES models (Sketchor)"
+description = "Windows Explorer thumbnail provider for DXF/SVG/EPS drawings and STEP/IGES models (Sketchor)"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -19,6 +19,12 @@ step-wire = { path = "../step-wire" }
 # for every model it renders; the DLL hashes the file and decodes that PNG.
 sha2 = "0.10"
 png = "0.17"
+# SV-07: SVG thumbnails (resvg; Windows has none of its own). See native/svg-raster.
+svg-raster = { path = "../svg-raster", default-features = false }
+
+[features]
+# Draw SVG text too (~1.3 MB more, and system fonts loaded per thumbnail). Off by default.
+svg-text = ["svg-raster/text"]
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

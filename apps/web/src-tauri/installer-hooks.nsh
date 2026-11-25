@@ -47,7 +47,8 @@
 !macroend
 
 ; Same, but only when that extension has no marker yet: .eps/.ai normally belong
-; to Illustrator/Acrobat, whose handler we must not overwrite. $3 is scratch.
+; to Illustrator/Acrobat and .svg may belong to PowerToys/Inkscape, whose
+; handler we must not overwrite. $3 is scratch.
 !macro WRITE_THUMB_MARKER_IF_MISSING EXT
   ClearErrors
   ReadRegStr $3 HKLM "Software\Classes\${EXT}\ShellEx\${SHELLEX_THUMB}" ""
@@ -97,6 +98,7 @@
         !insertmacro WRITE_THUMB_MARKER ".igs"
         !insertmacro WRITE_THUMB_MARKER_IF_MISSING ".eps"
         !insertmacro WRITE_THUMB_MARKER_IF_MISSING ".ai"
+        !insertmacro WRITE_THUMB_MARKER_IF_MISSING ".svg"
         FileClose $2
         ExecShellWait "runas" "regedit.exe" '/s "$TEMP\sketchor-explorer-previews.reg"' SW_HIDE
         Delete "$TEMP\sketchor-explorer-previews.reg"

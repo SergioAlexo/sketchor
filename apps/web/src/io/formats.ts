@@ -24,7 +24,7 @@ export interface FormatInfo {
 
 export const FORMATS: readonly FormatInfo[] = [
   { ext: ["dxf"], kind: "2d", label: "DXF drawing", mime: "application/dxf", writable: true, association: true, nativeThumbnail: true },
-  { ext: ["svg"], kind: "2d", label: "SVG drawing", mime: "image/svg+xml", writable: true, association: true, nativeThumbnail: false },
+  { ext: ["svg"], kind: "2d", label: "SVG drawing", mime: "image/svg+xml", writable: true, association: true, nativeThumbnail: true },
   { ext: ["dwg"], kind: "2d", label: "DWG drawing", mime: "application/acad", writable: false, association: true, nativeThumbnail: false },
   // EPS/AI: own PostScript-subset importer (core/eps, F-01); import-only (export is F-02).
   { ext: ["eps"], kind: "2d", label: "EPS drawing", mime: "application/postscript", writable: true, association: true, nativeThumbnail: true },
