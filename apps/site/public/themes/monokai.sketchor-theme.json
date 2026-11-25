@@ -1,0 +1,48 @@
+{
+  "id": "monokai",
+  "name": "Monokai",
+  "author": "Sketchor (Monokai palette)",
+  "base": "dark",
+  "tokens": {
+    "ui": {
+      "bg": "#272822",
+      "panel": "#1e1f1c",
+      "border": "#3e3d32",
+      "text": "#f8f8f2",
+      "textDim": "#a59f85",
+      "accent": "#f92672",
+      "accentSoft": "#5a1d37",
+      "danger": "#f92672"
+    },
+    "canvas": {
+      "bg": "#1e1f1c",
+      "gridMinor": "#272822",
+      "gridMajor": "#33342b",
+      "axis": "#4a4a3d",
+      "entity": "#f8f8f2",
+      "selected": "#66d9ef",
+      "preview": "#a6e22e",
+      "snap": "#e6db74",
+      "handle": "#66d9ef",
+      "measure": "#a6e22e",
+      "hover": "#fd971f",
+      "measureLabelBg": "#2b3a14",
+      "reference": "#f92672",
+      "connectivityHint": "#3f8fa0",
+      "windowSelect": "#66d9ef",
+      "crossingSelect": "#a6e22e",
+      "duplicateMarker": "#fd971f",
+      "crossingMarker": "#ae81ff",
+      "origin": "#f8f8f2",
+      "originOff": "#75715e",
+      "axisX": "#f92672",
+      "axisY": "#a6e22e"
+    },
+    "code": {
+      "keyword": "#f92672",
+      "number": "#ae81ff",
+      "comment": "#75715e",
+      "error": "#f92672"
+    }
+  }
+}

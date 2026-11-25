@@ -1,0 +1,29 @@
+{
+  "id": "paper",
+  "name": "Paper",
+  "author": "Sketchor",
+  "base": "light",
+  "tokens": {
+    "ui": {
+      "bg": "#f5f2ec",
+      "panel": "#fffdf8",
+      "border": "#d9d2c3",
+      "text": "#1d1b17",
+      "textDim": "#6f685a",
+      "accent": "#1a56db",
+      "accentSoft": "#dbe4fb"
+    },
+    "canvas": {
+      "bg": "#ffffff",
+      "gridMinor": "#ececec",
+      "gridMajor": "#d6d6d6",
+      "axis": "#b0b0b0",
+      "entity": "#000000",
+      "selected": "#1a56db",
+      "preview": "#1a56db",
+      "handle": "#1a56db",
+      "windowSelect": "#1a56db",
+      "origin": "#000000"
+    }
+  }
+}

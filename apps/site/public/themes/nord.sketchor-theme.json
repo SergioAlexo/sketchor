@@ -1,0 +1,48 @@
+{
+  "id": "nord",
+  "name": "Nord",
+  "author": "Sketchor (Nord palette)",
+  "base": "dark",
+  "tokens": {
+    "ui": {
+      "bg": "#2e3440",
+      "panel": "#3b4252",
+      "border": "#4c566a",
+      "text": "#eceff4",
+      "textDim": "#a3adc0",
+      "accent": "#5e81ac",
+      "accentSoft": "#3b4f6b",
+      "danger": "#bf616a"
+    },
+    "canvas": {
+      "bg": "#272c36",
+      "gridMinor": "#2e3440",
+      "gridMajor": "#3b4252",
+      "axis": "#4c566a",
+      "entity": "#eceff4",
+      "selected": "#88c0d0",
+      "preview": "#88c0d0",
+      "snap": "#ebcb8b",
+      "handle": "#88c0d0",
+      "measure": "#8fbcbb",
+      "hover": "#81a1c1",
+      "measureLabelBg": "#2a3d3d",
+      "reference": "#bf616a",
+      "connectivityHint": "#5e81ac",
+      "windowSelect": "#81a1c1",
+      "crossingSelect": "#a3be8c",
+      "duplicateMarker": "#d08770",
+      "crossingMarker": "#b48ead",
+      "origin": "#d8dee9",
+      "originOff": "#4c566a",
+      "axisX": "#bf616a",
+      "axisY": "#a3be8c"
+    },
+    "code": {
+      "keyword": "#81a1c1",
+      "number": "#b48ead",
+      "comment": "#616e88",
+      "error": "#bf616a"
+    }
+  }
+}

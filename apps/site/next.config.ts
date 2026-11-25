@@ -22,6 +22,8 @@ const nextConfig: NextConfig = {
       { source: "/embed/sketchor-embed.js", headers: [{ key: "Cache-Control", value: "public, max-age=300, must-revalidate" }] },
       // Cross-origin: other sites load the embed module and its chunks.
       { source: "/embed/:path*", headers: [{ key: "Access-Control-Allow-Origin", value: "*" }] },
+      // TH-07: theme files are fetched by the desktop app, the embed on other sites and `/app?theme=` from anywhere.
+      { source: "/themes/:path*", headers: [{ key: "Access-Control-Allow-Origin", value: "*" }] },
       // The DWG (LibreDWG) and STEP (OCCT) readers stream-compile their wasm, which needs the right MIME type.
       { source: "/app/:path*.wasm", headers: [{ key: "Content-Type", value: "application/wasm" }] },
     ];
