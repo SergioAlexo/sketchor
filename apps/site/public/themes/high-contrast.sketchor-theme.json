@@ -1,0 +1,43 @@
+{
+  "id": "high-contrast",
+  "name": "High Contrast",
+  "author": "Sketchor",
+  "base": "dark",
+  "tokens": {
+    "ui": {
+      "bg": "#000000",
+      "panel": "#0a0a0a",
+      "border": "#ffffff",
+      "text": "#ffffff",
+      "textDim": "#d0d0d0",
+      "accent": "#ffd400",
+      "accentSoft": "#4d4200",
+      "danger": "#ff6b6b"
+    },
+    "canvas": {
+      "bg": "#000000",
+      "gridMinor": "#262626",
+      "gridMajor": "#4d4d4d",
+      "axis": "#8c8c8c",
+      "entity": "#ffffff",
+      "selected": "#ffd400",
+      "preview": "#00e5ff",
+      "snap": "#ff9500",
+      "handle": "#ffd400",
+      "measure": "#00ffd0",
+      "hover": "#00e5ff",
+      "measureLabelBg": "#003a33",
+      "reference": "#ff4040",
+      "connectivityHint": "#4da3ff",
+      "windowSelect": "#00b7ff",
+      "crossingSelect": "#00ff5a",
+      "closedRegionFill": "rgba(255, 255, 255, 0.22)",
+      "duplicateMarker": "#ffb347",
+      "crossingMarker": "#e08cff",
+      "origin": "#ffffff",
+      "originOff": "#8c8c8c",
+      "axisX": "#ff5555",
+      "axisY": "#55ff55"
+    }
+  }
+}

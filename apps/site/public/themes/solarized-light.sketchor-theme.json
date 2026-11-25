@@ -1,0 +1,48 @@
+{
+  "id": "solarized-light",
+  "name": "Solarized Light",
+  "author": "Sketchor (Solarized palette)",
+  "base": "light",
+  "tokens": {
+    "ui": {
+      "bg": "#fdf6e3",
+      "panel": "#eee8d5",
+      "border": "#d6cfb8",
+      "text": "#073642",
+      "textDim": "#586e75",
+      "accent": "#268bd2",
+      "accentSoft": "#d3e3ea",
+      "danger": "#dc322f"
+    },
+    "canvas": {
+      "bg": "#fdf6e3",
+      "gridMinor": "#f1ead6",
+      "gridMajor": "#e3dbc2",
+      "axis": "#b8b49f",
+      "entity": "#073642",
+      "selected": "#268bd2",
+      "preview": "#2aa198",
+      "snap": "#cb4b16",
+      "handle": "#268bd2",
+      "measure": "#2aa198",
+      "hover": "#6c71c4",
+      "measureLabelBg": "#e0efe8",
+      "reference": "#dc322f",
+      "connectivityHint": "#268bd2",
+      "windowSelect": "#268bd2",
+      "crossingSelect": "#859900",
+      "duplicateMarker": "#b58900",
+      "crossingMarker": "#d33682",
+      "origin": "#586e75",
+      "originOff": "#b8b49f",
+      "axisX": "#dc322f",
+      "axisY": "#859900"
+    },
+    "code": {
+      "keyword": "#268bd2",
+      "number": "#d33682",
+      "comment": "#93a1a1",
+      "error": "#dc322f"
+    }
+  }
+}

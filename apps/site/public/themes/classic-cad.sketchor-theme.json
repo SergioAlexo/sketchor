@@ -1,0 +1,37 @@
+{
+  "id": "classic-cad",
+  "name": "Classic CAD",
+  "author": "Sketchor",
+  "base": "dark",
+  "tokens": {
+    "ui": {
+      "bg": "#2b2b2b",
+      "panel": "#333333",
+      "border": "#4a4a4a",
+      "text": "#e6e6e6",
+      "textDim": "#a0a0a0",
+      "accent": "#1e90ff",
+      "accentSoft": "#1d3b5c"
+    },
+    "canvas": {
+      "bg": "#000000",
+      "gridMinor": "#1a1a1a",
+      "gridMajor": "#2e2e2e",
+      "axis": "#555555",
+      "entity": "#ffffff",
+      "selected": "#00ffff",
+      "preview": "#ffff00",
+      "snap": "#ffff00",
+      "handle": "#3a6bff",
+      "measure": "#00ff00",
+      "hover": "#ff7fff",
+      "measureLabelBg": "#003300",
+      "reference": "#ff0000",
+      "windowSelect": "#3a8bff",
+      "crossingSelect": "#00ff00",
+      "closedRegionFill": "rgba(255, 255, 255, 0.14)",
+      "axisX": "#ff0000",
+      "axisY": "#00ff00"
+    }
+  }
+}

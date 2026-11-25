@@ -1,0 +1,43 @@
+{
+  "id": "blueprint",
+  "name": "Blueprint",
+  "author": "Sketchor",
+  "base": "dark",
+  "tokens": {
+    "ui": {
+      "bg": "#0f2f63",
+      "panel": "#12396f",
+      "border": "#2a5aa3",
+      "text": "#eaf2ff",
+      "textDim": "#9db9e6",
+      "accent": "#6cb2ff",
+      "accentSoft": "#1f4a8c",
+      "danger": "#ff8a8a"
+    },
+    "canvas": {
+      "bg": "#123c7c",
+      "gridMinor": "rgba(255, 255, 255, 0.10)",
+      "gridMajor": "rgba(255, 255, 255, 0.22)",
+      "axis": "rgba(255, 255, 255, 0.40)",
+      "entity": "#ffffff",
+      "selected": "#ffe36e",
+      "preview": "#ffe36e",
+      "snap": "#ffd23f",
+      "handle": "#ffe36e",
+      "measure": "#9be7ff",
+      "hover": "#9be7ff",
+      "measureLabelBg": "#0a2a5c",
+      "reference": "#ff8a8a",
+      "connectivityHint": "#8fb8ff",
+      "windowSelect": "#9be7ff",
+      "crossingSelect": "#a6ffb0",
+      "closedRegionFill": "rgba(255, 255, 255, 0.14)",
+      "duplicateMarker": "#ffd23f",
+      "crossingMarker": "#e0b3ff",
+      "origin": "#cfe3ff",
+      "originOff": "#6f94d1",
+      "axisX": "#ff9a9a",
+      "axisY": "#a6ffb0"
+    }
+  }
+}
