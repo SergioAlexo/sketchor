@@ -1,5 +1,5 @@
 import {
-  isUpsideDown, layerLimit, oriented, packingFootprint, sharesStack, unitId, type PalletPlan,
+  isUpsideDown, layerLimit, oriented, packingEdge, packingFootprint, sharesStack, unitId, type PalletPlan,
   type PalletResult, type Placement, type PlannedPallet, type ProductRow,
 } from "./types";
 
@@ -52,7 +52,8 @@ export function buildPalletReportCsv(plan: PalletPlan): string {
     "job_number", "product_row_id", "source_row_id", "product_id", "requested_quantity", "unit_id",
     "product_length_mm", "product_width_mm", "packing_length_mm", "packing_width_mm", "product_height_mm", "unit_weight_kg",
     "stack_pattern", "allowed_layers", "added_layer_height_mm", "max_base_length_mm", "max_base_width_mm",
-    "max_loaded_height_mm", "deck_height_mm", "edge_clearance_mm", "product_gap_mm", "custom_increment_mm",
+    "max_loaded_height_mm", "deck_height_mm", "pallet_edge_inset_mm", "product_padding_mm",
+    "edge_clearance_mm", "product_gap_mm", "custom_increment_mm", "fork_entry_side",
     "changed_since_generation",
     ...assignmentColumns.map(field => "generated_" + field),
     ...assignmentColumns.map(field => "final_" + field),
@@ -72,7 +73,7 @@ export function buildPalletReportCsv(plan: PalletPlan): string {
         row.lengthMm, row.widthMm, packed.lengthMm, packed.widthMm, row.heightMm, row.weightKg,
         row.stack?.pattern, layerLimit(row, rules),
         row.stack?.addedHeightMm, rules.maxLengthMm, rules.maxWidthMm, rules.maxLoadedHeightMm, rules.deckHeightMm,
-        rules.edgeMm, rules.gapMm, rules.incrementMm,
+        rules.edgeMm, rules.productMarginMm, packingEdge(rules), rules.gapMm, rules.incrementMm, rules.forkEntrySide,
         changed === undefined ? undefined : String(changed), ...before, ...after,
       ].map(csvCell).join(","));
     }
@@ -87,25 +88,38 @@ const escape = (value: string | number) => String(value).replace(/[&<>"']/g, cha
 /** Standalone loading sheet. Geometry and order match the saved plan revision. */
 export function buildPalletReportHtml(plan: PalletPlan, unit: "mm" | "in"): string {
   const indexed = indexAssignments(plan);
+  const inset = plan.rules.edgeMm;
+  const padding = plan.rules.productMarginMm ?? 0;
+  const heightLabel = plan.rules.deckHeightMm ? "Loaded height" : "Stack height";
   const products = new Map(plan.products.map(row => [row.id, row]));
   const display = (mm: number) => Number((mm / (unit === "in" ? 25.4 : 1)).toFixed(3));
   const size = (length: number, width: number) => `${display(length)} × ${display(width)} ${unit}`;
   const dims = (mm: number | undefined) => mm === undefined ? "—" : `${display(mm)} ${unit}`;
   const unitNumber = (id: string) => escape(id.split("/").at(-1) ?? id);
   const palletSections = plan.pallets.map((pallet, index) => {
+    const boxStyle = (x: number, y: number, length: number, width: number) =>
+      `left:${100 * x / pallet.base.lengthMm}%;bottom:${100 * y / pallet.base.widthMm}%;`
+      + `width:${100 * length / pallet.base.lengthMm}%;height:${100 * width / pallet.base.widthMm}%`;
     const layers = [...new Set(pallet.placements.map(item => item.layer))].sort((a, b) => a - b);
     const layerSections = layers.map(layer => {
       const items = pallet.placements.filter(item => item.layer === layer);
       const outlines: string[] = [];
       const rows: string[] = [];
+      if (inset > 0 && Math.min(pallet.base.lengthMm, pallet.base.widthMm) > 2 * inset) {
+        const style = boxStyle(inset, inset, pallet.base.lengthMm - 2 * inset, pallet.base.widthMm - 2 * inset);
+        outlines.push(`<span class="guide" style="${style}"></span>`);
+      }
       for (const item of items) {
         const product = products.get(item.rowId)!;
         const rotated = oriented(packingFootprint(product), item.rotation);
         const flipped = isUpsideDown(product, item.layer);
         const label = `${escape(product.productId)} #${unitNumber(item.id)}`;
         const support = indexed.byUnit.get(item.id)?.supportId;
-        const style = `left:${100 * item.xMm / pallet.base.lengthMm}%;bottom:${100 * item.yMm / pallet.base.widthMm}%;`
-          + `width:${100 * rotated.lengthMm / pallet.base.lengthMm}%;height:${100 * rotated.widthMm / pallet.base.widthMm}%`;
+        const style = boxStyle(item.xMm, item.yMm, rotated.lengthMm, rotated.widthMm);
+        if (padding > 0) {
+          const boundary = boxStyle(item.xMm - padding, item.yMm - padding, rotated.lengthMm + 2 * padding, rotated.widthMm + 2 * padding);
+          outlines.push(`<span class="guide padding" style="${boundary}"></span>`);
+        }
         outlines.push(`<span class="piece${flipped ? " inverted" : ""}" style="${style}">${label}${flipped ? " ↓" : ""}</span>`);
         rows.push(`<tr><td>${label}</td><td>${flipped ? "Upside down" : "Upright"}</td><td>${item.rotation}°</td>
 <td>${display(item.xMm)} / ${display(item.yMm)}</td><td>${support ? `${escape(product.productId)} #${unitNumber(support)}` : "Deck"}</td></tr>`);
@@ -117,7 +131,7 @@ export function buildPalletReportHtml(plan: PalletPlan, unit: "mm" | "in"): stri
 <tbody>${rows.join("")}</tbody></table></section>`;
     });
     return `<section><h2>Pallet ${index + 1} · Job ${escape(pallet.jobId)}</h2>
-<p>Base ${size(pallet.base.lengthMm, pallet.base.widthMm)} · Loaded height ${dims(pallet.packedHeightMm)} · ${pallet.placements.length} units</p>
+<p>Base ${size(pallet.base.lengthMm, pallet.base.widthMm)} · ${heightLabel} ${dims(pallet.packedHeightMm)} · ${pallet.placements.length} units</p>
 ${pallet.tag ? `<p>Handling ${escape(pallet.tag)}</p>` : ""}${layerSections.join("")}</section>`;
   });
   const unplaced = plan.unplaced.map(item => {
@@ -131,6 +145,7 @@ ${pallet.tag ? `<p>Handling ${escape(pallet.tag)}</p>` : ""}${layerSections.join
 body{font:14px/1.45 system-ui,sans-serif;color:#162231;max-width:850px;margin:24px auto;padding:0 18px}
 h1,h2,h3{margin:18px 0 6px}p{margin:4px 0 10px}.layer{margin:12px 0 22px}
 .diagram{position:relative;width:100%;border:1px solid #415161;margin:8px 0}
+.guide{position:absolute;box-sizing:border-box;border:1px dashed #637184}.padding{border-color:#2873a9}
 .piece{position:absolute;box-sizing:border-box;border:1px solid #416d86;background:#dcecf5;display:grid;place-items:center;overflow:hidden;font-size:11px;text-align:center}
 .inverted{background:#f7e6cc}table{width:100%;border-collapse:collapse;text-align:left}
 td,th{border-bottom:1px solid #c5d0db;padding:4px 6px}thead{display:table-header-group}
@@ -138,9 +153,10 @@ td,th{border-bottom:1px solid #c5d0db;padding:4px 6px}thead{display:table-header
 </style><body><h1>Pallet loading report</h1>
 <p>${plan.review === "confirmed" ? "Confirmed" : "Draft"} · Revision ${escape(plan.revisionId)}
  · ${plan.pallets.length} ${plan.pallets.length === 1 ? "pallet" : "pallets"} · ${indexed.byUnit.size} placed · ${plan.unplaced.length} unplaced</p>
-<p>Maximum base ${size(plan.rules.maxLengthMm, plan.rules.maxWidthMm)} · Maximum loaded height ${dims(plan.rules.maxLoadedHeightMm)}
- · Edge ${dims(plan.rules.edgeMm)} · Gap ${dims(plan.rules.gapMm)} · Up to ${plan.rules.maxLayers} layers</p>
-<p>Load from layer 1 upwards. X and Y are measured from the lower-left deck corner.
+<p>Maximum base ${size(plan.rules.maxLengthMm, plan.rules.maxWidthMm)} · Maximum ${heightLabel.toLowerCase()} ${dims(plan.rules.maxLoadedHeightMm)}
+ · Pallet inset ${dims(inset)} · Product padding ${dims(plan.rules.productMarginMm)} per side
+ · Between products ${dims(plan.rules.gapMm)} · Up to ${plan.rules.maxLayers} layers</p>
+<p>Fork entry is on the pallet's ${plan.rules.forkEntrySide} side. Load from layer 1 upwards. X and Y are measured from the lower-left deck corner.
 ${plan.products.some(row => row.stack) ? "Verify the configured stack pattern and support before loading." : ""}</p>
 ${palletSections.join("")}${unplaced.length ? `<h2>Unplaced products</h2><ul>${unplaced.join("")}</ul>` : ""}</body></html>`;
 }

@@ -29,7 +29,7 @@ export function toTruckOrders(rawPlan: unknown, stops: readonly PalletStop[]): O
       width: pallet.loadedFootprint.widthMm,
       qty: 1,
       shape: "rect",
-      tag: pallet.tag,
+      tag: pallet.tag ?? "Fork entry on the length side",
       orientation: pallet.truckOrientation,
     });
   }

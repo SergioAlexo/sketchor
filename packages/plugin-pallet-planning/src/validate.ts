@@ -1,5 +1,5 @@
 import {
-  EPS, MAX_PRODUCTS, MAX_STANDARD_BASES, knownLoadedHeight, layerLimit, oriented, packingFootprint, sharesStack, unitId,
+  EPS, FORK_ENTRY_SIDE, MAX_PRODUCTS, MAX_STANDARD_BASES, knownLoadedHeight, layerLimit, oriented, packingEdge, packingFootprint, sharesStack, unitId,
   type Footprint, type Layer, type PalletInput, type PalletPlan, type PalletResult,
   type PalletRules, type Placement, type PlannedPallet, type ProductRow, type UnplacedProduct,
 } from "./types";
@@ -66,32 +66,44 @@ function productStack(value: unknown, label: string): ProductRow["stack"] {
 export function parsePalletInput(value: unknown): PalletInput {
   const input = record(value, "Pallet inputs");
   const profile = record(input.rules, "Pallet rules");
+  const padding = profile.productMarginMm === undefined
+    ? undefined : measurement(profile.productMarginMm, "Product padding", true);
+  const longSideIsLength = profile.longSideIsLength === undefined
+    ? undefined : boolean(profile.longSideIsLength, "Pallet length greater than width");
   const rules: PalletRules = {
     maxLengthMm: measurement(profile.maxLengthMm, "Maximum base length"),
     maxWidthMm: measurement(profile.maxWidthMm, "Maximum base width"),
     edgeMm: measurement(profile.edgeMm, "Edge clearance", true),
-    gapMm: measurement(profile.gapMm, "Product gap", true),
+    productMarginMm: padding,
+    gapMm: padding === undefined ? measurement(profile.gapMm, "Product gap", true) : 2 * padding,
     incrementMm: measurement(profile.incrementMm, "Custom size increment"),
     allowCustom: boolean(profile.allowCustom, "Allow custom bases"),
     maxLayers: layerNumber(profile.maxLayers ?? 3, "Maximum pallet layers"),
+    forkEntrySide: FORK_ENTRY_SIDE,
+    longSideIsLength,
     deckHeightMm: profile.deckHeightMm === undefined ? undefined : measurement(profile.deckHeightMm, "Deck height", true),
     maxLoadedHeightMm: profile.maxLoadedHeightMm === undefined ? undefined : measurement(profile.maxLoadedHeightMm, "Maximum loaded height"),
     standardBases: list(profile.standardBases, MAX_STANDARD_BASES, "Standard bases").map((raw, index) => {
       const name = `Standard base ${index + 1}`;
       const base = record(raw, name);
-      return { ...footprint(base, name), name: labelText(base.name, `${name} name`) };
+      const size = footprint(base, name);
+      if (longSideIsLength && size.lengthMm <= size.widthMm + EPS) {
+        throw new Error(`${name} length must be greater than its width.`);
+      }
+      return { ...size, name: labelText(base.name, `${name} name`) };
     }),
   };
   if (rules.maxLoadedHeightMm !== undefined
-    && (rules.deckHeightMm === undefined || rules.deckHeightMm >= rules.maxLoadedHeightMm)) {
-    throw new Error("Enter the deck height below the maximum loaded height.");
+    && (rules.deckHeightMm ?? 0) >= rules.maxLoadedHeightMm) {
+    throw new Error("The configured height limit leaves no room for products.");
   }
-  if (rules.edgeMm * 2 >= Math.min(rules.maxLengthMm, rules.maxWidthMm)) {
-    throw new Error("Edge clearance leaves no usable space on a pallet.");
+  const edge = packingEdge(rules);
+  if (edge * 2 >= Math.min(rules.maxLengthMm, rules.maxWidthMm)) {
+    throw new Error("Pallet inset and product padding leave no usable space.");
   }
   if (!rules.allowCustom && !rules.standardBases.some(base =>
     base.lengthMm <= rules.maxLengthMm + EPS && base.widthMm <= rules.maxWidthMm + EPS
-    && Math.min(base.lengthMm, base.widthMm) > 2 * rules.edgeMm,
+    && Math.min(base.lengthMm, base.widthMm) > 2 * edge,
   )) {
     throw new Error("Add a standard base that fits within the limits, or allow custom bases.");
   }
@@ -184,8 +196,12 @@ function parseUnplaced(raw: unknown): UnplacedProduct {
 
 function validatePalletGeometry(pallet: PlannedPallet, rules: PalletRules, rows: ReadonlyMap<string, ProductRow>, name: string) {
   const { base, loadedFootprint, placements } = pallet;
+  const edge = packingEdge(rules);
   if (base.lengthMm > rules.maxLengthMm + EPS || base.widthMm > rules.maxWidthMm + EPS) {
     throw new Error(`${name} exceeds the configured base limits.`);
+  }
+  if (rules.longSideIsLength && base.lengthMm <= base.widthMm + EPS) {
+    throw new Error(`${name} length must be greater than its width.`);
   }
   if (Math.abs(base.lengthMm - loadedFootprint.lengthMm) > EPS || Math.abs(base.widthMm - loadedFootprint.widthMm) > EPS) {
     throw new Error(`${name} must have its loaded footprint within and equal to the base in this plan version.`);
@@ -201,8 +217,8 @@ function validatePalletGeometry(pallet: PlannedPallet, rules: PalletRules, rows:
     const size = oriented(packingFootprint(row), p.rotation);
     const xEnd = p.xMm + size.lengthMm;
     const yEnd = p.yMm + size.widthMm;
-    if (p.xMm < rules.edgeMm - EPS || p.yMm < rules.edgeMm - EPS
-      || xEnd > base.lengthMm - rules.edgeMm + EPS || yEnd > base.widthMm - rules.edgeMm + EPS) {
+    if (p.xMm < edge - EPS || p.yMm < edge - EPS
+      || xEnd > base.lengthMm - edge + EPS || yEnd > base.widthMm - edge + EPS) {
       throw new Error(`${row.productId} in ${name} is outside the allowed edge clearance.`);
     }
     return { x: p.xMm, y: p.yMm, xEnd, yEnd, label: row.productId, layer: p.layer };

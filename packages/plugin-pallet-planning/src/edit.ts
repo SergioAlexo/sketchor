@@ -1,4 +1,4 @@
-import { sharesStack, type PalletPlan, type Placement, type PlannedPallet } from "./types";
+import { EPS, sharesStack, type PalletPlan, type Placement, type PlannedPallet } from "./types";
 import { footprint, labelText, parsePalletPlan, parsePlacement, record, truckOrientation } from "./validate";
 
 function findPallet(plan: PalletPlan, value: unknown): PlannedPallet {
@@ -60,6 +60,7 @@ export function editPalletPlan(plan: PalletPlan, raw: unknown, revisionId: strin
     }
     case "add-pallet": {
       const base = footprint(action.base, "Pallet base");
+      if (base.lengthMm <= base.widthMm + EPS) throw new Error("Pallet length must be greater than its width.");
       next.pallets.push({
         id: `${plan.id}/manual/${revisionId}`,
         jobId: labelText(action.jobId, "Pallet job"),

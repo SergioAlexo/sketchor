@@ -1,7 +1,7 @@
 import type { DisplayUnitInfo, PluginModule } from "@sketchor/plugin-sdk";
 import {
   buildPalletDrawing, buildPalletReportCsv, buildPalletReportHtml, editPalletPlan, generatePalletPlan,
-  parsePalletPlan, PRODUCT_COLORS, REFERENCE_RULES, type PalletPlan,
+  DEFAULT_PALLET_RULES, parsePalletPlan, PRODUCT_COLORS, type PalletPlan,
 } from "@sketchor/plugin-pallet-planning";
 import PANEL_HTML from "./palletPlanningPanel.html?raw";
 
@@ -31,7 +31,7 @@ const plugin: PluginModule = {
     const send = (message: object) => sketchor.ui.postMessage(message);
     const sync = (type: "init" | "plan", replaceInputs: boolean, message: string) => send({
       type, plan, replaceInputs, message, canUndo: undo.length > 0, canRedo: redo.length > 0,
-      ...(type === "init" ? { unit, rules: REFERENCE_RULES, colors: PRODUCT_COLORS } : {}),
+      ...(type === "init" ? { unit, rules: DEFAULT_PALLET_RULES, colors: PRODUCT_COLORS } : {}),
     });
 
     const persist = async (message: string) => {

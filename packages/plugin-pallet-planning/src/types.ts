@@ -3,6 +3,7 @@ import type { PalletOrientation } from "@sketchor/plugin-truck-nesting";
 export const MAX_PRODUCTS = 1000;
 export const MAX_STANDARD_BASES = 12;
 export const EPS = 1e-6;
+export const FORK_ENTRY_SIDE = "length";
 
 export interface Footprint {
   lengthMm: number;
@@ -37,11 +38,14 @@ export interface PalletRules {
   maxLengthMm: number;
   maxWidthMm: number;
   edgeMm: number;
+  productMarginMm?: number;
   gapMm: number;
   incrementMm: number;
   allowCustom: boolean;
   standardBases: StandardBase[];
   maxLayers: Layer;
+  forkEntrySide: typeof FORK_ENTRY_SIDE;
+  longSideIsLength?: boolean;
   deckHeightMm?: number;
   maxLoadedHeightMm?: number;
 }
@@ -116,6 +120,11 @@ export function packingFootprint(row: ProductRow): Footprint {
   };
 }
 
+/** Product origins are inset by the deck margin and the product's own padding. */
+export function packingEdge(rules: PalletRules): number {
+  return rules.edgeMm + (rules.productMarginMm ?? 0);
+}
+
 export function isUpsideDown(row: ProductRow, layer: Layer): boolean {
   return row.stack?.pattern === "alternate" && layer === 2;
 }
@@ -144,10 +153,10 @@ export function sharesStack(a: Placement, b: Placement): boolean {
 export function knownLoadedHeight(
   pallet: PlannedPallet, rows: ReadonlyMap<string, ProductRow>, rules: PalletRules,
 ): number | undefined {
-  if (rules.deckHeightMm === undefined || pallet.placements.length === 0) return undefined;
+  if (pallet.placements.length === 0) return undefined;
   const heights = pallet.placements.map(item => stackHeight(rows.get(item.rowId)!, item.layer));
   if (heights.some(height => height === undefined)) return undefined;
-  return rules.deckHeightMm + Math.max(...heights as number[]);
+  return (rules.deckHeightMm ?? 0) + Math.max(...heights as number[]);
 }
 
 export const REFERENCE_RULES: PalletRules = {
@@ -159,4 +168,13 @@ export const REFERENCE_RULES: PalletRules = {
   allowCustom: true,
   standardBases: [],
   maxLayers: 3,
+  forkEntrySide: FORK_ENTRY_SIDE,
+};
+
+export const DEFAULT_PALLET_RULES: PalletRules = {
+  ...REFERENCE_RULES,
+  edgeMm: 0.5 * 25.4,
+  productMarginMm: 25.4,
+  gapMm: 2 * 25.4,
+  longSideIsLength: true,
 };

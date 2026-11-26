@@ -52,13 +52,25 @@ export function buildPalletDrawing(plan: PalletPlan, unit: DisplayUnitInfo): Com
       const box = polyline(rect(px, py, footprint), true, {
         layer, color: entry.color, fill: entry.color, name: `Product ${placement.id}`,
       });
+      const ids = [box.id];
+      commands.push(add(box));
+      const padding = plan.rules.productMarginMm ?? 0;
+      if (padding > 0) {
+        const padded = { lengthMm: footprint.lengthMm + 2 * padding, widthMm: footprint.widthMm + 2 * padding };
+        const guide = polyline(rect(px - padding, py - padding, padded), true, {
+          layer: PALLET_GUIDE_LAYER, color: entry.color, linetype: "DASHED", construction: true,
+          name: `Product padding ${placement.id}`,
+        });
+        commands.push(add(guide));
+        ids.push(guide.id);
+      }
       const unitNumber = stacked ? ` #${placement.id.split("/").at(-1)}` : "";
       const label = entry.row.productId + unitNumber + (isUpsideDown(entry.row, level) ? " ↓" : "");
       const height = Math.min(footprint.widthMm * 0.35, footprint.lengthMm * 1.25 / label.length);
       const tag = text({ x: px + footprint.lengthMm * 0.06, y: py + (footprint.widthMm - height) / 2 },
         label, { layer, color: "#101820", height });
-      commands.push(add(box), add(tag), {
-        type: "group-entities", groupId: `pallet-plan:${plan.id}:${placement.id}`, ids: [box.id, tag.id], name: label,
+      commands.push(add(tag), {
+        type: "group-entities", groupId: `pallet-plan:${plan.id}:${placement.id}`, ids: [...ids, tag.id], name: label,
       });
     }
     x += Math.max(base.lengthMm, caption.length * labelHeight * 0.56) + 150;

@@ -1,5 +1,5 @@
 import {
-  EPS, knownLoadedHeight, layerLimit, oriented, packingFootprint, unitId, type Footprint, type Layer, type PalletPlan,
+  EPS, knownLoadedHeight, layerLimit, oriented, packingEdge, packingFootprint, unitId, type Footprint, type Layer, type PalletPlan,
   type PalletRules, type Placement, type PlannedPallet, type ProductRow, type Rotation,
   type UnplacedProduct,
 } from "./types";
@@ -46,9 +46,11 @@ function baseOptions(rules: PalletRules): BaseOption[] {
   stock.sort((a, b) => area(a) - area(b) || a.lengthMm - b.lengthMm || a.widthMm - b.widthMm);
   if (!rules.allowCustom) return stock;
   const roundDown = (n: number) => Math.floor((n + EPS) / rules.incrementMm) * rules.incrementMm;
+  const lengthMm = roundDown(rules.maxLengthMm);
+  const widthMm = roundDown(rules.maxWidthMm);
   return [...stock, {
-    lengthMm: roundDown(rules.maxLengthMm),
-    widthMm: roundDown(rules.maxWidthMm),
+    lengthMm,
+    widthMm: rules.longSideIsLength ? Math.min(widthMm, lengthMm - rules.incrementMm) : widthMm,
     source: "custom",
   }];
 }
@@ -56,19 +58,21 @@ function baseOptions(rules: PalletRules): BaseOption[] {
 function startBin(option: BaseOption, rules: PalletRules): Bin {
   // Reserve one gap on each footprint's far sides. The extra gap at the outer
   // boundary keeps the stock edge margin independent of the inter-product gap.
+  const edge = packingEdge(rules);
   const slot = {
-    xMm: rules.edgeMm,
-    yMm: rules.edgeMm,
-    lengthMm: option.lengthMm - 2 * rules.edgeMm + rules.gapMm,
-    widthMm: option.widthMm - 2 * rules.edgeMm + rules.gapMm,
+    xMm: edge,
+    yMm: edge,
+    lengthMm: option.lengthMm - 2 * edge + rules.gapMm,
+    widthMm: option.widthMm - 2 * edge + rules.gapMm,
   };
   return { option, slots: [slot], placements: [], lengthUsed: 0, widthUsed: 0 };
 }
 
-function findFit(bin: Bin, row: ProductRow, gapMm: number): Fit | undefined {
+function findFit(bin: Bin, row: ProductRow, gapMm: number, preferTurn = false): Fit | undefined {
   let best: Fit | undefined;
   const size = packingFootprint(row);
-  const rotations: Rotation[] = row.canRotate && size.lengthMm !== size.widthMm ? [0, 90] : [0];
+  const rotations: Rotation[] = row.canRotate && size.lengthMm !== size.widthMm
+    ? (preferTurn ? [90, 0] : [0, 90]) : [0];
   for (const rotation of rotations) {
     const footprint = oriented(size, rotation);
     const reserved = { lengthMm: footprint.lengthMm + gapMm, widthMm: footprint.widthMm + gapMm };
@@ -108,8 +112,14 @@ function finishBase(bin: Bin, rules: PalletRules): Footprint {
   if (bin.option.source === "standard") {
     return { lengthMm: bin.option.lengthMm, widthMm: bin.option.widthMm };
   }
-  const round = (mm: number) => Math.ceil((mm + rules.edgeMm - EPS) / rules.incrementMm) * rules.incrementMm;
-  return { lengthMm: Math.max(rules.incrementMm, round(bin.lengthUsed)), widthMm: Math.max(rules.incrementMm, round(bin.widthUsed)) };
+  const edge = packingEdge(rules);
+  const round = (mm: number) => Math.ceil((mm + edge - EPS) / rules.incrementMm) * rules.incrementMm;
+  const widthMm = Math.max(rules.incrementMm, round(bin.widthUsed));
+  const lengthMm = Math.max(rules.incrementMm, round(bin.lengthUsed));
+  return {
+    lengthMm: rules.longSideIsLength ? Math.max(lengthMm, widthMm + rules.incrementMm) : lengthMm,
+    widthMm,
+  };
 }
 
 function trial(
@@ -118,10 +128,11 @@ function trial(
 ): { bins: Bin[]; unplaced: UnplacedProduct[] } {
   const bins: Bin[] = [];
   const unplaced: UnplacedProduct[] = [];
-  for (const unit of units) {
+  const preferTurn = rules.longSideIsLength === true && splitAlongLength;
+  for (const [index, unit] of units.entries()) {
     let placed = false;
     for (const bin of bins) {
-      const fit = findFit(bin, unit.row, rules.gapMm);
+      const fit = findFit(bin, unit.row, rules.gapMm, preferTurn);
       if (!fit) continue;
       put(bin, unit, fit, splitAlongLength);
       placed = true;
@@ -131,7 +142,7 @@ function trial(
     const allowed = fitsEmpty.get(unit.row.id);
     const option = options.find(candidate => allowed?.has(candidate));
     const bin = option && startBin(option, rules);
-    const fit = bin && findFit(bin, unit.row, rules.gapMm);
+    const fit = bin && findFit(bin, unit.row, rules.gapMm, preferTurn && index < units.length - 1);
     if (bin && fit) {
       bins.push(bin);
       put(bin, unit, fit, splitAlongLength);

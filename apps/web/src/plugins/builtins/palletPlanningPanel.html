@@ -37,10 +37,12 @@
     .bar.spread { justify-content: space-between; }
     .bar label { display: flex; align-items: center; gap: 7px; }
     .bar select { width: auto; }
+    .job-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: end; }
     .grid { display: grid; gap: 7px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .record { padding: 8px; border: 1px solid var(--border); border-radius: 6px; display: grid; gap: 7px; }
-    #products, #stock { display: grid; gap: 8px; }
+    #jobs, .products, #stock { display: grid; gap: 8px; }
+    #jobs .job:only-child > .job-header > [data-remove] { display: none; }
     .primary { color: var(--accent); border-color: var(--accent); font-weight: 600; }
     .note { color: var(--muted); font-size: 12px; }
     .alert { color: var(--danger); }
@@ -60,43 +62,47 @@
       <button type="button" id="open-json" disabled>Open JSON</button>
       <input type="file" id="plan-file" accept=".json,application/json" hidden>
     </div>
-    <p id="status" role="status" aria-live="polite"></p>
-    <details id="inputs" open>
-      <summary>Products and pallet rules</summary>
-      <form id="generate-form">
-        <fieldset id="input-fields" class="fields" disabled>
-          <div class="grid three">
-            <label>Max pallet length <input id="max-length" type="number" step="any" data-length required></label>
-            <label>Max pallet width <input id="max-width" type="number" step="any" data-length required></label>
-            <label>Max layers <select id="max-layers"><option>1</option><option>2</option><option>3</option></select></label>
-          </div>
-          <div id="products" aria-label="Product rows"></div>
-          <div class="bar">
-            <button type="button" id="add-product">Add product</button>
-            <button type="button" id="example">Load example</button>
-            <button type="button" id="bench-example">Load 7-bench example</button>
-          </div>
-          <details>
-            <summary>Pallet rules</summary>
-            <div class="fields">
-              <p class="note">The reference uses a 96 in width limit and 1 in clearances. Set the length and other limits for this job.</p>
-              <div class="grid">
-                <label>Edge clearance <input id="edge" type="number" step="any" min="0" data-length required></label>
-                <label>Product gap <input id="gap" type="number" step="any" min="0" data-length required></label>
-                <label>Max loaded height <input id="max-loaded-height" type="number" step="any" data-length></label>
-                <label>Deck height <input id="deck-height" type="number" step="any" min="0" data-length></label>
-                <label>Custom size increment <input id="increment" type="number" step="any" data-length required></label>
-                <label class="check"><input id="allow-custom" type="checkbox" checked> Allow custom bases</label>
-              </div>
-              <div id="stock" aria-label="Standard pallet bases"></div>
-              <div class="bar"><button type="button" id="add-stock">Add standard base</button>
-                <button type="button" id="reference-clearances">Use reference width and gaps</button></div>
+    <p id="status" role="status" aria-live="polite">Loading pallet planner…</p>
+    <form id="generate-form">
+      <fieldset id="input-fields" class="fields" disabled>
+        <details id="pallet-rules" open>
+          <summary>Pallet rules</summary>
+          <div class="fields">
+            <div class="grid three">
+              <label>Max pallet length <input id="max-length" type="number" step="any" data-length required></label>
+              <label>Max pallet width <input id="max-width" type="number" step="any" data-length required></label>
+              <label>Max layers <select id="max-layers"><option>1</option><option>2</option><option>3</option></select></label>
             </div>
-          </details>
-          <button class="primary" id="generate" type="button" data-apply>Generate pallets</button>
-        </fieldset>
-      </form>
-    </details>
+            <div class="grid">
+              <label>Pallet edge inset <input id="edge" type="number" step="any" min="0" data-length required></label>
+              <label>Product padding per side <input id="product-padding" type="number" step="any" min="0" data-length required></label>
+            </div>
+            <div class="grid">
+              <label>Max stack height <input id="max-loaded-height" type="number" step="any" data-length></label>
+              <label>Custom size increment <input id="increment" type="number" step="any" data-length required
+                title="Round each custom size up to this step"></label>
+            </div>
+            <label class="check"><input id="allow-custom" type="checkbox" checked> Allow custom bases</label>
+            <div id="stock" aria-label="Standard pallet bases"></div>
+            <div class="bar">
+              <button type="button" id="add-stock">Add standard base</button>
+              <button type="button" id="reset-margins">Reset margins</button>
+            </div>
+          </div>
+        </details>
+        <details id="inputs" open>
+          <summary>Jobs</summary>
+          <div class="fields">
+            <div id="jobs"></div>
+            <div class="bar">
+              <button type="button" id="add-job">Add job</button>
+              <button type="button" id="bench-example">Load 7-bench example</button>
+            </div>
+          </div>
+        </details>
+        <button class="primary" id="generate" type="button" data-apply>Generate pallets</button>
+      </fieldset>
+    </form>
 
     <fieldset id="result-fields" disabled>
       <section id="results" aria-label="Pallet plan" hidden>
@@ -117,28 +123,7 @@
           </div>
           <canvas id="preview" aria-label="Top-down pallet layout"></canvas>
           <p class="note" id="dimensions"></p>
-          <details>
-            <summary>Pallet dimensions and handling</summary>
-            <form id="resize-form">
-              <div class="grid">
-                <label>Base length <input id="base-length" type="number" step="any" data-length required></label>
-                <label>Base width <input id="base-width" type="number" step="any" data-length required></label>
-              </div>
-              <div class="bar">
-                <button type="button" data-apply>Resize base</button>
-                <button type="button" id="remove-pallet">Remove empty pallet</button>
-              </div>
-            </form>
-            <form id="handling-form">
-              <div class="grid">
-                <label>Truck orientation <select id="truck-orientation">
-                  <option value="auto">Allow turning</option><option value="fixed">As entered</option><option value="turned">Turn 90°</option>
-                </select></label>
-                <label>Handling tag <input id="handling-tag" maxlength="120"></label>
-              </div>
-              <div><button type="button" data-apply>Apply handling</button></div>
-            </form>
-          </details>
+          <div id="empty-pallet-actions" hidden><button type="button" id="remove-pallet">Remove empty pallet</button></div>
           <details id="edit-product" open>
             <summary>Move or turn a product</summary>
             <form id="place-form">
@@ -179,12 +164,19 @@
       </section>
     </fieldset>
   </main>
+  <template id="job-template">
+    <div class="record job">
+      <div class="job-header">
+        <label>Job number <input name="jobId" maxlength="120" required></label>
+        <button type="button" data-remove>Remove job</button>
+      </div>
+      <div class="products"></div>
+      <div><button type="button" data-add-product>Add product</button></div>
+    </div>
+  </template>
   <template id="product-template">
     <div class="record product">
-      <div class="grid">
-        <label>Job number <input name="jobId" maxlength="120" required></label>
-        <label>Product <input name="productId" maxlength="120" required></label>
-      </div>
+      <label>Product <input name="productId" maxlength="120" required></label>
       <div class="grid three">
         <label>Quantity <input name="quantity" type="number" min="1" max="1000" step="1" required></label>
         <label>Length <input name="lengthMm" type="number" step="any" data-length required></label>
@@ -195,7 +187,7 @@
         <label>Unit weight (kg) <input name="weightKg" type="number" step="any"></label>
       </div>
       <div class="bar spread">
-        <label class="check"><input name="canRotate" type="checkbox"> Allow 90° turn</label>
+        <label class="check"><input name="canRotate" type="checkbox"> Allow 90° turns</label>
         <button type="button" data-remove>Remove product</button>
       </div>
       <label class="check"><input name="useMeasured" type="checkbox"> Use measured footprint</label>
@@ -228,7 +220,7 @@
     const send = message => parent.postMessage({ pluginMessage: message }, "*");
     const lengthFields = {
       "max-length": "maxLengthMm", "max-width": "maxWidthMm", edge: "edgeMm",
-      gap: "gapMm", increment: "incrementMm", "deck-height": "deckHeightMm",
+      "product-padding": "productMarginMm", increment: "incrementMm",
       "max-loaded-height": "maxLoadedHeightMm"
     };
     const canvas = $("preview");
@@ -239,9 +231,10 @@
     let palletId = "";
     let selectedUnit = "";
     let selectedLayer = 1;
-    let referenceRules;
+    let defaultRules;
     let colors = [];
     let busy = true;
+    let initialized = false;
     let drag = null;
     let view = null;
     let rowCounter = 0;
@@ -255,6 +248,7 @@
     const upsideDown = unit => unit.layer === 2 && rows.get(unit.rowId).stack?.pattern === "alternate";
     const sameStack = (a, b) => a.rowId === b.rowId && a.rotation === b.rotation
       && Math.abs(a.xMm - b.xMm) <= 1e-6 && Math.abs(a.yMm - b.yMm) <= 1e-6;
+    const packingEdge = rules => rules.edgeMm + (rules.productMarginMm ?? 0);
 
     function setBusy(value) {
       busy = value;
@@ -286,12 +280,12 @@
         else if (value !== undefined) field.value = field.hasAttribute("data-length") ? asInput(value) : String(value);
       }
       element.querySelector("[data-remove]").onclick = () => element.remove();
-      $(container).append(element);
+      container.append(element);
       return element;
     }
 
-    function addProduct(row = { quantity: 1 }) {
-      const element = addRecord("product-template", "products", {
+    function addProduct(container, row = { quantity: 1, canRotate: true }) {
+      const element = addRecord("product-template", container, {
         ...row, stackLayers: row.stack?.maxLayers || 1,
         stackPattern: row.stack?.pattern, stackHeight: row.stack?.addedHeightMm,
         useMeasured: row.measuredLengthMm !== undefined || row.measuredWidthMm !== undefined
@@ -315,24 +309,45 @@
       stackLayers.onchange();
     }
 
+    function addJob(jobId = "", products = [undefined]) {
+      const job = addRecord("job-template", $("jobs"), { jobId });
+      const container = job.querySelector(".products");
+      for (const product of products) addProduct(container, product);
+      job.querySelector("[data-add-product]").onclick = () => addProduct(container);
+      return job;
+    }
+
     function hydrate(products, rules) {
-      $("products").replaceChildren();
+      $("jobs").replaceChildren();
+      const groups = new Map();
+      for (const row of products) {
+        const group = groups.get(row.jobId) || [];
+        group.push(row);
+        groups.set(row.jobId, group);
+      }
+      for (const [jobId, group] of groups) addJob(jobId, group);
+      if (!groups.size) addJob();
       $("stock").replaceChildren();
-      for (const row of products) addProduct(row);
-      if (!products.length) addProduct();
-      for (const [id, key] of Object.entries(lengthFields)) $(id).value = rules[key] === undefined ? "" : asInput(rules[key]);
+      const formRules = {
+        ...rules,
+        edgeMm: rules.productMarginMm === undefined ? defaultRules.edgeMm : rules.edgeMm,
+        productMarginMm: rules.productMarginMm ?? defaultRules.productMarginMm,
+        maxLoadedHeightMm: rules.maxLoadedHeightMm === undefined
+          ? undefined : rules.maxLoadedHeightMm - (rules.deckHeightMm ?? 0)
+      };
+      for (const [id, key] of Object.entries(lengthFields)) $(id).value = formRules[key] === undefined ? "" : asInput(formRules[key]);
       $("max-layers").value = String(rules.maxLayers);
       $("allow-custom").checked = rules.allowCustom;
-      for (const base of rules.standardBases) addRecord("base-template", "stock", base);
+      for (const base of rules.standardBases) addRecord("base-template", $("stock"), base);
     }
 
     function capture() {
-      const products = Array.from($("products").children, element => {
+      const products = Array.from(document.querySelectorAll("#jobs .product"), element => {
         const field = name => input(element, name);
         const stackLayers = Number(field("stackLayers").value);
         return {
           id: element.dataset.id,
-          jobId: field("jobId").value,
+          jobId: input(element.closest(".job"), "jobId").value,
           productId: field("productId").value,
           quantity: number(field("quantity")),
           lengthMm: mm(field("lengthMm")),
@@ -352,7 +367,7 @@
           sourceUnit: element.dataset.sourceUnit || $("units").value
         };
       });
-      const rules = { allowCustom: $("allow-custom").checked, maxLayers: Number($("max-layers").value) };
+      const rules = { allowCustom: $("allow-custom").checked, maxLayers: Number($("max-layers").value), longSideIsLength: true };
       for (const [id, key] of Object.entries(lengthFields)) rules[key] = $(id).value ? mm($(id)) : undefined;
       rules.standardBases = Array.from($("stock").children, element => ({
         name: input(element, "name").value,
@@ -400,6 +415,7 @@
       const bottom = (h + widthMm * scale) / 2;
       view = { scale, left, bottom };
       const edge = plan.rules.edgeMm * scale;
+      const padding = (plan.rules.productMarginMm ?? 0) * scale;
       const bg = style.getPropertyValue("--sk-panel").trim() || "#282c34";
       const ink = style.getPropertyValue("--sk-text").trim() || "#edf1f5";
       ctx.fillStyle = bg;
@@ -423,6 +439,13 @@
         const y = bottom - item.yMm * scale - ih;
         const row = rows.get(item.rowId);
         const flipped = upsideDown(item);
+        if (padding > 0) {
+          ctx.save();
+          ctx.setLineDash([4, 3]);
+          ctx.strokeStyle = style.getPropertyValue("--sk-accent").trim() || "#2980a9";
+          ctx.strokeRect(x - padding, y - padding, iw + 2 * padding, ih + 2 * padding);
+          ctx.restore();
+        }
         ctx.fillStyle = flipped ? "#dca86d" : row.color;
         ctx.globalAlpha = item.id === selectedUnit ? 1 : .8;
         ctx.fillRect(x, y, iw, ih);
@@ -469,8 +492,8 @@
         const layer = index + 1;
         return [String(layer), "Layer " + layer + (upsideDown({ ...unit, layer }) ? " (upside down)" : "")];
       }), String(unit.layer ?? selectedLayer));
-      $("position-x").value = asInput(unit.xMm ?? plan.rules.edgeMm);
-      $("position-y").value = asInput(unit.yMm ?? plan.rules.edgeMm);
+      $("position-x").value = asInput(unit.xMm ?? packingEdge(plan.rules));
+      $("position-y").value = asInput(unit.yMm ?? packingEdge(plan.rules));
       $("rotation").value = String(unit.rotation ?? 0);
       $("rotation").disabled = !rows.get(unit.rowId).canRotate;
       $("unplace-unit").disabled = Boolean(unit.reason);
@@ -494,12 +517,9 @@
       const utilization = Math.round(100 * used / (pallet.base.lengthMm * pallet.base.widthMm));
       $("dimensions").textContent = sizeText(pallet.base) + " · " + utilization + "% deck used · "
         + (pallet.baseName || (pallet.baseSource === "manual" ? "Edited base" : "Custom base"))
-        + (pallet.packedHeightMm === undefined ? "" : " · " + asText(pallet.packedHeightMm) + " " + $("units").value + " loaded height");
-      $("base-length").value = asInput(pallet.base.lengthMm);
-      $("base-width").value = asInput(pallet.base.widthMm);
-      $("remove-pallet").disabled = pallet.placements.length > 0;
-      $("handling-tag").value = pallet.tag || "";
-      $("truck-orientation").value = pallet.truckOrientation;
+        + (pallet.packedHeightMm === undefined ? "" : " · " + asText(pallet.packedHeightMm) + " " + $("units").value
+          + (plan.rules.deckHeightMm ? " loaded height" : " stack height"));
+      $("empty-pallet-actions").hidden = pallet.placements.length > 0;
       canvas.classList.toggle("ready", pallet.placements.length > 0);
       renderSelection();
       draw();
@@ -566,21 +586,18 @@
       });
     }
 
-    $("add-product").onclick = () => addProduct({ jobId: input($("products").lastElementChild || document, "jobId")?.value, quantity: 1 });
-    $("add-stock").onclick = () => addRecord("base-template", "stock", {});
-    $("reference-clearances").onclick = () => {
-      $("max-width").value = asInput(referenceRules.maxWidthMm);
-      $("edge").value = asInput(referenceRules.edgeMm);
-      $("gap").value = asInput(referenceRules.gapMm);
+    $("add-job").onclick = () => {
+      input(addJob(), "jobId").focus();
     };
-    $("example").onclick = () => {
-      $("products").replaceChildren();
-      addProduct({ jobId: "DEMO-1", productId: "Long carton", quantity: 2, lengthMm: 2032, widthMm: 457.2 });
+    $("add-stock").onclick = () => addRecord("base-template", $("stock"), {});
+    $("reset-margins").onclick = () => {
+      $("edge").value = asInput(defaultRules.edgeMm);
+      $("product-padding").value = asInput(defaultRules.productMarginMm);
     };
     $("bench-example").onclick = () => hydrate([{
-      jobId: "BENCH-DEMO", productId: "Bench", quantity: 7, lengthMm: 30 * 25.4, widthMm: 15 * 25.4,
+      jobId: "BENCH-DEMO", productId: "Bench", quantity: 7, lengthMm: 30 * 25.4, widthMm: 15 * 25.4, canRotate: true,
       stack: { maxLayers: 3, pattern: "alternate" }
-    }], { ...referenceRules, maxLengthMm: 32 * 25.4, maxWidthMm: 49 * 25.4, maxLayers: 2 });
+    }], { ...defaultRules, maxLengthMm: 52 * 25.4, maxWidthMm: 33 * 25.4, maxLayers: 2 });
     $("units").onchange = () => { setUnits($("units").value); renderPlan(); };
     bindForm("generate-form", () => request("generate", { input: capture() }));
     $("open-json").onclick = () => $("plan-file").click();
@@ -609,11 +626,7 @@
       draw();
     };
     $("unit-select").onchange = () => { selectedUnit = $("unit-select").value; renderSelection(); draw(); };
-    bindForm("resize-form", () => edit("resize", { palletId, base: readBase("base-length", "base-width") }));
     $("remove-pallet").onclick = () => edit("remove-pallet", { palletId });
-    bindForm("handling-form", () => edit("handling", {
-      palletId, truckOrientation: $("truck-orientation").value, tag: $("handling-tag").value.trim()
-    }));
     bindForm("add-pallet-form", () => edit("add-pallet", {
       jobId: $("new-pallet-job").value, base: readBase("new-length", "new-width")
     }));
@@ -640,7 +653,8 @@
 
     function validPreview(item) {
       const pallet = currentPallet();
-      const { edgeMm, gapMm } = plan.rules;
+      const edgeMm = packingEdge(plan.rules);
+      const { gapMm } = plan.rules;
       const size = physicalSize(item);
       const xEnd = item.xMm + size.lengthMm;
       const yEnd = item.yMm + size.widthMm;
@@ -701,14 +715,20 @@
       if (!message) return;
       if (message.type === "init" || message.type === "plan") {
         if (message.type === "init") {
-          referenceRules = message.rules;
+          if (initialized) return;
+          initialized = true;
+          clearInterval(readyTimer);
+          defaultRules = message.rules;
           colors = message.colors;
           $("units").value = message.unit.unit === "in" ? "in" : "mm";
           setUnits($("units").value);
         }
         plan = message.plan;
         if (message.replaceInputs) hydrate(plan?.products || [], plan?.rules || message.rules);
-        if (plan && message.replaceInputs) $("inputs").open = false;
+        if (plan && message.replaceInputs) {
+          $("inputs").open = false;
+          $("pallet-rules").open = false;
+        }
         rows = new Map(plan?.products.map((row, index) => [row.id, { ...row, color: colors[index % colors.length] }]));
         $("undo").disabled = !message.canUndo;
         $("redo").disabled = !message.canRedo;
@@ -717,6 +737,14 @@
       setBusy(false);
       status(message.message || "", message.type === "error");
     });
+    let readyAttempts = 0;
+    const readyTimer = setInterval(() => {
+      if (++readyAttempts < 10) send({ type: "ready" });
+      else {
+        clearInterval(readyTimer);
+        status("The planner did not finish loading. Close and reopen the panel.", true);
+      }
+    }, 300);
     send({ type: "ready" });
   </script>
 </body>
