@@ -2,6 +2,8 @@
 
 Open **Pallet Size Generator** beside **Truck Load Planner** in Sketchor's toolbar. The command is also available in the plugin command palette.
 
+Each time the panel opens, it starts with a blank job and uses the rules from the last plan. Use **Add job** at the top of **Jobs** to include another job in the same plan. Use **Open report** to continue a saved plan.
+
 1. Set the maximum footprint and layers in **Pallet rules**. Product padding starts at 1 in per side, and the pallet edge inset starts at 0.5 in. The padded outlines stay inside the inset, leaving 2 in between products and 1.5 in from a product to the deck edge at those settings. **Reset margins** restores the two defaults. **Custom size increment** rounds each custom dimension up. At a 1 in increment, 32.4 in rounds to 33 in.
 2. In **Jobs**, enter each job number once, then add its products, quantities, dimensions and weights. New products allow quarter-turns by default. For a product approved for stacking, choose up to four layers and the permitted pattern, then set the pallet's **Max layers** as needed. Alternating stacks put units on layers 2 and 4 upside down. The optional **Max stack height** measures the products above the deck. Supply item heights and measured added height for nested alternating stacks when using this limit.
 3. Select **Generate pallets** to draw the layout in the active Sketchor document. A new generation replaces the previous pallet layout there in one undo step. The planner tries rectangular layouts with the allowed turns, ranks them by units placed, pallet count and deck area, and lists any unplaced products.

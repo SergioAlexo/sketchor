@@ -68,7 +68,7 @@
     <p id="status" role="status" aria-live="polite">Loading pallet planner…</p>
     <form id="generate-form">
       <fieldset id="input-fields" class="fields" disabled>
-        <details id="pallet-rules" open>
+        <details id="pallet-rules">
           <summary>Pallet rules</summary>
           <div class="fields">
             <div class="grid three">
@@ -96,11 +96,9 @@
         <details id="inputs" open>
           <summary>Jobs</summary>
           <div class="fields">
+            <div><button type="button" id="add-job">Add job</button></div>
             <div id="jobs"></div>
-            <div class="bar">
-              <button type="button" id="add-job">Add job</button>
-              <button type="button" id="bench-example">Load 7-bench example</button>
-            </div>
+            <div><button type="button" id="bench-example">Load 7-bench example</button></div>
           </div>
         </details>
         <button class="primary" id="generate" type="button" data-apply>Generate pallets</button>
@@ -238,7 +236,8 @@
   </template>
   <script>
     const $ = id => document.getElementById(id);
-    const send = message => parent.postMessage({ pluginMessage: message }, "*");
+    const panelId = crypto.randomUUID();
+    const send = message => parent.postMessage({ pluginMessage: { panelId, ...message } }, "*");
     const lengthFields = {
       "max-length": "maxLengthMm", "max-width": "maxWidthMm", edge: "edgeMm",
       "product-padding": "productMarginMm", increment: "incrementMm",
@@ -807,7 +806,7 @@
       if (event.source !== parent) return;
       if (event.data?.sketchorTheme) { draw(); return; }
       const message = event.data?.pluginMessage;
-      if (!message) return;
+      if (message?.panelId !== panelId) return;
       if (message.reportFolder) showReportFolder(message.reportFolder);
       if (message.type === "init" || message.type === "plan") {
         if (message.type === "init") {
@@ -825,7 +824,7 @@
         }
         plan = message.plan;
         palletStacks = new Map(message.stacks);
-        if (message.replaceInputs) hydrate(plan?.products || [], plan?.rules || message.rules);
+        if (message.replaceInputs) hydrate(plan?.products || [], plan?.rules || message.openingRules);
         if (plan && message.replaceInputs) {
           $("inputs").open = false;
           $("pallet-rules").open = false;

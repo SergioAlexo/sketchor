@@ -19,25 +19,27 @@ function pushHistory(history: PalletPlan[], plan: PalletPlan) {
 const plugin: PluginModule = {
   async activate(sketchor) {
     let plan: PalletPlan | null = null;
+    let openingRules = DEFAULT_PALLET_RULES;
+    let panelId = "";
     const undo: PalletPlan[] = [];
     const redo: PalletPlan[] = [];
     let unit = await sketchor.app.displayUnit().catch(() => MM);
     let reportFolder = await sketchor.ui.reportFolder().catch(() => ({ supported: false, folder: null }));
-    let initialWarning = "";
     try {
       const stored = await sketchor.storage.get(STORAGE_KEY);
-      if (stored) plan = parsePalletPlan(stored);
+      if (stored) openingRules = parsePalletPlan(stored).rules;
     } catch {
-      initialWarning = "Could not restore the last plan. Open a saved report to continue.";
+      // Keep factory rules when old local data cannot be read.
     }
-    const send = (message: object) => sketchor.ui.postMessage(message);
+    const send = (message: object) => sketchor.ui.postMessage({ panelId, ...message });
     const sync = (type: "init" | "plan", replaceInputs: boolean, message: string) => send({
       type, plan, replaceInputs, message, canUndo: undo.length > 0, canRedo: redo.length > 0,
       stacks: plan?.pallets.map(pallet => [pallet.id, placementStacks(pallet.placements)]) ?? [],
-      ...(type === "init" ? { unit, rules: DEFAULT_PALLET_RULES, colors: PRODUCT_COLORS, reportFolder } : {}),
+      ...(type === "init" ? { unit, rules: DEFAULT_PALLET_RULES, openingRules, colors: PRODUCT_COLORS, reportFolder } : {}),
     });
 
     const persist = async (message: string) => {
+      if (plan) openingRules = plan.rules;
       try {
         await sketchor.storage.set(STORAGE_KEY, plan);
         return message;
@@ -71,11 +73,19 @@ const plugin: PluginModule = {
     async function handle(raw: unknown) {
       if (!raw || typeof raw !== "object") return;
       const msg = raw as Record<string, unknown>;
+      if (typeof msg.panelId !== "string" || !msg.panelId) return;
+      if (msg.type === "ready") {
+        if (panelId !== msg.panelId) {
+          panelId = msg.panelId;
+          plan = null;
+          undo.length = 0;
+          redo.length = 0;
+        }
+        sync("init", true, "");
+        return;
+      }
+      if (msg.panelId !== panelId) return;
       switch (msg.type) {
-        case "ready":
-          sync("init", true, initialWarning);
-          initialWarning = "";
-          return;
         case "generate": {
           const next = generatePalletPlan(msg.input, {
             id: plan?.id ?? crypto.randomUUID(),
