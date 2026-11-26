@@ -33,6 +33,9 @@ interface PreparedMesh {
 }
 
 export function buildModel(result: OcctResult, name: string, hash: string, format: ModelFormat): Model3D {
+  // F-06: free curves/points, kept only when there are whole segments of finite numbers.
+  const rawWires = result?.wires;
+  const wires = rawWires instanceof Float32Array && rawWires.length >= 6 && rawWires.length % 6 === 0 ? rawWires : undefined;
   const source: (OcctMesh | undefined)[] = Array.isArray(result?.meshes) ? result.meshes : [];
   // Index into `source` -> index into `prepared` (skipped meshes have none),
   // so the hierarchy can still point at the parts that survived.
@@ -178,8 +181,9 @@ export function buildModel(result: OcctResult, name: string, hash: string, forma
     edgeOfSegment,
     parts,
     tree: buildTree(result?.root, partIndexOf, parts, name),
-    bounds: unionBounds(parts.map((p) => p.bounds)),
+    bounds: unionBounds([...parts.map((p) => p.bounds), ...(wires ? [wireBounds(wires)] : [])]),
     triangleCount: indexTotal / 3,
+    ...(wires ? { wires } : {}),
   };
 }
 
@@ -405,6 +409,21 @@ function boundsOf(positions: Float32Array): Bounds3 {
     }
   }
   return { min, max };
+}
+
+/** Bounds of xyz points (non-finite ones skipped). */
+function wireBounds(w: Float32Array): Bounds3 {
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i + 2 < w.length; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      const v = w[i + k];
+      if (!Number.isFinite(v)) continue;
+      if (v < min[k]) min[k] = v;
+      if (v > max[k]) max[k] = v;
+    }
+  }
+  return Number.isFinite(min[0]) ? { min, max } : EMPTY_BOUNDS();
 }
 
 export function unionBounds(list: Bounds3[]): Bounds3 {

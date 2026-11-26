@@ -90,6 +90,7 @@ export function reorientModel(model: Model3D, up: UpAxis): Model3D {
       normal: rotArray(model.edgeTable.normal),
     },
     nodes: { ...model.nodes, xyz: rotArray(model.nodes.xyz) },
+    ...(model.wires ? { wires: rotArray(model.wires) } : {}),
     parts: model.parts.map((p) => ({ ...p, centroid: rotVec(p.centroid), bounds: rotBounds(p.bounds) })),
     bounds: rotBounds(model.bounds),
   };

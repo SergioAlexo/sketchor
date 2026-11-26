@@ -68,6 +68,8 @@ export interface ModelObjects {
   group: THREE.Group;
   mesh: THREE.Mesh;
   edges: THREE.LineSegments;
+  /** F-06: free curves and points, sharing the edge material (so the theme recolours both). */
+  wires: THREE.LineSegments | null;
   geometry: THREE.BufferGeometry;
   edgeGeometry: THREE.BufferGeometry;
   dispose(): void;
@@ -110,17 +112,30 @@ export function buildModelObjects(model: Model3D): ModelObjects {
   const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
   edges.frustumCulled = false;
 
+  let wires: THREE.LineSegments | null = null;
+  if (model.wires && model.wires.length >= 6) {
+    const wg = new THREE.BufferGeometry();
+    wg.setAttribute("position", new THREE.BufferAttribute(model.wires, 3));
+    wg.boundingBox = geometry.boundingBox;
+    wg.boundingSphere = geometry.boundingSphere;
+    wires = new THREE.LineSegments(wg, edgeMaterial);
+    wires.frustumCulled = false;
+  }
+
   const group = new THREE.Group();
   group.add(mesh, edges);
+  if (wires) group.add(wires);
   return {
     group,
     mesh,
     edges,
+    wires,
     geometry,
     edgeGeometry,
     dispose() {
       geometry.dispose();
       edgeGeometry.dispose();
+      wires?.geometry.dispose();
       material.dispose();
       (edges.material as THREE.Material).dispose();
     },

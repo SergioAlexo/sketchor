@@ -46,6 +46,7 @@ export function scaleModel(model: Model3D, k: number): Model3D {
       radius: scaleArr(model.edgeTable.radius, k),
     },
     nodes: { ...model.nodes, xyz: scaleArr(model.nodes.xyz, k) },
+    ...(model.wires ? { wires: scaleArr(model.wires, k) } : {}),
     parts: model.parts.map((p) => ({ ...p, area: p.area * k * k, volume: p.volume * k * k * k, centroid: scaleVec(p.centroid, k), bounds: scaleBounds(p.bounds, k) })),
     bounds: scaleBounds(model.bounds, k),
   };
