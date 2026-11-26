@@ -42,7 +42,23 @@
     .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .record { padding: 8px; border: 1px solid var(--border); border-radius: 6px; display: grid; gap: 7px; }
     #jobs, .products, #stock { display: grid; gap: 8px; }
+    #jobs, .job { min-width: 0; }
     #jobs .job:only-child > .job-header > [data-remove] { display: none; }
+    .product-scroll { min-width: 0; overflow-x: auto; padding: 2px; }
+    .product-sheet { min-width: 389px; display: grid; gap: 5px; }
+    .product-columns {
+      display: grid;
+      grid-template-columns: minmax(44px, 1.2fr) minmax(45px, .8fr) repeat(3, minmax(38px, 1fr)) minmax(64px, 1.2fr) minmax(70px, 1fr) 24px;
+      align-items: center;
+      gap: 4px;
+    }
+    .product-headings { align-items: end; color: var(--muted); font-size: 11px; }
+    .product-columns input, .product-columns select { padding: 5px 3px; font-size: 12px; }
+    .product-columns input[type="number"] { appearance: textfield; }
+    .product-columns input::-webkit-inner-spin-button,
+    .product-columns input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+    .product-columns button { padding: 3px 0; }
+    .product-options { display: grid; gap: 7px; margin-top: 5px; }
     .primary { color: var(--accent); border-color: var(--accent); font-weight: 600; }
     .note { color: var(--muted); font-size: 12px; }
     .alert { color: var(--danger); }
@@ -98,7 +114,6 @@
           <div class="fields">
             <div><button type="button" id="add-job">Add job</button></div>
             <div id="jobs"></div>
-            <div><button type="button" id="bench-example">Load 7-bench example</button></div>
           </div>
         </details>
         <button class="primary" id="generate" type="button" data-apply>Generate pallets</button>
@@ -193,34 +208,43 @@
         <label>Job number <input name="jobId" maxlength="120" required></label>
         <button type="button" data-remove>Remove job</button>
       </div>
-      <div class="products"></div>
+      <div class="product-scroll">
+        <div class="product-sheet">
+          <div class="product-columns product-headings" aria-hidden="true">
+            <span>Product</span><span>Quantity</span><span>Length</span><span>Width</span><span>Height</span>
+            <span>Unit weight (lb)</span><span>Stack up to</span>
+          </div>
+          <div class="products"></div>
+        </div>
+      </div>
       <div><button type="button" data-add-product>Add product</button></div>
     </div>
   </template>
   <template id="product-template">
-    <div class="record product">
-      <label>Product <input name="productId" maxlength="120" required></label>
-      <div class="grid three">
-        <label>Quantity <input name="quantity" type="number" min="1" max="1000" step="1" required></label>
-        <label>Length <input name="lengthMm" type="number" step="any" data-length required></label>
-        <label>Width <input name="widthMm" type="number" step="any" data-length required></label>
+    <div class="product">
+      <div class="product-columns">
+        <input aria-label="Product" name="productId" maxlength="120" required>
+        <input aria-label="Quantity" name="quantity" type="number" min="1" max="1000" step="1" required>
+        <input aria-label="Length" name="lengthMm" type="number" step="any" data-length required>
+        <input aria-label="Width" name="widthMm" type="number" step="any" data-length required>
+        <input aria-label="Height" name="heightMm" type="number" step="any" data-length>
+        <input aria-label="Unit weight (lb)" name="weightLb" type="number" step="any">
+        <select aria-label="Stack up to" name="stackLayers">
+          <option value="1">1 layer</option><option value="2">2 layers</option><option value="3">3 layers</option>
+          <option value="4">4 layers</option>
+        </select>
+        <button type="button" data-product-options aria-label="Product options" title="Product options" aria-expanded="false">⋯</button>
       </div>
-      <div class="grid">
-        <label>Height <input name="heightMm" type="number" step="any" data-length></label>
-        <label>Unit weight (kg) <input name="weightKg" type="number" step="any"></label>
-      </div>
-      <div class="bar spread">
-        <label class="check"><input name="canRotate" type="checkbox"> Allow 90° turns</label>
-        <button type="button" data-remove>Remove product</button>
-      </div>
-      <label>Stack up to <select name="stackLayers">
-        <option value="1">1 layer</option><option value="2">2 layers</option><option value="3">3 layers</option>
-        <option value="4">4 layers</option>
-      </select></label>
-      <div class="grid stack-options" hidden>
-        <label>Stack pattern <select name="stackPattern"><option value="upright">All upright</option>
-          <option value="alternate">Alternate upside down</option></select></label>
-        <label>Added height per layer <input name="stackHeight" type="number" step="any" min="0" data-length></label>
+      <div class="product-options" hidden>
+        <div class="grid stack-options" hidden>
+          <label>Stack pattern <select name="stackPattern"><option value="upright">All upright</option>
+            <option value="alternate">Alternate upside down</option></select></label>
+          <label>Added height per layer <input name="stackHeight" type="number" step="any" min="0" data-length></label>
+        </div>
+        <div class="bar spread">
+          <label class="check"><input name="canRotate" type="checkbox"> Allow 90° turns</label>
+          <button type="button" data-remove>Remove product</button>
+        </div>
       </div>
     </div>
   </template>
@@ -238,6 +262,7 @@
     const $ = id => document.getElementById(id);
     const panelId = crypto.randomUUID();
     const send = message => parent.postMessage({ pluginMessage: { panelId, ...message } }, "*");
+    const KG_PER_LB = 0.45359237;
     const lengthFields = {
       "max-length": "maxLengthMm", "max-width": "maxWidthMm", edge: "edgeMm",
       "product-padding": "productMarginMm", increment: "incrementMm",
@@ -315,6 +340,7 @@
     function addProduct(container, row = { quantity: 1, canRotate: true }) {
       const element = addRecord("product-template", container, {
         ...row, stackLayers: row.stack?.maxLayers || 1,
+        weightLb: row.weightKg === undefined ? undefined : Number((row.weightKg / KG_PER_LB).toPrecision(12)),
         stackPattern: row.stack?.pattern, stackHeight: row.stack?.addedHeightMm,
         lengthMm: Math.max(row.lengthMm ?? 0, row.measuredLengthMm ?? 0) || undefined,
         widthMm: Math.max(row.widthMm ?? 0, row.measuredWidthMm ?? 0) || undefined
@@ -323,6 +349,12 @@
       if (row.sourceUnit) element.dataset.sourceUnit = row.sourceUnit;
       if (row.sourceRowId) element.dataset.sourceRowId = row.sourceRowId;
       if (row.notes) element.dataset.legacyNotes = row.notes;
+      const optionsButton = element.querySelector("[data-product-options]");
+      const productOptions = element.querySelector(".product-options");
+      optionsButton.onclick = () => {
+        productOptions.hidden = !productOptions.hidden;
+        optionsButton.setAttribute("aria-expanded", String(!productOptions.hidden));
+      };
       const stackLayers = input(element, "stackLayers");
       stackLayers.onchange = () => {
         const stacked = stackLayers.value !== "1";
@@ -330,13 +362,14 @@
         input(element, "stackHeight").disabled = !stacked;
       };
       stackLayers.onchange();
+      return element;
     }
 
     function addJob(jobId = "", products = [undefined]) {
       const job = addRecord("job-template", $("jobs"), { jobId });
       const container = job.querySelector(".products");
       for (const product of products) addProduct(container, product);
-      job.querySelector("[data-add-product]").onclick = () => addProduct(container);
+      job.querySelector("[data-add-product]").onclick = () => input(addProduct(container), "productId").focus();
       return job;
     }
 
@@ -376,7 +409,7 @@
           lengthMm: mm(field("lengthMm")),
           widthMm: mm(field("widthMm")),
           heightMm: field("heightMm").value ? mm(field("heightMm")) : undefined,
-          weightKg: field("weightKg").value ? number(field("weightKg")) : undefined,
+          weightKg: field("weightLb").value ? number(field("weightLb")) * KG_PER_LB : undefined,
           notes: element.dataset.legacyNotes,
           canRotate: field("canRotate").checked,
           stack: stackLayers > 1 ? {
@@ -663,6 +696,8 @@
         if (busy) return;
         const invalid = form.querySelector("input:invalid, select:invalid");
         if (invalid) {
+          const productOptions = invalid.closest(".product-options");
+          if (productOptions?.hidden) productOptions.parentElement.querySelector("[data-product-options]").click();
           for (let el = invalid.parentElement; el && el !== form; el = el.parentElement) {
             if (el.tagName === "DETAILS") el.open = true;
           }
@@ -687,10 +722,6 @@
       $("edge").value = asInput(defaultRules.edgeMm);
       $("product-padding").value = asInput(defaultRules.productMarginMm);
     };
-    $("bench-example").onclick = () => hydrate([{
-      jobId: "BENCH-DEMO", productId: "Bench", quantity: 7, lengthMm: 30 * 25.4, widthMm: 15 * 25.4, canRotate: true,
-      stack: { maxLayers: 3, pattern: "alternate" }
-    }], { ...defaultRules, maxLengthMm: 52 * 25.4, maxWidthMm: 33 * 25.4, maxLayers: 2 });
     $("units").onchange = () => { setUnits($("units").value); renderPlan(); };
     bindForm("generate-form", () => request("generate", { input: capture() }));
     $("open-report").onclick = () => $("plan-file").click();
