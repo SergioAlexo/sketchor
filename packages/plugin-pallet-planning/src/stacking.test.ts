@@ -34,10 +34,11 @@ it("uses a third level only after filling the first two levels", () => {
   expect(isUpsideDown(bench, items[6].layer)).toBe(false);
   const groups = buildPalletDrawing(plan, { unit: "in", perMm: 1 / IN, label: "in" })
     .filter(c => c.type === "group-entities");
-  expect(groups.filter(c => c.name?.startsWith("P1")).map(c => c.name)).toEqual([
-    "P1 · BENCH-DEMO · Layer 1 · 32 × 49 in",
-    "P1 · BENCH-DEMO · Layer 2 · 32 × 49 in",
-    "P1 · BENCH-DEMO · Layer 3 · 32 × 49 in",
+  expect(groups.map(c => c.name)).toEqual([
+    "P1 · BENCH-DEMO · 32 × 49 in",
+    "Bench #1 / Bench #4 / Bench #7",
+    "Bench #2 / Bench #5",
+    "Bench #3 / Bench #6",
   ]);
 });
 
@@ -129,7 +130,10 @@ it("exports the loading sequence, supporting units and original vs edited coordi
     generated_x_mm: "25.4", final_x_mm: "50.8", changed_since_generation: '"true"',
   });
   const html = buildPalletReportHtml(moved, "in");
-  expect(html).toContain("Layer 3 · 1 product");
+  expect(html.match(/class="diagram"/g)).toHaveLength(1);
+  expect(html.match(/class="piece"/g)).toHaveLength(3);
+  expect(html).toContain("Bench #1 / Bench #4 / Bench #7");
+  expect(html).toContain("<td>Bench #7</td><td>3</td>");
   expect(html).toContain("Upside down");
   expect(html).toContain("Bench #7");
 });

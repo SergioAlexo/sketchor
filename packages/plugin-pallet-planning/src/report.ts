@@ -1,5 +1,5 @@
 import {
-  isUpsideDown, layerLimit, oriented, packingEdge, packingFootprint, sharesStack, unitId, type PalletPlan,
+  isUpsideDown, layerLimit, oriented, packingEdge, packingFootprint, placementStacks, sharesStack, unitId, type PalletPlan,
   type PalletResult, type Placement, type PlannedPallet, type ProductRow,
 } from "./types";
 
@@ -100,39 +100,37 @@ export function buildPalletReportHtml(plan: PalletPlan, unit: "mm" | "in"): stri
     const boxStyle = (x: number, y: number, length: number, width: number) =>
       `left:${100 * x / pallet.base.lengthMm}%;bottom:${100 * y / pallet.base.widthMm}%;`
       + `width:${100 * length / pallet.base.lengthMm}%;height:${100 * width / pallet.base.widthMm}%`;
-    const layers = [...new Set(pallet.placements.map(item => item.layer))].sort((a, b) => a - b);
-    const layerSections = layers.map(layer => {
-      const items = pallet.placements.filter(item => item.layer === layer);
-      const outlines: string[] = [];
-      const rows: string[] = [];
-      if (inset > 0 && Math.min(pallet.base.lengthMm, pallet.base.widthMm) > 2 * inset) {
-        const style = boxStyle(inset, inset, pallet.base.lengthMm - 2 * inset, pallet.base.widthMm - 2 * inset);
-        outlines.push(`<span class="guide" style="${style}"></span>`);
+    const outlines: string[] = [];
+    if (inset > 0 && Math.min(pallet.base.lengthMm, pallet.base.widthMm) > 2 * inset) {
+      const style = boxStyle(inset, inset, pallet.base.lengthMm - 2 * inset, pallet.base.widthMm - 2 * inset);
+      outlines.push(`<span class="guide" style="${style}"></span>`);
+    }
+    for (const stack of placementStacks(pallet.placements)) {
+      const [item] = stack;
+      const product = products.get(item.rowId)!;
+      const rotated = oriented(packingFootprint(product), item.rotation);
+      const style = boxStyle(item.xMm, item.yMm, rotated.lengthMm, rotated.widthMm);
+      if (padding > 0) {
+        const boundary = boxStyle(item.xMm - padding, item.yMm - padding, rotated.lengthMm + 2 * padding, rotated.widthMm + 2 * padding);
+        outlines.push(`<span class="guide padding" style="${boundary}"></span>`);
       }
-      for (const item of items) {
-        const product = products.get(item.rowId)!;
-        const rotated = oriented(packingFootprint(product), item.rotation);
-        const flipped = isUpsideDown(product, item.layer);
-        const label = `${escape(product.productId)} #${unitNumber(item.id)}`;
-        const support = indexed.byUnit.get(item.id)?.supportId;
-        const style = boxStyle(item.xMm, item.yMm, rotated.lengthMm, rotated.widthMm);
-        if (padding > 0) {
-          const boundary = boxStyle(item.xMm - padding, item.yMm - padding, rotated.lengthMm + 2 * padding, rotated.widthMm + 2 * padding);
-          outlines.push(`<span class="guide padding" style="${boundary}"></span>`);
-        }
-        outlines.push(`<span class="piece${flipped ? " inverted" : ""}" style="${style}">${label}${flipped ? " ↓" : ""}</span>`);
-        rows.push(`<tr><td>${label}</td><td>${flipped ? "Upside down" : "Upright"}</td><td>${item.rotation}°</td>
-<td>${display(item.xMm)} / ${display(item.yMm)}</td><td>${support ? `${escape(product.productId)} #${unitNumber(support)}` : "Deck"}</td></tr>`);
-      }
-      const ratio = pallet.base.lengthMm / pallet.base.widthMm;
-      return `<section class="layer"><h3>Layer ${layer} · ${items.length} ${items.length === 1 ? "product" : "products"}</h3>
-<div class="diagram" style="aspect-ratio:${ratio};max-width:${Math.min(520, 280 * ratio)}px">${outlines.join("")}</div>
-<table><thead><tr><th>Product unit</th><th>Position</th><th>Rotation</th><th>X / Y (${unit})</th><th>Directly below</th></tr></thead>
-<tbody>${rows.join("")}</tbody></table></section>`;
+      const label = stack.map(unit => `${escape(product.productId)} #${unitNumber(unit.id)}`).join(" / ");
+      outlines.push(`<span class="piece" style="${style}">${label}</span>`);
+    }
+    const rows = [...pallet.placements].sort((a, b) => a.layer - b.layer).map(item => {
+      const product = products.get(item.rowId)!;
+      const label = `${escape(product.productId)} #${unitNumber(item.id)}`;
+      const support = indexed.byUnit.get(item.id)?.supportId;
+      return `<tr><td>${label}</td><td>${item.layer}</td><td>${isUpsideDown(product, item.layer) ? "Upside down" : "Upright"}</td><td>${item.rotation}°</td>
+<td>${display(item.xMm)} / ${display(item.yMm)}</td><td>${support ? `${escape(product.productId)} #${unitNumber(support)}` : "Deck"}</td></tr>`;
     });
+    const ratio = pallet.base.lengthMm / pallet.base.widthMm;
     return `<section><h2>Pallet ${index + 1} · Job ${escape(pallet.jobId)}</h2>
 <p>Base ${size(pallet.base.lengthMm, pallet.base.widthMm)} · ${heightLabel} ${dims(pallet.packedHeightMm)} · ${pallet.placements.length} units</p>
-${pallet.tag ? `<p>Handling ${escape(pallet.tag)}</p>` : ""}${layerSections.join("")}</section>`;
+${pallet.tag ? `<p>Handling ${escape(pallet.tag)}</p>` : ""}
+<div class="diagram" style="aspect-ratio:${ratio};max-width:${Math.min(520, 280 * ratio)}px">${outlines.join("")}</div>
+<table><thead><tr><th>Product unit</th><th>Layer</th><th>Orientation</th><th>Rotation</th><th>X / Y (${unit})</th><th>Directly below</th></tr></thead>
+<tbody>${rows.join("")}</tbody></table></section>`;
   });
   const unplaced = plan.unplaced.map(item => {
     const product = products.get(item.rowId)!;
@@ -143,13 +141,13 @@ ${pallet.tag ? `<p>Handling ${escape(pallet.tag)}</p>` : ""}${layerSections.join
   return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Pallet loading report</title>
 <style>
 body{font:14px/1.45 system-ui,sans-serif;color:#162231;max-width:850px;margin:24px auto;padding:0 18px}
-h1,h2,h3{margin:18px 0 6px}p{margin:4px 0 10px}.layer{margin:12px 0 22px}
+h1,h2{margin:18px 0 6px}p{margin:4px 0 10px}
 .diagram{position:relative;width:100%;border:1px solid #415161;margin:8px 0}
 .guide{position:absolute;box-sizing:border-box;border:1px dashed #637184}.padding{border-color:#2873a9}
 .piece{position:absolute;box-sizing:border-box;border:1px solid #416d86;background:#dcecf5;display:grid;place-items:center;overflow:hidden;font-size:11px;text-align:center}
-.inverted{background:#f7e6cc}table{width:100%;border-collapse:collapse;text-align:left}
+table{width:100%;border-collapse:collapse;text-align:left}
 td,th{border-bottom:1px solid #c5d0db;padding:4px 6px}thead{display:table-header-group}
-@media print{body{margin:0;color:#000}.diagram{break-inside:avoid}h2,h3{break-after:avoid}.piece{print-color-adjust:exact}}
+@media print{body{margin:0;color:#000}.diagram{break-inside:avoid}h2{break-after:avoid}.piece{print-color-adjust:exact}}
 </style><body><h1>Pallet loading report</h1>
 <p>${plan.review === "confirmed" ? "Confirmed" : "Draft"} · Revision ${escape(plan.revisionId)}
  · ${plan.pallets.length} ${plan.pallets.length === 1 ? "pallet" : "pallets"} · ${indexed.byUnit.size} placed · ${plan.unplaced.length} unplaced</p>

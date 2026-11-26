@@ -150,6 +150,20 @@ export function sharesStack(a: Placement, b: Placement): boolean {
     && Math.abs(a.xMm - b.xMm) <= EPS && Math.abs(a.yMm - b.yMm) <= EPS;
 }
 
+/** Group aligned product units in loading order for a single top-down view. */
+export function placementStacks(placements: readonly Placement[]): Placement[][] {
+  const stacks: Placement[][] = [];
+  for (const item of [...placements].sort((a, b) => a.layer - b.layer)) {
+    const stack = item.layer > 1 ? stacks.find(items => {
+      const below = items[items.length - 1];
+      return below.layer === item.layer - 1 && sharesStack(below, item);
+    }) : undefined;
+    if (stack) stack.push(item);
+    else stacks.push([item]);
+  }
+  return stacks;
+}
+
 export function knownLoadedHeight(
   pallet: PlannedPallet, rows: ReadonlyMap<string, ProductRow>, rules: PalletRules,
 ): number | undefined {

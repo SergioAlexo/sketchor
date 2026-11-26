@@ -1,4 +1,4 @@
-import { EPS, sharesStack, type PalletPlan, type Placement, type PlannedPallet } from "./types";
+import { EPS, placementStacks, type PalletPlan, type Placement, type PlannedPallet } from "./types";
 import { footprint, labelText, parsePalletPlan, parsePlacement, record, truckOrientation } from "./validate";
 
 function findPallet(plan: PalletPlan, value: unknown): PlannedPallet {
@@ -35,9 +35,10 @@ export function editPalletPlan(plan: PalletPlan, raw: unknown, revisionId: strin
     }
     case "move-stack": {
       const pallet = findPallet(next, action.palletId);
-      const selected = pallet.placements.find(item => item.id === action.unitId);
-      if (!selected) throw new Error("Select a product unit first.");
-      pallet.placements = pallet.placements.map(item => sharesStack(item, selected)
+      const stack = placementStacks(pallet.placements).find(items => items.some(item => item.id === action.unitId));
+      if (!stack) throw new Error("Select a product unit first.");
+      const moving = new Set(stack);
+      pallet.placements = pallet.placements.map(item => moving.has(item)
         ? parsePlacement({ ...item, xMm: action.xMm, yMm: action.yMm }) : item);
       break;
     }
