@@ -1,6 +1,6 @@
 {
   "name": "@sketchor/embed",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "<sketchor-view> — drop-in animated preview of CAD files from Sketchor: orbitable 3D (glTF, GLB, STL, OBJ, PLY, 3MF) and 2D drawings (DXF, SVG, EPS, AI, PDF)",
   "license": "MIT",
   "author": "Sergio Alexo (https://sergioalexo.com)",
