@@ -1,6 +1,6 @@
-import { EPS, MAX_PRODUCTS, layerLimit, oriented, packingFootprint, placementStacks, type Footprint, type PalletPlan, type Placement, type PlannedPallet } from "./types";
+import { EPS, MAX_PRODUCTS, layerLimit, oriented, packingEdge, packingFootprint, placementStacks, type Footprint, type PalletPlan, type Placement, type PlannedPallet } from "./types";
 import { footprint, labelText, parsePalletPlan, parsePlacement, record, truckOrientation } from "./validate";
-import { findStackPosition, packSelectedStacks } from "./pack";
+import { customBaseSize, findStackPosition, packSelectedStacks } from "./pack";
 
 function findPallet(plan: PalletPlan, value: unknown): PlannedPallet {
   const pallet = plan.pallets.find(p => p.id === value);
@@ -129,6 +129,38 @@ export function editPalletPlan(plan: PalletPlan, raw: unknown, revisionId: strin
     case "unplace": {
       const { id, rowId } = detachUnit(next, action.unitId);
       next.unplaced.push({ id, rowId, reason: "manual" });
+      break;
+    }
+    case "fit-custom-pallets": {
+      const rows = new Map(next.products.map(row => [row.id, row]));
+      const edge = packingEdge(next.rules);
+      let changed = false;
+      for (const pallet of next.pallets) {
+        if (pallet.baseSource !== "custom" || !pallet.placements.length) continue;
+        const bottom = pallet.placements.filter(unit => unit.layer === 1);
+        const offsetX = Math.max(0, Math.min(...bottom.map(unit => unit.xMm)) - edge);
+        const offsetY = Math.max(0, Math.min(...bottom.map(unit => unit.yMm)) - edge);
+        const corners = bottom.map(unit => {
+          const size = oriented(packingFootprint(rows.get(unit.rowId)!), unit.rotation);
+          return { x: unit.xMm + size.lengthMm, y: unit.yMm + size.widthMm };
+        });
+        const size = customBaseSize(
+          Math.max(...corners.map(corner => corner.x)) - offsetX,
+          Math.max(...corners.map(corner => corner.y)) - offsetY,
+          next.rules,
+        );
+        const lengthMm = Math.min(size.lengthMm, pallet.base.lengthMm);
+        const widthMm = Math.min(size.widthMm, pallet.base.widthMm);
+        if (pallet.base.lengthMm - lengthMm <= EPS && pallet.base.widthMm - widthMm <= EPS) continue;
+        pallet.base = { lengthMm, widthMm };
+        pallet.loadedFootprint = { ...pallet.base };
+        for (const unit of pallet.placements) {
+          unit.xMm -= offsetX;
+          unit.yMm -= offsetY;
+        }
+        changed = true;
+      }
+      if (!changed) return plan;
       break;
     }
     case "resize": {

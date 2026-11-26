@@ -123,6 +123,7 @@
           <label>Pallet preview <select id="pallet"></select></label>
           <canvas id="preview" aria-label="Top-down pallet layout"></canvas>
           <p class="note" id="dimensions"></p>
+          <div><button type="button" id="fit-custom-pallets" hidden>Fit custom pallets to layout</button></div>
           <div id="empty-pallet-actions" hidden><button type="button" id="remove-pallet">Remove empty pallet</button></div>
           <details id="manual-stack">
             <summary>Build a stack</summary>
@@ -623,6 +624,7 @@
       $("placed-count").textContent = placed;
       $("unplaced-count").textContent = plan.unplaced.length;
       $("review").textContent = plan.review === "confirmed" ? "Confirmed" : "Draft";
+      $("fit-custom-pallets").hidden = !plan.pallets.some(pallet => pallet.baseSource === "custom" && pallet.placements.length);
       $("confirm").disabled = plan.review === "confirmed" || Boolean(plan.unplaced.length) || plan.pallets.some(pallet => !pallet.placements.length);
       $("unplaced").hidden = !plan.unplaced.length;
       const unplacedRows = new Map();
@@ -713,6 +715,7 @@
     };
     $("unit-select").onchange = () => { selectedUnit = $("unit-select").value; renderSelection(); draw(); };
     $("remove-pallet").onclick = () => edit("remove-pallet", { palletId });
+    $("fit-custom-pallets").onclick = () => edit("fit-custom-pallets");
     bindForm("add-pallet-form", () => edit("add-pallet", {
       jobId: $("new-pallet-job").value, base: readBase("new-length", "new-width")
     }));

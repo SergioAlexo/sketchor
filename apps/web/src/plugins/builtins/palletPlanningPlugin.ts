@@ -119,9 +119,15 @@ const plugin: PluginModule = {
         return;
       }
       switch (msg.type) {
-        case "edit":
-          await commit(editPalletPlan(plan, msg.action, crypto.randomUUID()), "Plan updated.");
+        case "edit": {
+          const next = editPalletPlan(plan, msg.action, crypto.randomUUID());
+          if (next === plan) {
+            send({ type: "status", message: "Custom pallets already fit the current layout." });
+          } else {
+            await commit(next, "Plan updated.");
+          }
           return;
+        }
         case "save-report": {
           const result = await sketchor.ui.saveReportFile(
             palletReportFileName(plan, new Date()),

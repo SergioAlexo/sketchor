@@ -185,16 +185,22 @@ export function packSelectedStacks(
   throw new Error("The selected stacks do not fit in the free space on this pallet.");
 }
 
+/** Round the occupied extent plus the final edge clearance to a custom base size. */
+export function customBaseSize(lengthUsed: number, widthUsed: number, rules: PalletRules): Footprint {
+  const edge = packingEdge(rules);
+  const round = (mm: number) =>
+    Math.max(1, Math.ceil((mm + edge - EPS) / rules.incrementMm)) * rules.incrementMm;
+  return {
+    lengthMm: round(lengthUsed),
+    widthMm: round(widthUsed),
+  };
+}
+
 function finishBase(bin: Bin, rules: PalletRules): Footprint {
   if (bin.option.source === "standard") {
     return { lengthMm: bin.option.lengthMm, widthMm: bin.option.widthMm };
   }
-  const edge = packingEdge(rules);
-  const round = (mm: number) => Math.ceil((mm + edge - EPS) / rules.incrementMm) * rules.incrementMm;
-  return {
-    lengthMm: Math.max(rules.incrementMm, round(bin.lengthUsed)),
-    widthMm: Math.max(rules.incrementMm, round(bin.widthUsed)),
-  };
+  return customBaseSize(bin.lengthUsed, bin.widthUsed, rules);
 }
 
 function trial(

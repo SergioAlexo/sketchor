@@ -238,6 +238,34 @@ it("pairs selected units across pallets and preserves a manually assembled stack
   for (const label of ["A #1 / A #2 / B #1 / B #2", "C #1 / C #2", "C #3 / C #4"]) expect(html).toContain(label);
   expect(() => editPalletPlan(paired, { ...pair, palletId: first.id }, "too-small")).toThrow(/do not fit/);
   expect(readPalletReport(html)).toEqual(paired);
+
+  const shifted = editPalletPlan(paired, {
+    type: "move-stack", palletId: first.id, unitId: "a/1", xMm: xMm + 0.5 * IN, yMm: yMm + 5 * IN,
+  }, "shifted");
+  const fitted = editPalletPlan(shifted, { type: "fit-custom-pallets" }, "fitted");
+  const [fitFirst, fitSecond] = [first, second].map(p => fitted.pallets.find(item => item.id === p.id)!);
+  expect(fitFirst.base).toEqual({ lengthMm: 74 * IN, widthMm: 66 * IN });
+  expect(fitSecond.base).toEqual({ lengthMm: 75 * IN, widthMm: 53 * IN });
+  expect(fitFirst.loadedFootprint).toEqual(fitFirst.base);
+  expect(fitSecond.loadedFootprint).toEqual(fitSecond.base);
+  expect(fitFirst.placements).toEqual(firstEdited.placements);
+  expect(fitSecond.placements).toEqual(secondEdited.placements);
+  expect(readPalletReport(buildPalletReportHtml(fitted, "in"))).toEqual(fitted);
+  expect(editPalletPlan(fitted, { type: "fit-custom-pallets" }, "again")).toBe(fitted);
+});
+
+it("keeps standard and manually sized bases as specified when fitting the layout", () => {
+  const plan = generatePalletPlan({
+    products: [{ ...bench, quantity: 1 }], rules: {
+      ...DEFAULT_PALLET_RULES, allowCustom: false, standardBases: [{ name: "Stock", lengthMm: 48 * IN, widthMm: 40 * IN }],
+    },
+  }, version);
+  expect(plan.pallets[0].baseSource).toBe("standard");
+  expect(editPalletPlan(plan, { type: "fit-custom-pallets" }, "fit-stock")).toBe(plan);
+  const resized = editPalletPlan(plan, {
+    type: "resize", palletId: plan.pallets[0].id, base: { lengthMm: 50 * IN, widthMm: 42 * IN },
+  }, "manual");
+  expect(editPalletPlan(resized, { type: "fit-custom-pallets" }, "fit-manual")).toBe(resized);
 });
 
 it("exports the loading sequence, supporting units and original vs edited coordinates", () => {
