@@ -84,7 +84,7 @@ function findFit(bin: Bin, row: ProductRow, gapMm: number, preferTurn = false): 
 }
 
 function put(bin: Bin, unit: ProductUnit, fit: Fit, splitAlongLength: boolean): void {
-  const { slot, reserved, footprint } = fit;
+  const { slot, reserved } = fit;
   const right: Slot = {
     xMm: slot.xMm + reserved.lengthMm,
     yMm: slot.yMm,
@@ -98,12 +98,69 @@ function put(bin: Bin, unit: ProductUnit, fit: Fit, splitAlongLength: boolean): 
     widthMm: slot.widthMm - reserved.widthMm,
   };
   bin.slots.splice(fit.index, 1, ...[right, top].filter(s => s.lengthMm > EPS && s.widthMm > EPS));
+  recordPlacement(bin, unit, fit);
+}
+
+function recordPlacement(bin: Bin, unit: ProductUnit, { slot, footprint, rotation }: Fit): void {
   unit.ids.forEach((id, index) => bin.placements.push({
-    id, rowId: unit.row.id, rotation: fit.rotation, xMm: slot.xMm, yMm: slot.yMm,
+    id, rowId: unit.row.id, rotation, xMm: slot.xMm, yMm: slot.yMm,
     layer: (index + 1) as Layer,
   }));
   bin.lengthUsed = Math.max(bin.lengthUsed, slot.xMm + footprint.lengthMm);
   bin.widthUsed = Math.max(bin.widthUsed, slot.yMm + footprint.widthMm);
+}
+
+/** Subtract an occupied, clearance-inclusive footprint from every free rectangle. */
+function freeSlotsAfter(slots: Slot[], occupied: Slot): Slot[] {
+  const free = slots.flatMap(slot => {
+    const endX = slot.xMm + slot.lengthMm;
+    const endY = slot.yMm + slot.widthMm;
+    const left = Math.max(slot.xMm, occupied.xMm);
+    const bottom = Math.max(slot.yMm, occupied.yMm);
+    const right = Math.min(endX, occupied.xMm + occupied.lengthMm);
+    const top = Math.min(endY, occupied.yMm + occupied.widthMm);
+    if (right <= left + EPS || top <= bottom + EPS) return [slot];
+    return [
+      { ...slot, lengthMm: left - slot.xMm },
+      { ...slot, xMm: right, lengthMm: endX - right },
+      { ...slot, widthMm: bottom - slot.yMm },
+      { ...slot, yMm: top, widthMm: endY - top },
+    ].filter(part => part.lengthMm > EPS && part.widthMm > EPS);
+  });
+  return free.filter((slot, index) => !free.some((other, j) => j !== index
+    && other.xMm <= slot.xMm + EPS && other.yMm <= slot.yMm + EPS
+    && other.xMm + other.lengthMm >= slot.xMm + slot.lengthMm - EPS
+    && other.yMm + other.widthMm >= slot.yMm + slot.widthMm - EPS
+    && (j < index || other.lengthMm > slot.lengthMm + EPS || other.widthMm > slot.widthMm + EPS)));
+}
+
+/** Place just the selected stacks in the free space of the existing pallet base. */
+export function packSelectedStacks(
+  pallet: PlannedPallet, units: readonly ProductUnit[], rules: PalletRules, products: readonly ProductRow[],
+): Placement[] {
+  const initial = startBin({ ...pallet.base, source: "standard" }, rules);
+  const rows = new Map(products.map(row => [row.id, row]));
+  const gap = rules.gapMm;
+  for (const item of pallet.placements) {
+    if (item.layer !== 1) continue;
+    const size = oriented(packingFootprint(rows.get(item.rowId)!), item.rotation);
+    initial.slots = freeSlotsAfter(initial.slots, {
+      xMm: item.xMm, yMm: item.yMm, lengthMm: size.lengthMm + gap, widthMm: size.widthMm + gap,
+    });
+  }
+  const ordered = [...units].sort((a, b) => area(packingFootprint(b.row)) - area(packingFootprint(a.row)));
+  const total = units.reduce((sum, unit) => sum + unit.ids.length, 0);
+  for (const preferTurn of [false, true]) {
+    const bin: Bin = { ...initial, placements: [] };
+    for (const unit of ordered) {
+      const fit = findFit(bin, unit.row, gap, preferTurn);
+      if (!fit) break;
+      bin.slots = freeSlotsAfter(bin.slots, { ...fit.slot, ...fit.reserved });
+      recordPlacement(bin, unit, fit);
+    }
+    if (bin.placements.length === total) return bin.placements;
+  }
+  throw new Error("The selected stacks do not fit in the free space on this pallet.");
 }
 
 function finishBase(bin: Bin, rules: PalletRules): Footprint {
@@ -244,6 +301,6 @@ export function generatePalletPlan(
   }
   return {
     schemaVersion: 2, ...version, review: "draft", products, rules, pallets, unplaced,
-    generation: { solver: "guillotine-layered-v2", revisionId: version.revisionId, pallets, unplaced },
+    generation: { solver: "guillotine-layered-v2", revisionId: version.revisionId, ...structuredClone({ pallets, unplaced }) },
   };
 }

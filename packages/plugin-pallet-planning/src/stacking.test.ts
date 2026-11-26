@@ -4,6 +4,7 @@ import {
   DEFAULT_PALLET_RULES, isUpsideDown, palletReportFileName, parsePalletPlan, readPalletReport,
   REFERENCE_RULES, type PalletRules, type ProductRow,
 } from "./index";
+import { placementStacks } from "./types";
 
 const IN = 25.4;
 const version = { id: "bench-plan", revisionId: "generated", parentRevisionId: null };
@@ -203,6 +204,39 @@ it("assembles A1, A2, B1, B2 from two pallets with independent orientations", ()
   expect(() => editPalletPlan(generated, {
     ...action, units: [...action.units.slice(2), ...action.units.slice(0, 2)],
   }, "overhang")).toThrow(/overhang/);
+});
+
+it("pairs selected units across pallets and preserves a manually assembled stack", () => {
+  const a: ProductRow = { ...bench, id: "a", productId: "A", quantity: 2, lengthMm: 71 * IN, widthMm: 63 * IN,
+    stack: { maxLayers: 2, pattern: "alternate" } };
+  const b = { ...a, id: "b", productId: "B" };
+  const c = { ...a, id: "c", productId: "C", quantity: 4, lengthMm: 72 * IN, widthMm: 24 * IN };
+  const generated = generatePalletPlan({
+    products: [a, b, c], rules: { ...DEFAULT_PALLET_RULES, maxLayers: 4 },
+  }, version);
+  expect(generated.pallets).toHaveLength(2);
+  const first = generated.pallets.find(p => p.placements.some(item => item.id === "a/1"))!;
+  const second = generated.pallets.find(p => p.id !== first.id)!;
+  expect(first.placements.some(item => item.rowId === "c")).toBe(true);
+  expect(second.placements.some(item => item.rowId === "c")).toBe(true);
+  const { xMm, yMm } = first.placements.find(item => item.id === "a/1")!;
+  const mixed = editPalletPlan(generated, {
+    type: "assemble-stack", palletId: first.id, xMm, yMm,
+    units: ["a/1", "a/2", "b/1", "b/2"].map((unitId, index) => ({ unitId, rotation: 0, upsideDown: index % 2 === 1 })),
+  }, "mixed");
+  const pair = { type: "stack-in-pairs", palletId: second.id, unitIds: ["c/4", "c/1", "c/3", "c/2"] };
+  const paired = editPalletPlan(mixed, pair, "paired");
+  const [firstEdited, secondEdited] = [first, second].map(p => paired.pallets.find(item => item.id === p.id)!);
+  expect(firstEdited.placements).toEqual(mixed.pallets.find(p => p.id === first.id)!.placements.filter(item => item.rowId !== "c"));
+  expect(secondEdited.base).toEqual(second.base);
+  expect(placementStacks(secondEdited.placements).map(stack => stack.map(item => [item.id, item.layer, isUpsideDown(c, item.layer)]))).toEqual([
+    [["c/1", 1, false], ["c/2", 2, true]], [["c/3", 1, false], ["c/4", 2, true]],
+  ]);
+  expect(paired.generation).toEqual(generated.generation);
+  const html = buildPalletReportHtml(paired, "in");
+  for (const label of ["A #1 / A #2 / B #1 / B #2", "C #1 / C #2", "C #3 / C #4"]) expect(html).toContain(label);
+  expect(() => editPalletPlan(paired, { ...pair, palletId: first.id }, "too-small")).toThrow(/do not fit/);
+  expect(readPalletReport(html)).toEqual(paired);
 });
 
 it("exports the loading sequence, supporting units and original vs edited coordinates", () => {

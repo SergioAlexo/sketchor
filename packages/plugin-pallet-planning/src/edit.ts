@@ -1,5 +1,6 @@
-import { EPS, oriented, packingFootprint, placementStacks, type Footprint, type PalletPlan, type Placement, type PlannedPallet } from "./types";
+import { EPS, MAX_PRODUCTS, layerLimit, oriented, packingFootprint, placementStacks, type Footprint, type PalletPlan, type Placement, type PlannedPallet } from "./types";
 import { footprint, labelText, parsePalletPlan, parsePlacement, record, truckOrientation } from "./validate";
+import { packSelectedStacks } from "./pack";
 
 function findPallet(plan: PalletPlan, value: unknown): PlannedPallet {
   const pallet = plan.pallets.find(p => p.id === value);
@@ -81,6 +82,39 @@ export function editPalletPlan(plan: PalletPlan, raw: unknown, revisionId: strin
         pallet.placements.push(item);
         previous = { ...item, ...size };
       }
+      break;
+    }
+    case "stack-in-pairs": {
+      const pallet = findPallet(next, action.palletId);
+      if (!Array.isArray(action.unitIds) || action.unitIds.length < 2 || action.unitIds.length > MAX_PRODUCTS) {
+        throw new Error("Select at least two product units.");
+      }
+      const ids = action.unitIds.map(id => labelText(id, "Product unit ID", 256));
+      if (new Set(ids).size !== ids.length) throw new Error("Each unit can be selected once.");
+      const byProduct = new Map<string, string[]>();
+      const rows = new Map(next.products.map(row => [row.id, row]));
+      for (const id of ids) {
+        const unit = detachUnit(next, id);
+        const row = rows.get(unit.rowId)!;
+        if (row.jobId !== pallet.jobId) throw new Error("Choose products from the destination pallet's job.");
+        const group = byProduct.get(row.id) ?? [];
+        group.push(unit.id);
+        byProduct.set(row.id, group);
+      }
+      if (![...byProduct.values()].some(group => group.length > 1)) {
+        throw new Error("Select at least two units of the same product.");
+      }
+      const number = (id: string) => Number(id.slice(id.lastIndexOf("/") + 1));
+      const pairs = [...byProduct].flatMap(([rowId, group]) => {
+        const row = rows.get(rowId)!;
+        if (group.length > 1 && layerLimit(row, next.rules) < 2) {
+          throw new Error(`${row.productId} cannot use two layers with the configured layer and height limits.`);
+        }
+        group.sort((a, b) => number(a) - number(b));
+        return Array.from({ length: Math.ceil(group.length / 2) }, (_, i) => ({ row, ids: group.slice(2 * i, 2 * i + 2) }));
+      });
+      pallet.packedHeightMm = undefined;
+      pallet.placements.push(...packSelectedStacks(pallet, pairs, next.rules, next.products));
       break;
     }
     case "unplace": {

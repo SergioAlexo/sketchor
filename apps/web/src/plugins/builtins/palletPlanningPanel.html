@@ -50,6 +50,7 @@
     .metrics strong { color: var(--accent); }
     #preview { display: block; width: 100%; height: 234px; touch-action: none; border: 1px solid var(--border); border-radius: 7px; }
     #preview.ready { cursor: crosshair; }
+    #pair-units { max-height: 180px; overflow: auto; }
     #unplaced-list { margin: 6px 0 0; padding-left: 20px; max-height: 110px; overflow: auto; }
     #status { position: sticky; top: 0; z-index: 1; background: var(--bg); padding: 5px; overflow-wrap: anywhere; }
     #status:empty { display: none; }
@@ -149,6 +150,14 @@
                 <label>Base Y <input id="stack-y" type="number" min="0" step="any" data-length required></label>
               </div>
               <div><button type="button" data-apply>Place stack</button></div>
+            </form>
+          </details>
+          <details>
+            <summary>Stack in 2 layers</summary>
+            <form id="pair-form">
+              <p class="note" id="pair-destination"></p>
+              <div id="pair-units"></div>
+              <div><button type="button" data-apply>Place in 2 layers</button></div>
             </form>
           </details>
         </div>
@@ -512,14 +521,31 @@
       $("unplace-unit").disabled = Boolean(unit.reason);
     }
 
-    function renderStackForm() {
-      const pallet = currentPallet();
-      const selected = palletStacks.get(palletId)?.find(stack => stack.some(unit => unit.id === selectedUnit));
+    function jobUnits(pallet) {
       const sources = plan.pallets.flatMap((source, index) => source.jobId === pallet.jobId
         ? source.placements.map(unit => [unit, "Pallet " + (index + 1)]) : []);
       for (const unit of plan.unplaced) {
         if (rows.get(unit.rowId).jobId === pallet.jobId) sources.push([unit, "Unplaced"]);
       }
+      return sources;
+    }
+
+    function renderPairForm(pallet, sources) {
+      const number = plan.pallets.indexOf(pallet) + 1;
+      $("pair-destination").textContent = "Select units to pair by product on Pallet " + number + ".";
+      $("pair-units").replaceChildren(...sources.map(([unit, origin]) => {
+        const label = document.createElement("label");
+        label.className = "check";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.value = unit.id;
+        label.append(input, unitName(unit) + " · " + origin);
+        return label;
+      }));
+    }
+
+    function renderStackForm(sources = jobUnits(currentPallet())) {
+      const selected = palletStacks.get(palletId)?.find(stack => stack.some(unit => unit.id === selectedUnit));
       const available = new Map(sources.map(([unit]) => [unit.id, unit]));
       const choices = [["", "Choose product"], ...sources.map(([unit, origin]) => [unit.id, unitName(unit) + " · " + origin])];
       const layers = Array.from({ length: plan.rules.maxLayers }, (_, index) => {
@@ -578,7 +604,9 @@
       $("empty-pallet-actions").hidden = pallet.placements.length > 0;
       canvas.classList.toggle("ready", pallet.placements.length > 0);
       renderSelection();
-      renderStackForm();
+      const sources = jobUnits(pallet);
+      renderStackForm(sources);
+      renderPairForm(pallet, sources);
       draw();
     }
 
@@ -685,6 +713,9 @@
       xMm: mm($("position-x")), yMm: mm($("position-y")), layer: Number($("target-layer").value)
     }));
     bindForm("stack-form", placeManualStack);
+    bindForm("pair-form", () => edit("stack-in-pairs", {
+      palletId, unitIds: Array.from($("pair-units").querySelectorAll("input:checked"), input => input.value)
+    }));
     $("unplace-unit").onclick = () => edit("unplace", { unitId: selectedUnit });
     $("confirm").onclick = () => edit("confirm");
     $("save-report").onclick = () => request("save-report", { unit: $("units").value });
