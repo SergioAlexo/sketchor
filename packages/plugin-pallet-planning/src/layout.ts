@@ -33,19 +33,20 @@ export function buildPalletDrawing(plan: PalletPlan, unit: DisplayUnitInfo): Com
   let y = 0;
   let rowHeight = 0;
   for (const [index, pallet] of plan.pallets.entries()) {
+    const origin = pallet.sceneOrigin ?? { x, y };
     const layer = PALLET_PLAN_LAYER;
     const base = pallet.base;
     const size = `${value(base.lengthMm)} × ${value(base.widthMm)} ${unit.label}`;
     const labelHeight = Math.max(10, Math.min(base.lengthMm, base.widthMm) * 0.07);
     const caption = `P${index + 1} · ${pallet.jobId} · ${size}`;
-    const outline = owned(polyline(rect(x, y, base), true, { layer, name: `Pallet ${pallet.id}` }));
-    const title = owned(text({ x, y: y - labelHeight * 1.5 }, caption, { layer, height: labelHeight }));
+    const outline = owned(polyline(rect(origin.x, origin.y, base), true, { layer, name: `Pallet ${pallet.id}` }));
+    const title = owned(text({ x: origin.x, y: origin.y - labelHeight * 1.5 }, caption, { layer, height: labelHeight }));
     const edges = [outline.id, title.id];
     commands.push(add(outline), add(title));
     const edge = plan.rules.edgeMm;
     if (edge > 0 && base.lengthMm > 2 * edge && base.widthMm > 2 * edge) {
       const inside = { lengthMm: base.lengthMm - 2 * edge, widthMm: base.widthMm - 2 * edge };
-      const guide = owned(polyline(rect(x + edge, y + edge, inside), true, {
+      const guide = owned(polyline(rect(origin.x + edge, origin.y + edge, inside), true, {
         layer: PALLET_GUIDE_LAYER, linetype: "DASHED", construction: true, name: `Clearance ${pallet.id}`,
       }));
       commands.push(add(guide));
@@ -59,8 +60,8 @@ export function buildPalletDrawing(plan: PalletPlan, unit: DisplayUnitInfo): Com
       const entry = rows.get(placement.rowId);
       if (!entry) throw new Error("A product is missing from the plan.");
       const footprint = oriented(packingFootprint(entry.row), placement.rotation);
-      const px = x + placement.xMm;
-      const py = y + placement.yMm;
+      const px = origin.x + placement.xMm;
+      const py = origin.y + placement.yMm;
       const box = owned(polyline(rect(px, py, footprint), true, {
         layer, color: entry.color, fill: entry.color, name: `Product ${placement.id}`,
       }));

@@ -74,6 +74,8 @@ export interface PlannedPallet {
   jobId: string;
   base: Footprint;
   loadedFootprint: Footprint;
+  /** Lower-left corner on the 2D drawing when a pallet was built there. */
+  sceneOrigin?: { x: number; y: number };
   baseSource: "standard" | "custom" | "manual";
   baseName?: string;
   placements: Placement[];

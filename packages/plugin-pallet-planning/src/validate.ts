@@ -162,11 +162,17 @@ function parsePallet(raw: unknown): PlannedPallet {
   if (pallet.baseSource !== "standard" && pallet.baseSource !== "custom" && pallet.baseSource !== "manual") {
     throw new Error("Pallet base source is invalid.");
   }
+  const origin = pallet.sceneOrigin === undefined ? undefined : record(pallet.sceneOrigin, "Pallet drawing origin");
+  const coordinate = (value: unknown) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) throw new Error("Pallet drawing coordinates must be finite.");
+    return value;
+  };
   return {
     id: labelText(pallet.id, "Pallet ID", 256),
     jobId: labelText(pallet.jobId, "Pallet job"),
     base: footprint(pallet.base, "Pallet base"),
     loadedFootprint: footprint(pallet.loadedFootprint, "Loaded footprint"),
+    ...(origin ? { sceneOrigin: { x: coordinate(origin.x), y: coordinate(origin.y) } } : {}),
     baseSource: pallet.baseSource,
     baseName: optionalText(pallet.baseName, "Pallet base name"),
     truckOrientation: truckOrientation(pallet.truckOrientation),

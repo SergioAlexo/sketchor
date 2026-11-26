@@ -66,7 +66,6 @@
     .metrics strong { color: var(--accent); }
     #preview { display: block; width: 100%; height: 234px; touch-action: none; border: 1px solid var(--border); border-radius: 7px; }
     #preview.ready { cursor: crosshair; }
-    #pair-units { max-height: 180px; overflow: auto; }
     #unplaced-list { margin: 6px 0 0; padding-left: 20px; max-height: 110px; overflow: auto; }
     #status { position: sticky; top: 0; z-index: 1; background: var(--bg); padding: 5px; overflow-wrap: anywhere; }
     #status:empty { display: none; }
@@ -82,6 +81,7 @@
     </div>
     <p class="note" id="report-location" hidden></p>
     <p id="status" role="status" aria-live="polite">Loading pallet planner…</p>
+    <div id="resume-drawing" hidden><button type="button" id="resume-drawing-button">Use current drawing</button></div>
     <form id="generate-form">
       <fieldset id="input-fields" class="fields" disabled>
         <details id="pallet-rules">
@@ -132,46 +132,16 @@
           <p class="alert">Products to place</p>
           <ul id="unplaced-list"></ul>
         </div>
+        <div class="fields">
+          <div><button type="button" class="primary" id="group-scene">Make pallets from 2D</button></div>
+          <p class="note">Arrange product outlines on the drawing. Select products there for grouping and layer controls.</p>
+        </div>
         <div id="pallet-view" class="fields" hidden>
           <label>Pallet preview <select id="pallet"></select></label>
           <canvas id="preview" aria-label="Top-down pallet layout"></canvas>
           <p class="note" id="dimensions"></p>
           <div><button type="button" id="fit-custom-pallets" hidden>Fit custom pallets to layout</button></div>
           <div id="empty-pallet-actions" hidden><button type="button" id="remove-pallet">Remove empty pallet</button></div>
-          <details id="manual-stack">
-            <summary>Build a stack</summary>
-            <form id="stack-form">
-              <label>Destination pallet <select id="stack-target" required></select></label>
-              <p class="note">Choose products from bottom to top. The planner finds space on the destination pallet.</p>
-              <div id="stack-layers" class="fields"></div>
-              <div><button type="button" data-apply>Place stack</button></div>
-            </form>
-          </details>
-          <details>
-            <summary>Stack in 2 layers</summary>
-            <form id="pair-form">
-              <label>Destination pallet <select id="pair-target" required></select></label>
-              <p class="note">Select units to pair. Each pair goes together in two layers.</p>
-              <div id="pair-units"></div>
-              <div><button type="button" data-apply>Place in 2 layers</button></div>
-            </form>
-          </details>
-          <details id="edit-product">
-            <summary>Move or turn a product</summary>
-            <form id="place-form">
-              <label>Product unit <select id="unit-select"></select></label>
-              <div class="grid">
-                <label>Destination pallet <select id="target-pallet"></select></label>
-                <label>Product rotation <select id="rotation"><option value="0">0°</option><option value="90">90°</option></select></label>
-                <label>Destination layer <select id="target-layer"></select></label>
-              </div>
-              <div class="grid">
-                <label>X <input id="position-x" type="number" min="0" step="any" data-length required></label>
-                <label>Y <input id="position-y" type="number" min="0" step="any" data-length required></label>
-              </div>
-              <div class="bar"><button type="button" data-apply>Apply position</button><button type="button" id="unplace-unit">Unplace</button></div>
-            </form>
-          </details>
         </div>
         <details>
           <summary>Add a pallet</summary>
@@ -193,15 +163,6 @@
       </section>
     </fieldset>
   </main>
-  <template id="stack-layer-template">
-    <div class="record">
-      <label><span data-layer-label></span><select data-stack-unit></select></label>
-      <div class="grid">
-        <label>Rotation <select data-stack-rotation><option value="0">0°</option><option value="90">90°</option></select></label>
-        <label class="check"><input type="checkbox" data-stack-inverted> Upside down</label>
-      </div>
-    </div>
-  </template>
   <template id="job-template">
     <div class="record job">
       <div class="job-header">
@@ -274,7 +235,6 @@
     let plan = null;
     let rows = new Map();
     let palletId = "";
-    let destinationToShow = "";
     let selectedUnit = "";
     let palletStacks = new Map();
     let defaultRules;
@@ -292,13 +252,13 @@
     const asText = value => String(Number((value / mmPerUnit).toFixed(3)));
     const currentPallet = () => plan?.pallets.find(pallet => pallet.id === palletId);
     const unitName = unit => rows.get(unit.rowId).productId + " #" + unit.id.split("/").at(-1);
-    const upsideDown = unit => unit.upsideDown ?? (unit.layer % 2 === 0 && rows.get(unit.rowId).stack?.pattern === "alternate");
     const packingEdge = rules => rules.edgeMm + (rules.productMarginMm ?? 0);
 
     function setBusy(value) {
       busy = value;
       for (const id of ["units", "open-report", "input-fields", "result-fields"]) $(id).disabled = busy;
       $("report-folder").disabled = busy || !folderSupported;
+      $("resume-drawing-button").disabled = busy;
     }
 
     function showReportFolder(info) {
@@ -524,100 +484,6 @@
       }
     }
 
-    function renderSelection() {
-      const pallet = currentPallet();
-      const units = pallet ? [
-        ...pallet.placements,
-        ...plan.unplaced.filter(item => rows.get(item.rowId).jobId === pallet.jobId)
-      ] : [];
-      const unit = units.find(item => item.id === selectedUnit) || units[0];
-      $("edit-product").hidden = !unit;
-      if (!unit) return;
-      selectedUnit = unit.id;
-      options($("unit-select"), units.map(item => [
-        item.id, unitName(item) + (item.reason ? " (unplaced)"
-          : item.layer > 1 ? " (layer " + item.layer + (upsideDown(item) ? ", upside down)" : ")") : "")
-      ]), selectedUnit);
-      options($("target-pallet"), destinations(pallet.jobId), pallet.id);
-      const limit = Math.min(plan.rules.maxLayers, rows.get(unit.rowId).stack?.maxLayers ?? 1);
-      options($("target-layer"), Array.from({ length: limit }, (_, index) => {
-        const layer = index + 1;
-        return [String(layer), "Layer " + layer + (upsideDown({ ...unit, layer }) ? " (upside down)" : "")];
-      }), String(unit.layer ?? 1));
-      $("position-x").value = asInput(unit.xMm ?? packingEdge(plan.rules));
-      $("position-y").value = asInput(unit.yMm ?? packingEdge(plan.rules));
-      $("rotation").value = String(unit.rotation ?? 0);
-      $("rotation").disabled = !rows.get(unit.rowId).canRotate;
-      $("unplace-unit").disabled = Boolean(unit.reason);
-    }
-
-    function jobUnits(pallet) {
-      const sources = plan.pallets.flatMap((source, index) => source.jobId === pallet.jobId
-        ? source.placements.map(unit => [unit, "Pallet " + (index + 1)]) : []);
-      for (const unit of plan.unplaced) {
-        if (rows.get(unit.rowId).jobId === pallet.jobId) sources.push([unit, "Unplaced"]);
-      }
-      return sources;
-    }
-
-    function destinations(jobId) {
-      return plan.pallets.flatMap((pallet, index) => pallet.jobId === jobId
-        ? [[pallet.id, "Pallet " + (index + 1) + " · " + sizeText(pallet.base)]] : []);
-    }
-
-    function renderPairForm(sources) {
-      $("pair-units").replaceChildren(...sources.map(([unit, origin]) => {
-        const label = document.createElement("label");
-        label.className = "check";
-        const input = document.createElement("input");
-        input.type = "checkbox";
-        input.value = unit.id;
-        label.append(input, unitName(unit) + " · " + origin);
-        return label;
-      }));
-    }
-
-    function renderStackForm(sources) {
-      const selected = palletStacks.get(palletId)?.find(stack => stack.some(unit => unit.id === selectedUnit));
-      const available = new Map(sources.map(([unit]) => [unit.id, unit]));
-      const choices = [["", "Choose product"], ...sources.map(([unit, origin]) => [unit.id, unitName(unit) + " · " + origin])];
-      const layers = Array.from({ length: plan.rules.maxLayers }, (_, index) => {
-        const card = $("stack-layer-template").content.firstElementChild.cloneNode(true);
-        const unit = card.querySelector("[data-stack-unit]");
-        const rotation = card.querySelector("[data-stack-rotation]");
-        const inverted = card.querySelector("[data-stack-inverted]");
-        card.querySelector("[data-layer-label]").textContent = "Layer " + (index + 1);
-        options(unit, choices, selected?.[index]?.id);
-        function setOrientation(preserve) {
-          const item = available.get(unit.value);
-          rotation.value = String(item?.rotation ?? 0);
-          rotation.disabled = !item || !rows.get(item.rowId).canRotate;
-          inverted.disabled = !item;
-          inverted.checked = Boolean(item) && (preserve ? upsideDown(item) : index % 2 === 1);
-        }
-        unit.onchange = () => setOrientation(false);
-        setOrientation(true);
-        return card;
-      });
-      $("stack-layers").replaceChildren(...layers);
-    }
-
-    function placeManualStack() {
-      const layers = Array.from($("stack-layers").children, card => ({
-        unitId: card.querySelector("[data-stack-unit]").value,
-        rotation: Number(card.querySelector("[data-stack-rotation]").value),
-        upsideDown: card.querySelector("[data-stack-inverted]").checked
-      }));
-      const units = layers.filter(layer => layer.unitId);
-      if (!units.length || layers.slice(0, units.length).some(layer => !layer.unitId)) {
-        return status("Fill the stack from layer 1 without skipping a layer.", true);
-      }
-      if (new Set(units.map(item => item.unitId)).size !== units.length) {
-        return status("Choose a different product unit for each layer.", true);
-      }
-      placeOn("assemble-stack", $("stack-target").value, { units });
-    }
-
     function renderPallet() {
       const pallet = currentPallet();
       $("pallet-view").hidden = !pallet;
@@ -634,16 +500,6 @@
           + (plan.rules.deckHeightMm ? " loaded height" : " stack height"));
       $("empty-pallet-actions").hidden = pallet.placements.length > 0;
       canvas.classList.toggle("ready", pallet.placements.length > 0);
-      renderSelection();
-      const sources = jobUnits(pallet);
-      const targets = destinations(pallet.jobId);
-      for (const id of ["stack-target", "pair-target"]) {
-        const select = $(id);
-        const choices = targets.length > 1 ? [["", "Choose a pallet"], ...targets] : targets;
-        options(select, choices, select.value);
-      }
-      renderStackForm(sources);
-      renderPairForm(sources);
       draw();
     }
 
@@ -683,10 +539,6 @@
     }
 
     const edit = (type, data = {}) => request("edit", { action: { type, ...data } });
-    function placeOn(type, target, data) {
-      destinationToShow = target;
-      edit(type, { ...data, palletId: target });
-    }
     const readBase = (length, width) => ({ lengthMm: mm($(length)), widthMm: mm($(width)) });
     function bindForm(id, action) {
       // The plugin iframe has scripts enabled. Panel actions use messages to
@@ -743,21 +595,13 @@
       $("new-pallet-job").value = currentPallet().jobId;
       renderPallet();
     };
-    $("unit-select").onchange = () => { selectedUnit = $("unit-select").value; renderSelection(); draw(); };
     $("remove-pallet").onclick = () => edit("remove-pallet", { palletId });
     $("fit-custom-pallets").onclick = () => edit("fit-custom-pallets");
+    $("group-scene").onclick = () => request("group-scene");
+    $("resume-drawing-button").onclick = () => request("resume-drawing");
     bindForm("add-pallet-form", () => edit("add-pallet", {
       jobId: $("new-pallet-job").value, base: readBase("new-length", "new-width")
     }));
-    bindForm("place-form", () => edit("place", {
-      unitId: selectedUnit, palletId: $("target-pallet").value, rotation: Number($("rotation").value),
-      xMm: mm($("position-x")), yMm: mm($("position-y")), layer: Number($("target-layer").value)
-    }));
-    bindForm("stack-form", placeManualStack);
-    bindForm("pair-form", () => placeOn("stack-in-pairs", $("pair-target").value, {
-      unitIds: Array.from($("pair-units").querySelectorAll("input:checked"), input => input.value)
-    }));
-    $("unplace-unit").onclick = () => edit("unplace", { unitId: selectedUnit });
     $("confirm").onclick = () => edit("confirm");
     $("save-report").onclick = () => request("save-report", { unit: $("units").value });
     $("undo").onclick = () => request("undo");
@@ -808,7 +652,6 @@
       if (!stack.some(unit => unit.id === selectedUnit)) selectedUnit = base.id;
       drag = { pointerId: event.pointerId, unit: { ...base }, start: point, original: base, stack, moved: false, invalid: false };
       canvas.setPointerCapture(event.pointerId);
-      renderSelection();
       draw();
     };
     canvas.onpointermove = event => {
@@ -845,29 +688,24 @@
           initialized = true;
           clearInterval(readyTimer);
           defaultRules = message.rules;
+          $("resume-drawing").hidden = !message.canResumeDrawing;
           colors = message.colors;
           $("units").value = message.unit.unit === "in" ? "in" : "mm";
           setUnits($("units").value);
         }
-        if (destinationToShow && message.type === "plan" && message.plan?.parentRevisionId === plan?.revisionId) {
-          palletId = destinationToShow;
-          selectedUnit = "";
-        }
         plan = message.plan;
+        if (plan) $("resume-drawing").hidden = true;
         palletStacks = new Map(message.stacks);
         if (message.replaceInputs) hydrate(plan?.products || [], plan?.rules || message.openingRules);
         if (plan && message.replaceInputs) {
           $("inputs").open = false;
           $("pallet-rules").open = false;
-          $("stack-target").value = "";
-          $("pair-target").value = "";
         }
         rows = new Map(plan?.products.map((row, index) => [row.id, { ...row, color: colors[index % colors.length] }]));
         $("undo").disabled = !message.canUndo;
         $("redo").disabled = !message.canRedo;
         renderPlan();
       }
-      destinationToShow = "";
       setBusy(false);
       status(message.message || "", message.type === "error");
     });

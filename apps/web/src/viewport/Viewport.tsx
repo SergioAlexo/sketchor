@@ -3,6 +3,7 @@ import { settingsFromHatch } from "../tools/hatchTool";
 import { runDimEdit } from "../tools/dimEditCommands";
 import { hatchesTinted } from "./hatchRender";
 import { useEffect, useRef, useState } from "react";
+import { runCommand as runPluginCommand } from "../plugins/host/registries";
 import { autoConstrainSuppressed, withAutoConstraints } from "../tools/autoConstrain";
 import type { BoxSelectMode, ClosedRegion, Command, Entity, EntityId, LayoutRecord, Point, TextEntity, ViewportEntity } from "@sketchor/core";
 import {
@@ -1910,6 +1911,12 @@ export function Viewport() {
     fitView(hit ? [hit] : undefined);
   };
 
+  const selectedPalletProducts = selection.filter(id => {
+    const entity = doc.get(id);
+    return id.startsWith("pallet-plan-entity:") && entity?.type === "polyline"
+      && entity.layer === "Pallet Plan" && entity.name?.startsWith("Product ");
+  });
+
   return (
     <>
       <canvas
@@ -1924,6 +1931,25 @@ export function Viewport() {
         onDoubleClick={onDoubleClick}
         onContextMenu={(e) => e.preventDefault()}
       />
+      {selectedPalletProducts.length > 0 && (
+        <div className="pallet-scene-tools" aria-label="Pallet selection tools" data-testid="pallet-scene-tools">
+          <button className="btn" onClick={() => void runPluginCommand("pallet-planning.group-selection")}>
+            Make pallet from selection
+          </button>
+          {selectedPalletProducts.length <= 2 && (
+            <div className="pallet-scene-layers" role="group" aria-label="Top unit layer">
+              <span>Top unit layer</span>
+              {[1, 2, 3, 4].map(layer => (
+                <button className="btn" key={layer} aria-label={`Put top unit on layer ${layer}`}
+                  title={layer === 1 ? "Place the top unit on the deck" : "Shift-select a supporting stack, or overlap its footprint"}
+                  onClick={() => void runPluginCommand(`pallet-planning.layer-${layer}`)}>
+                  {layer}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {commandLine && (
         <CommandBar
           echo={commandEcho}

@@ -210,6 +210,29 @@ body {
   touch-action: none;
 }
 
+.pallet-scene-tools, .pallet-scene-layers {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pallet-scene-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  left: 10px;
+  width: fit-content;
+  z-index: 4;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.pallet-scene-layers span { margin: 0 3px; }
+
 .statusbar {
   display: flex;
   gap: 24px;
