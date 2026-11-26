@@ -2070,6 +2070,19 @@ kbd.shortcut-key-fixed {
   pointer-events: none;
 }
 
+/* F-11: the unit picker for STL/OBJ/PLY is the one live control in the status pill. */
+.model-status-units {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.model-status-units select {
+  font: inherit;
+  font-size: 12px;
+}
+
 .model-status-part {
   color: var(--text);
 }

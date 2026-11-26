@@ -29,6 +29,7 @@ import { pickEdge, pickVertex, type Projector } from "./picking";
 import { useOpenLoads } from "./stepImport";
 import type { Model3D } from "./types";
 import { reorientModel, saveUpAxis, savedUpAxis, type UpAxis } from "./upAxis";
+import { isUnitless, MESH_UNITS, MESH_UNIT_LABEL, MM_PER_UNIT, saveMeshUnit, savedMeshUnit, scaleModel, unitHint, type MeshUnit } from "./meshUnits";
 import { useViewer } from "./viewerStore";
 
 /**
@@ -84,7 +85,13 @@ export function ModelViewport({ session }: Props) {
  */
 function OrientedViewer({ model }: { model: Model3D }) {
   const [up, setUp] = useState<UpAxis>(() => savedUpAxis(model.hash) ?? model.detectedUp ?? "z");
-  const shown = useMemo(() => reorientModel(model, up), [model, up]);
+  // F-11: unitless meshes (STL/OBJ/PLY) can be re-read in another unit; the view is scaled, the cache keeps the file as read.
+  const [unit, setUnit] = useState<MeshUnit>(() => (isUnitless(model.format) ? savedMeshUnit(model.hash) ?? "mm" : "mm"));
+  const shown = useMemo(() => scaleModel(reorientModel(model, up), MM_PER_UNIT[unit]), [model, up, unit]);
+  const changeUnit = (u: MeshUnit) => {
+    saveMeshUnit(model.hash, u);
+    setUnit(u);
+  };
   const toggleUp = () => {
     const next: UpAxis = up === "z" ? "y" : "z";
     saveUpAxis(model.hash, next);
@@ -92,7 +99,7 @@ function OrientedViewer({ model }: { model: Model3D }) {
     // The file browser's picture of this file was drawn the old way up.
     void import("./modelThumbnail").then(({ refreshThumbnail }) => refreshThumbnail(model)).catch(() => undefined);
   };
-  return <Viewer model={shown} up={up} onToggleUp={toggleUp} />;
+  return <Viewer model={shown} up={up} onToggleUp={toggleUp} unit={isUnitless(model.format) ? unit : null} onUnit={changeUnit} />;
 }
 
 /* ------------------------------ loading/error --------------------------- */
@@ -204,7 +211,7 @@ interface Scene {
   dispose: () => void;
 }
 
-function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggleUp: () => void }) {
+function Viewer({ model, up, onToggleUp, unit, onUnit }: { model: Model3D; up: UpAxis; onToggleUp: () => void; unit: MeshUnit | null; onUnit: (u: MeshUnit) => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<Scene | null>(null);
@@ -225,7 +232,8 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
   const [showEdges, setShowEdges] = useState(true);
   // F-11: the reader's notes for this file, until dismissed (per model, so the next file shows its own).
   const [notesDismissedFor, setNotesFor] = useState<string | null>(null);
-  const notes = notesDismissedFor === model.hash ? [] : (model.importNotes ?? []);
+  const hint = unit === "mm" ? unitHint(model) : null;
+  const notes = notesDismissedFor === model.hash ? [] : [...(model.importNotes ?? []), ...(hint ? [hint] : [])];
   /** The span the current selection measures; the overlay re-projects it every frame. */
   const segmentRef = useRef<MeasureSegment | null>(null);
   /** The overlay's re-projection, so a new measurement can draw itself without waiting for a frame. */
@@ -1153,6 +1161,18 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
           <span className="model-status-part" data-testid="model-status-hidden">
             {hidden.size} hidden
           </span>
+        )}
+        {unit !== null && (
+          <label className="model-status-units" title="This format stores no units: choose what the file's numbers mean">
+            Units
+            <select value={unit} onChange={(e) => onUnit(e.target.value as MeshUnit)} data-testid="model-units">
+              {MESH_UNITS.map((u) => (
+                <option key={u} value={u}>
+                  {MESH_UNIT_LABEL[u]}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
       </div>
       {/* The corner readout: what the current picks measure. */}
