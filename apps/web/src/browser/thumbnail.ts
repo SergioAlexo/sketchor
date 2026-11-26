@@ -11,6 +11,7 @@ import {
   type TextStyle,
   type ThumbnailOptions,
 } from "@sketchor/core";
+import { allExtensions } from "../io/formats";
 
 /**
  * True for file kinds the in-app file browser lists thumbnails for:
@@ -20,7 +21,8 @@ import {
  * here — see drawingFile.ts.
  */
 export function isDrawingFile(name: string): boolean {
-  return /\.(dxf|svg|eps|ai|step|stp|iges|igs)$/i.test(name);
+  // F-11: every 3D format the viewer opens lists too (its card renders through model3d/modelThumbnail.ts).
+  return /\.(dxf|svg|eps|ai)$/i.test(name) || allExtensions((f) => f.kind === "3d").some((e) => name.toLowerCase().endsWith(`.${e}`));
 }
 
 /**

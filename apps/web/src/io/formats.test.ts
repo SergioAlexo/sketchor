@@ -5,6 +5,7 @@
  */
 import tauriConfRaw from "../../src-tauri/tauri.conf.json?raw";
 import thumbnailerLibRaw from "../../../../native/dxf-thumbnailer/src/lib.rs?raw";
+import desktopMainRaw from "../../src-tauri/src/main.rs?raw";
 import { describe, expect, it } from "vitest";
 import { FORMATS, acceptList, allExtensions, formatOf, mimeOf } from "./formats";
 
@@ -34,6 +35,12 @@ describe("format registry", () => {
     const list = /const EXTENSIONS: \[&str; \d+\] = \[([^\]]*)\]/.exec(lib)![1];
     const exts = [...list.matchAll(/"\.([a-z]+)"/g)].map((m) => m[1]);
     expect(exts.sort()).toEqual(allExtensions((f) => f.nativeThumbnail).sort());
+  });
+  it("the desktop app opens and browses exactly the 3D formats (MODEL_EXTS in main.rs)", () => {
+    const list = /const MODEL_EXTS: \[&str; (\d+)\] = \[([^\]]*)\]/.exec(desktopMainRaw)!;
+    const exts = [...list[2].matchAll(/"\.([a-z0-9]+)"/g)].map((m) => m[1]);
+    expect(exts.length).toBe(+list[1]);
+    expect(exts.sort()).toEqual(allExtensions((f) => f.kind === "3d").sort());
   });
   it("has no extension claimed twice", () => {
     const all = allExtensions();
