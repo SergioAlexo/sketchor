@@ -9,6 +9,9 @@ import {
   fileNameFromSrc,
   resolveFullUrl,
   sniffFormat,
+  hiddenByLayersAttr,
+  parseFitPadding,
+  DEFAULT_FIT_PADDING,
 } from "./load";
 import type { Stage } from "./viewer";
 import type { Motion2D, Stage2D } from "./viewer2d";
@@ -67,12 +70,14 @@ type State = "empty" | "loading" | "idle" | "playing" | "paused" | "error";
  * `full-url` (`auto` | `none` | URL), `logo` (`on` | `off`), `theme` (`auto` |
  * `dark` | `light` | built-in theme id | theme JSON URL), `up` (`auto` |
  * `y` | `z`), `max-size` (MB), `loading` (`lazy` | `eager`), `label`,
- * `cache` (`on` | `off` — parsed models kept in IndexedDB, E-03).
+ * `cache` (`on` | `off` — parsed models kept in IndexedDB, E-03), `fit-padding`
+ * (margin, `0.15` or `15%`), `layers` (drawings: `Outline,Holes` shows only
+ * those, `-Notes` hides one).
  * Methods: `play()`, `pause()`, `reset()`, `fit()`, `load(src)`.
  * Events: `load`, `error`, `play`, `pause`.
  */
 export class SketchorView extends HTMLElement {
-  static observedAttributes = ["src", "background", "full-url", "label", "up", "format", "theme"];
+  static observedAttributes = ["src", "background", "full-url", "label", "up", "format", "theme", "fit-padding", "layers"];
 
   private root: ShadowRoot;
   private canvas: HTMLCanvasElement;
@@ -88,6 +93,8 @@ export class SketchorView extends HTMLElement {
   private savedOverflow = "";
   private connected = false;
   private palette: EmbedPalette = defaultPalette("dark");
+  /** The current drawing's layer names (E-02 `layers` is matched against them). */
+  private layerNames: string[] = [];
   private themeToken = 0;
   private darkQuery = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
   private onSchemeChange = () => void this.applyTheme();
@@ -173,6 +180,8 @@ export class SketchorView extends HTMLElement {
     if (name === "label") this.updateLabel();
     if (name === "full-url") this.updateLinks();
     if (name === "theme" && this.connected) void this.applyTheme();
+    if (name === "fit-padding") this.stage?.setFitPadding(this.fitPadding());
+    if (name === "layers") this.resetLayerToggles();
     if ((name === "src" || name === "background" || name === "up" || name === "format") && this.connected && this.state !== "empty") void this.startLoad();
   }
 
@@ -337,15 +346,18 @@ export class SketchorView extends HTMLElement {
     list.replaceChildren();
     this.$(".layers").classList.remove("open");
     this.$(".layers-btn").setAttribute("aria-expanded", "false");
+    this.layerNames = layers.map((l) => l.name);
     if (layers.length < 2) {
       this.removeAttribute("data-layers");
+      if (this.stage?.kind === "2d") this.stage.setHiddenLayers(hiddenByLayersAttr(this.getAttribute("layers"), this.layerNames));
       return;
     }
+    const hiddenByAttr = new Set(hiddenByLayersAttr(this.getAttribute("layers"), this.layerNames));
     for (const l of layers) {
       const row = document.createElement("label");
       const box = document.createElement("input");
       box.type = "checkbox";
-      box.checked = true;
+      box.checked = !hiddenByAttr.has(l.name);
       box.value = l.name;
       const sw = document.createElement("span");
       sw.className = "sw";
@@ -366,7 +378,8 @@ export class SketchorView extends HTMLElement {
     all.textContent = "Show all";
     all.addEventListener("click", (e) => {
       e.stopPropagation();
-      this.resetLayerToggles();
+      for (const b of this.root.querySelectorAll<HTMLInputElement>(".layer-list input")) b.checked = true;
+      this.applyLayerToggles();
     });
     list.append(all);
     this.setAttribute("data-layers", "");
@@ -383,9 +396,21 @@ export class SketchorView extends HTMLElement {
     if (this.stage?.kind === "2d") this.stage.setHiddenLayers(hidden);
   }
 
+  /** Back to what the page asked for: every layer, or the `layers` attribute's choice (E-02). */
   private resetLayerToggles(): void {
-    for (const b of this.root.querySelectorAll<HTMLInputElement>(".layer-list input")) b.checked = true;
+    const hidden = new Set(hiddenByLayersAttr(this.getAttribute("layers"), this.layerNames));
+    const boxes = this.root.querySelectorAll<HTMLInputElement>(".layer-list input");
+    if (boxes.length === 0) {
+      if (this.stage?.kind === "2d") this.stage.setHiddenLayers(hidden);
+      return;
+    }
+    for (const b of boxes) b.checked = !hidden.has(b.value);
     this.applyLayerToggles();
+  }
+
+  /** E-02 `fit-padding`, or the default margin. */
+  private fitPadding(): number {
+    return parseFitPadding(this.getAttribute("fit-padding")) ?? DEFAULT_FIT_PADDING;
   }
 
   /** The clear colour: `background` attribute, then the page's `--sketchor-bg`, then the theme (its drawing sheet for 2D). null = transparent. */
@@ -449,6 +474,7 @@ export class SketchorView extends HTMLElement {
           accent: this.accentColor(),
           reducedMotion: this.reducedMotion,
           motion: this.motion2d(),
+          fitPadding: this.fitPadding(),
         });
         this.stage = stage;
         stage.onMeasure = (m) => this.showMeasure(m);
@@ -494,6 +520,7 @@ export class SketchorView extends HTMLElement {
         edge: this.palette.edge,
         accent: this.accentColor(),
         reducedMotion: this.reducedMotion,
+        fitPadding: this.fitPadding(),
       });
       this.stage.onMeasure = (m) => this.showMeasure(m);
       this.showMeasure(null);
@@ -548,7 +575,7 @@ export class SketchorView extends HTMLElement {
     this.$(".full").innerHTML = ICON_EXPAND;
     this.$(".full").setAttribute("aria-label", "Full view");
     this.stage?.setInteractive(false);
-    // The inline preview is the drawing as its author made it, whatever was switched off in full view.
+    // The inline preview is the drawing as the page asked for (all layers, or its `layers` attribute), whatever was switched off in full view.
     this.resetLayerToggles();
     this.$(".layers").classList.remove("open");
     this.$(".layers-btn").setAttribute("aria-expanded", "false");

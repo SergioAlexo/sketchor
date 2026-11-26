@@ -45,6 +45,13 @@ describe("frameAttrs", () => {
     expect((frameAttrs({ src: "https://c/a.stl", background: "rgba(10, 20, 30, 0.5)" }) as { attrs: Record<string, string> }).attrs.background).toBe("rgba(10, 20, 30, 0.5)");
   });
 
+  it("passes fit-padding and layers through, cleaned (E-02)", () => {
+    const at = (q: Record<string, string>) => (frameAttrs({ src: "https://c/a.dxf", ...q }) as { attrs: Record<string, string> }).attrs;
+    expect(at({ "fit-padding": "15%", layers: "Outline, -Notes" })).toMatchObject({ "fit-padding": "15%", layers: "Outline, -Notes" });
+    expect(at({ "fit-padding": "wide" })["fit-padding"]).toBeUndefined();
+    expect(at({ layers: '<b onclick="x">' }).layers).toBe("b onclick=x");
+  });
+
   it("takes the first of repeated parameters", () => {
     expect(frameAttrs({ src: ["https://c/a.stl", "https://c/b.stl"] })).toEqual({ ok: true, attrs: { src: "https://c/a.stl" } });
   });

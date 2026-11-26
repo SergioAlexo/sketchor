@@ -77,6 +77,8 @@ CORS, since the frame fetches it from the Sketchor site's origin.
 | `loading` | `lazy` (when near the viewport), `eager` | `lazy` |
 | `label` | accessible name / title in full view | file name |
 | `cache` | `on` (parsed models kept in IndexedDB, keyed by file content), `off` | `on` |
+| `fit-padding` | margin around the fitted drawing or model: `0.15` or `15%` (0–0.4) | `0.08` |
+| `layers` | drawings: `Outline,Holes` shows only those layers, `-Notes,-Dims` hides those (names ignore case); full view can still switch them | all |
 
 CSS custom properties on the element: `--sketchor-accent`, `--sketchor-bg`,
 `--sketchor-radius` — they always win over `theme`. A theme file is validated
