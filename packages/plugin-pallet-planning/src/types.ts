@@ -19,7 +19,7 @@ export interface ProductRow extends Footprint {
   measuredLengthMm?: number;
   measuredWidthMm?: number;
   stack?: {
-    maxLayers: 2 | 3;
+    maxLayers: Exclude<Layer, 1>;
     pattern: "upright" | "alternate";
     addedHeightMm?: number;
   };
@@ -45,7 +45,6 @@ export interface PalletRules {
   standardBases: StandardBase[];
   maxLayers: Layer;
   forkEntrySide: typeof FORK_ENTRY_SIDE;
-  longSideIsLength?: boolean;
   deckHeightMm?: number;
   maxLoadedHeightMm?: number;
 }
@@ -56,7 +55,7 @@ export interface PalletInput {
 }
 
 export type Rotation = 0 | 90;
-export type Layer = 1 | 2 | 3;
+export type Layer = 1 | 2 | 3 | 4;
 
 /** Lower-left corner of the turned footprint, in pallet-local millimetres. */
 export interface Placement {
@@ -126,7 +125,7 @@ export function packingEdge(rules: PalletRules): number {
 }
 
 export function isUpsideDown(row: ProductRow, layer: Layer): boolean {
-  return row.stack?.pattern === "alternate" && layer === 2;
+  return row.stack?.pattern === "alternate" && layer % 2 === 0;
 }
 
 export function stackHeight(row: ProductRow, layer: Layer): number | undefined {
@@ -190,5 +189,4 @@ export const DEFAULT_PALLET_RULES: PalletRules = {
   edgeMm: 0.5 * 25.4,
   productMarginMm: 25.4,
   gapMm: 2 * 25.4,
-  longSideIsLength: true,
 };

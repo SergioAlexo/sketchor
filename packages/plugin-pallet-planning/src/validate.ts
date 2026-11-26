@@ -46,16 +46,16 @@ export function footprint(value: unknown, label: string): Footprint {
 }
 
 function layerNumber(value: unknown, label: string): Layer {
-  if (value === 1 || value === 2 || value === 3) return value;
-  throw new Error(`${label} must be 1, 2, or 3.`);
+  if (value === 1 || value === 2 || value === 3 || value === 4) return value;
+  throw new Error(`${label} must be between 1 and 4.`);
 }
 
 function productStack(value: unknown, label: string): ProductRow["stack"] {
   if (value === undefined) return undefined;
   const stack = record(value, `${label} stacking`);
-  if ((stack.maxLayers !== 2 && stack.maxLayers !== 3)
+  if ((stack.maxLayers !== 2 && stack.maxLayers !== 3 && stack.maxLayers !== 4)
     || (stack.pattern !== "upright" && stack.pattern !== "alternate")) {
-    throw new Error(`${label} needs a valid stacking pattern and a 2- or 3-layer limit.`);
+    throw new Error(`${label} needs a valid stacking pattern and a limit of 2 to 4 layers.`);
   }
   return {
     maxLayers: stack.maxLayers, pattern: stack.pattern,
@@ -68,8 +68,6 @@ export function parsePalletInput(value: unknown): PalletInput {
   const profile = record(input.rules, "Pallet rules");
   const padding = profile.productMarginMm === undefined
     ? undefined : measurement(profile.productMarginMm, "Product padding", true);
-  const longSideIsLength = profile.longSideIsLength === undefined
-    ? undefined : boolean(profile.longSideIsLength, "Pallet length greater than width");
   const rules: PalletRules = {
     maxLengthMm: measurement(profile.maxLengthMm, "Maximum base length"),
     maxWidthMm: measurement(profile.maxWidthMm, "Maximum base width"),
@@ -80,17 +78,12 @@ export function parsePalletInput(value: unknown): PalletInput {
     allowCustom: boolean(profile.allowCustom, "Allow custom bases"),
     maxLayers: layerNumber(profile.maxLayers ?? 3, "Maximum pallet layers"),
     forkEntrySide: FORK_ENTRY_SIDE,
-    longSideIsLength,
     deckHeightMm: profile.deckHeightMm === undefined ? undefined : measurement(profile.deckHeightMm, "Deck height", true),
     maxLoadedHeightMm: profile.maxLoadedHeightMm === undefined ? undefined : measurement(profile.maxLoadedHeightMm, "Maximum loaded height"),
     standardBases: list(profile.standardBases, MAX_STANDARD_BASES, "Standard bases").map((raw, index) => {
       const name = `Standard base ${index + 1}`;
       const base = record(raw, name);
-      const size = footprint(base, name);
-      if (longSideIsLength && size.lengthMm <= size.widthMm + EPS) {
-        throw new Error(`${name} length must be greater than its width.`);
-      }
-      return { ...size, name: labelText(base.name, `${name} name`) };
+      return { ...footprint(base, name), name: labelText(base.name, `${name} name`) };
     }),
   };
   if (rules.maxLoadedHeightMm !== undefined
@@ -199,9 +192,6 @@ function validatePalletGeometry(pallet: PlannedPallet, rules: PalletRules, rows:
   const edge = packingEdge(rules);
   if (base.lengthMm > rules.maxLengthMm + EPS || base.widthMm > rules.maxWidthMm + EPS) {
     throw new Error(`${name} exceeds the configured base limits.`);
-  }
-  if (rules.longSideIsLength && base.lengthMm <= base.widthMm + EPS) {
-    throw new Error(`${name} length must be greater than its width.`);
   }
   if (Math.abs(base.lengthMm - loadedFootprint.lengthMm) > EPS || Math.abs(base.widthMm - loadedFootprint.widthMm) > EPS) {
     throw new Error(`${name} must have its loaded footprint within and equal to the base in this plan version.`);

@@ -104,7 +104,6 @@ it("adds product padding on both sides and a separate inset around the pallet", 
   const [first, second] = plan.pallets[0].placements;
   expect(first.xMm).toBeCloseTo(1.5 * IN);
   expect(second.xMm - first.xMm - bench.widthMm).toBeCloseTo(2 * IN);
-  expect(plan.pallets.every(pallet => pallet.base.lengthMm > pallet.base.widthMm)).toBe(true);
   expect(parsePalletPlan(plan)).toEqual(plan);
   const reduced = generate({ ...rules, productMarginMm: 0 }, turnable);
   expect(reduced.pallets[0].base.lengthMm).toBeLessThan(plan.pallets[0].base.lengthMm);
@@ -112,15 +111,54 @@ it("adds product padding on both sides and a separate inset around the pallet", 
   expect(buildPalletReportHtml(plan, "in")).toContain("Fork entry is on the pallet's length side");
 });
 
-it("keeps the new pallet length greater than width even with equal cap values", () => {
+it("allows square and wider-than-long bases", () => {
   const plan = generate({ ...DEFAULT_PALLET_RULES, maxLengthMm: 40 * IN, maxWidthMm: 40 * IN }, {
     ...bench, lengthMm: 30 * IN, widthMm: 30 * IN, quantity: 1,
   });
-  expect(plan.pallets[0].base.lengthMm).toBeCloseTo(34 * IN);
+  expect(plan.pallets[0].base.lengthMm).toBeCloseTo(33 * IN);
   expect(plan.pallets[0].base.widthMm).toBeCloseTo(33 * IN);
-  expect(() => editPalletPlan(plan, {
+  const edited = editPalletPlan(plan, {
     type: "add-pallet", jobId: bench.jobId, base: { lengthMm: 33 * IN, widthMm: 34 * IN },
-  }, "wide")).toThrow(/length must be greater/);
+  }, "wide");
+  expect(edited.pallets[1].base).toEqual({ lengthMm: 33 * IN, widthMm: 34 * IN });
+  const stock = generate({
+    ...DEFAULT_PALLET_RULES, allowCustom: false,
+    standardBases: [{ name: "Wide", lengthMm: 33 * IN, widthMm: 34 * IN }],
+  }, { ...bench, quantity: 1 });
+  expect(stock.pallets[0].baseName).toBe("Wide");
+});
+
+it("sizes a mixed pallet to its footprint without extending its length past the width", () => {
+  const products = [
+    { ...bench, id: "a", productId: "A", lengthMm: 71 * IN, widthMm: 63 * IN, quantity: 2 },
+    { ...bench, id: "b", productId: "B", lengthMm: 71 * IN, widthMm: 23 * IN, quantity: 2 },
+    { ...bench, id: "c", productId: "C", lengthMm: 72 * IN, widthMm: 24 * IN, quantity: 4 },
+  ];
+  const rules = { ...DEFAULT_PALLET_RULES, maxLayers: 2 } as const;
+  const [mixed] = generatePalletPlan({ products: products.slice(1), rules }, version).pallets;
+  expect(mixed.base.lengthMm).toBeCloseTo(75 * IN);
+  expect(mixed.base.widthMm).toBeCloseTo(78 * IN);
+  expect(mixed.placements).toHaveLength(6);
+  const plan = generatePalletPlan({ products, rules }, version);
+  expect(plan.unplaced).toEqual([]);
+  expect(plan.pallets).toHaveLength(2);
+  const area = plan.pallets.reduce((sum, pallet) => sum + pallet.base.lengthMm * pallet.base.widthMm, 0);
+  expect(area / (IN * IN)).toBeLessThanOrEqual(75 * 78 + 74 * 66);
+});
+
+it("supports a fourth layer with orientation, height limits, and report reopening", () => {
+  const product: ProductRow = { ...bench, quantity: 4, stack: { maxLayers: 4, pattern: "alternate", addedHeightMm: 5 * IN } };
+  const rules = { maxLayers: 4, maxWidthMm: 20 * IN } as const;
+  const plan = generate(rules, product);
+  expect(plan.pallets).toHaveLength(1);
+  expect(plan.pallets[0].placements.map(item => item.layer)).toEqual([1, 2, 3, 4]);
+  expect(plan.pallets[0].packedHeightMm).toBeCloseTo(33 * IN);
+  expect(isUpsideDown(product, 4)).toBe(true);
+  const report = buildPalletReportHtml(plan, "in");
+  expect(report).toContain("<td>Bench #4</td><td>4</td><td>Upside down</td>");
+  expect(readPalletReport(report)).toEqual(plan);
+  expect(generate({ ...rules, maxLoadedHeightMm: 32 * IN }, product).pallets.map(p => p.placements.length))
+    .toEqual([3, 1]);
 });
 
 it("supports a stack-height cap without a deck height", () => {

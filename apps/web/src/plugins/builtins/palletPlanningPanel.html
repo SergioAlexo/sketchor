@@ -73,7 +73,7 @@
             <div class="grid three">
               <label>Max pallet length <input id="max-length" type="number" step="any" data-length required></label>
               <label>Max pallet width <input id="max-width" type="number" step="any" data-length required></label>
-              <label>Max layers <select id="max-layers"><option>1</option><option>2</option><option>3</option></select></label>
+              <label>Max layers <select id="max-layers"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
             </div>
             <div class="grid">
               <label>Pallet edge inset <input id="edge" type="number" step="any" min="0" data-length required></label>
@@ -188,6 +188,7 @@
       </div>
       <label>Stack up to <select name="stackLayers">
         <option value="1">1 layer</option><option value="2">2 layers</option><option value="3">3 layers</option>
+        <option value="4">4 layers</option>
       </select></label>
       <div class="grid stack-options" hidden>
         <label>Stack pattern <select name="stackPattern"><option value="upright">All upright</option>
@@ -237,7 +238,7 @@
     const asText = value => String(Number((value / mmPerUnit).toFixed(3)));
     const currentPallet = () => plan?.pallets.find(pallet => pallet.id === palletId);
     const unitName = unit => rows.get(unit.rowId).productId + " #" + unit.id.split("/").at(-1);
-    const upsideDown = unit => unit.layer === 2 && rows.get(unit.rowId).stack?.pattern === "alternate";
+    const upsideDown = unit => unit.layer % 2 === 0 && rows.get(unit.rowId).stack?.pattern === "alternate";
     const packingEdge = rules => rules.edgeMm + (rules.productMarginMm ?? 0);
 
     function setBusy(value) {
@@ -358,7 +359,7 @@
           sourceUnit: element.dataset.sourceUnit || $("units").value
         };
       });
-      const rules = { allowCustom: $("allow-custom").checked, maxLayers: Number($("max-layers").value), longSideIsLength: true };
+      const rules = { allowCustom: $("allow-custom").checked, maxLayers: Number($("max-layers").value) };
       for (const [id, key] of Object.entries(lengthFields)) rules[key] = $(id).value ? mm($(id)) : undefined;
       rules.standardBases = Array.from($("stock").children, element => ({
         name: input(element, "name").value,

@@ -46,11 +46,9 @@ function baseOptions(rules: PalletRules): BaseOption[] {
   stock.sort((a, b) => area(a) - area(b) || a.lengthMm - b.lengthMm || a.widthMm - b.widthMm);
   if (!rules.allowCustom) return stock;
   const roundDown = (n: number) => Math.floor((n + EPS) / rules.incrementMm) * rules.incrementMm;
-  const lengthMm = roundDown(rules.maxLengthMm);
-  const widthMm = roundDown(rules.maxWidthMm);
   return [...stock, {
-    lengthMm,
-    widthMm: rules.longSideIsLength ? Math.min(widthMm, lengthMm - rules.incrementMm) : widthMm,
+    lengthMm: roundDown(rules.maxLengthMm),
+    widthMm: roundDown(rules.maxWidthMm),
     source: "custom",
   }];
 }
@@ -114,11 +112,9 @@ function finishBase(bin: Bin, rules: PalletRules): Footprint {
   }
   const edge = packingEdge(rules);
   const round = (mm: number) => Math.ceil((mm + edge - EPS) / rules.incrementMm) * rules.incrementMm;
-  const widthMm = Math.max(rules.incrementMm, round(bin.widthUsed));
-  const lengthMm = Math.max(rules.incrementMm, round(bin.lengthUsed));
   return {
-    lengthMm: rules.longSideIsLength ? Math.max(lengthMm, widthMm + rules.incrementMm) : lengthMm,
-    widthMm,
+    lengthMm: Math.max(rules.incrementMm, round(bin.lengthUsed)),
+    widthMm: Math.max(rules.incrementMm, round(bin.widthUsed)),
   };
 }
 
@@ -128,7 +124,7 @@ function trial(
 ): { bins: Bin[]; unplaced: UnplacedProduct[] } {
   const bins: Bin[] = [];
   const unplaced: UnplacedProduct[] = [];
-  const preferTurn = rules.longSideIsLength === true && splitAlongLength;
+  const preferTurn = splitAlongLength;
   for (const [index, unit] of units.entries()) {
     let placed = false;
     for (const bin of bins) {
