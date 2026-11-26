@@ -126,3 +126,39 @@ export async function fetchBytes(url: string, maxBytes: number, signal?: AbortSi
 function tooBig(maxBytes: number): string {
   return `the file is larger than the ${Math.round(maxBytes / 1048576)} MB preview limit`;
 }
+
+/** Default margin around the fitted drawing or model, as a fraction of the smaller side. */
+export const DEFAULT_FIT_PADDING = 0.08;
+
+/**
+ * E-02: `fit-padding` — the margin kept clear around the fitted drawing or
+ * model: a fraction ("0.15") or a percentage ("15%"), clamped to 0…0.4.
+ * Null (use the default) for anything else.
+ */
+export function parseFitPadding(attr: string | null): number | null {
+  if (attr === null) return null;
+  const m = /^\s*(-?\d*\.?\d+)\s*(%?)\s*$/.exec(attr);
+  if (!m) return null;
+  let v = parseFloat(m[1]);
+  if (m[2] === "%") v /= 100;
+  if (!Number.isFinite(v)) return null;
+  return Math.min(0.4, Math.max(0, v));
+}
+
+/**
+ * E-02: `layers` — which of a drawing's layers show. A list of names shows
+ * only those (`"Outline, Holes"`); names starting with "-" are hidden and
+ * everything else shows (`"-Notes, -Dims"`). Names match case-insensitively,
+ * as DXF layer names do. Returns the layers to hide out of `all`.
+ */
+export function hiddenByLayersAttr(attr: string | null, all: readonly string[]): string[] {
+  if (!attr || !attr.trim()) return [];
+  const items = attr.split(",").map((s) => s.trim()).filter(Boolean);
+  const hide = new Set(items.filter((s) => s.startsWith("-")).map((s) => s.slice(1).trim().toLowerCase()));
+  const only = new Set(items.filter((s) => !s.startsWith("-")).map((s) => s.toLowerCase()));
+  return all.filter((name) => {
+    const n = name.toLowerCase();
+    if (hide.has(n)) return true;
+    return only.size > 0 && !only.has(n);
+  });
+}

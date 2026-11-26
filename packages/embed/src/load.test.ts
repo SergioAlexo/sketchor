@@ -55,3 +55,25 @@ describe("names and links", () => {
     expect(resolveFullUrl("https://my.app/view", "https://site.com/a.glb")).toBe("https://my.app/view");
   });
 });
+
+describe("E-02 attributes", () => {
+  it("parses fit-padding as a fraction or a percentage, clamped", async () => {
+    const { parseFitPadding } = await import("./load");
+    expect(parseFitPadding("0.15")).toBe(0.15);
+    expect(parseFitPadding("20%")).toBeCloseTo(0.2, 9);
+    expect(parseFitPadding(" 0 ")).toBe(0);
+    expect(parseFitPadding("0.9")).toBe(0.4);
+    expect(parseFitPadding("-1")).toBe(0);
+    expect(parseFitPadding("wide")).toBeNull();
+    expect(parseFitPadding(null)).toBeNull();
+  });
+  it("turns a layers list into the layers to hide", async () => {
+    const { hiddenByLayersAttr } = await import("./load");
+    const all = ["0", "OUTLINE", "HOLES", "NOTES"];
+    expect(hiddenByLayersAttr("outline, Holes", all)).toEqual(["0", "NOTES"]);
+    expect(hiddenByLayersAttr("-notes", all)).toEqual(["NOTES"]);
+    expect(hiddenByLayersAttr("OUTLINE,-OUTLINE", all)).toEqual(["0", "OUTLINE", "HOLES", "NOTES"]);
+    expect(hiddenByLayersAttr("", all)).toEqual([]);
+    expect(hiddenByLayersAttr(null, all)).toEqual([]);
+  });
+});

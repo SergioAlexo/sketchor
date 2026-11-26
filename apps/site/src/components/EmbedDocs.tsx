@@ -17,6 +17,8 @@ const ATTRS: [string, string, string][] = [
   ["loading", "lazy (near the viewport) · eager", "lazy"],
   ["label", "Accessible name and full-view title.", "file name"],
   ["format", "Force a format (glb, stl, …) instead of sniffing.", "sniffed"],
+  ["fit-padding", "Margin around the fitted drawing or model: 0.15 or 15% (0–0.4).", "0.08"],
+  ["layers", "Drawings: Outline,Holes shows only those layers · -Notes,-Dims hides those. Names ignore case.", "all"],
 ];
 
 const ELEMENT_SNIPPET = `<script type="module" src="${SCRIPT_URL}"></script>

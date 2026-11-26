@@ -289,6 +289,24 @@
         return `${before} → ${after} inked px`;
       });
 
+      await check("fit-padding and layers attributes frame and filter a drawing", async () => {
+        const el = view({ cache: "off", layers: "-HOLES" });
+        await loadInto(el, dxfLayers(), "fl.dxf");
+        // The first paint can land a few frames after "load" on a busy page: wait for it.
+        for (let i = 0; i < 40 && inked(el) === 0; i++) await new Promise((r2) => setTimeout(r2, 25));
+        const withoutHoles = inked(el);
+        el.removeAttribute("layers");
+        let all = 0;
+        for (let i = 0; i < 40 && (all = inked(el)) <= withoutHoles; i++) await new Promise((r2) => setTimeout(r2, 25));
+        assert(withoutHoles > 200 && withoutHoles < all * 0.9, `layers="-HOLES": ${withoutHoles} vs ${all} inked px `);
+        const s0 = el.stage.currentView().scale;
+        el.setAttribute("fit-padding", "30%");
+        await new Promise((r2) => requestAnimationFrame(r2));
+        const s1 = el.stage.currentView().scale;
+        assert(s1 < s0 * 0.85, `fit-padding 30%: scale ${s0} -> ${s1}`);
+        return `${withoutHoles} → ${all} px; scale ${s0.toFixed(2)} → ${s1.toFixed(2)}`;
+      });
+
       await check("theme=light / blueprint recolour the element", async () => {
         const el = view({ theme: "light", cache: "off" });
         await loadInto(el, stl(), "t.stl");

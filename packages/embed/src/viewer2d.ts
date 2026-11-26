@@ -37,6 +37,8 @@ export interface Stage2DOptions {
   accent: string;
   reducedMotion: boolean;
   motion: Motion2D;
+  /** E-02 `fit-padding`: margin around the fitted drawing, a fraction of the smaller side (default 0.08). */
+  fitPadding?: number;
 }
 
 /** Fraction of the canvas kept clear around the fitted drawing. */
@@ -125,6 +127,13 @@ export class Stage2D {
     this.wake();
   }
 
+  /** E-02: a new `fit-padding`; the fitted view moves, a user's pan/zoom in full view is kept. */
+  setFitPadding(p: number): void {
+    this.opts = { ...this.opts, fitPadding: p };
+    this.refit();
+    this.wake();
+  }
+
   /** E-06: layers not drawn (and not snapped to). */
   setHiddenLayers(names: Iterable<string>): void {
     this.hidden = new Set(names);
@@ -169,6 +178,8 @@ export class Stage2D {
     this.canvas.width = Math.round(width * this.dpr);
     this.canvas.height = Math.round(height * this.dpr);
     this.refit();
+    // Setting the size clears the canvas; paint now, so an off-screen element (no frames running) isn't left blank.
+    this.paint();
     this.wake();
   }
 
@@ -253,7 +264,7 @@ export class Stage2D {
     // Inside the drawing's blocks, or an insert measures as its "missing block" marker.
     const bb = withBlocks(this.host, () => entitiesBounds(this.entities));
     if (!bb || this.width < 2) return;
-    this.fitted = fitToBounds(bb, this.width, this.height, FIT_PADDING * 2);
+    this.fitted = fitToBounds(bb, this.width, this.height, (this.opts.fitPadding ?? FIT_PADDING) * 2);
     this.invalidate();
   }
 

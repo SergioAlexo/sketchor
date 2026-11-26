@@ -59,6 +59,12 @@ const CHECKS: Record<string, Check> = {
     if (/^[a-z0-9][a-z0-9-]{0,40}$/i.test(t)) return t.toLowerCase(); // auto/dark/light or a built-in id
     return safeUrl(t);
   },
+  "fit-padding": (v) => (/^\s*\d*\.?\d+\s*%?\s*$/.test(v) ? v.trim() : null),
+  // Layer names from the file: printable text only, comma-separated, kept short.
+  layers: (v) => {
+    const t = v.replace(/[\u0000-\u001f<>"]/g, "").trim();
+    return t ? t.slice(0, 300) : null;
+  },
   "full-url": (v) => {
     const t = v.trim().toLowerCase();
     return t === "auto" || t === "none" ? t : safeUrl(v);
