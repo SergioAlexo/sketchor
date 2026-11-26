@@ -99,7 +99,7 @@ import { CONSTRAINT_GLYPHS } from "../constraints/ConstraintPanel";
 import { setImageDecodeCallback } from "./imageCache";
 import { findSnap, snapMovingSelection, snapRotation, SNAP_PX, type Snap } from "./snapping";
 import { acquireLine, acquirePoint, parallelTrack, trackAlignment, trackingAngles, type TrackLine } from "./objectTracking";
-import { fitToBounds, gridStep, screenToWorld, worldToScreen, zoomAt, type View } from "./view";
+import { fitToBounds, gridStep, screenToWorld, wheelZoomFactor, worldToScreen, zoomAt, type View } from "./view";
 import { getTool, type Pick, type PointerGesture, type ToolContext } from "../tools";
 import { copySelectionToClipboard, pasteFromClipboard } from "../io/clipboard";
 import { applyTracking, trackingIncrement, useTracking } from "../tools/tracking";
@@ -1800,8 +1800,10 @@ export function Viewport() {
   };
 
   const onWheel = (e: React.WheelEvent) => {
+    const mode = e.deltaMode;
+    const factor = wheelZoomFactor(e.deltaY, mode, e.currentTarget.clientHeight);
+    if (factor === 1) return;
     const screen = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
     viewRef.current = zoomAt(viewRef.current, screen, factor);
     requestRedraw();
   };
