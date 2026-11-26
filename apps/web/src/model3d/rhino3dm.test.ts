@@ -61,7 +61,32 @@ describe("rhinoToOcct", () => {
     f.objects().addCircle(new r.Circle(3), null);
     const { result, warnings } = rhinoToOcct(r, f.toByteArray(), "x.3dm");
     expect(result.meshes).toHaveLength(0);
+    expect(result.wires!.length).toBeGreaterThan(0); // the circle is drawn now (F-06)
     expect(warnings.length).toBeGreaterThan(0);
+  });
+
+  it("draws curves and points as wireframe at true size (F-06)", async () => {
+    const r = await rh();
+    const f = new r.File3dm();
+    f.settings().modelUnitSystem = r.UnitSystem.Centimeters;
+    f.objects().addCurve(new r.LineCurve([0, 0, 0], [10, 0, 0]), null);
+    f.objects().addCircle(new r.Circle(3), null);
+    f.objects().addPoint([0, 0, 5]);
+    const { result, warnings } = rhinoToOcct(r, f.toByteArray(), "w.3dm");
+    expect(warnings).toEqual([]);
+    expect(result.meshes).toHaveLength(0);
+    const w = result.wires!;
+    expect(w.length % 6).toBe(0);
+    // Line: one segment, exact; circle: sampled; point: a three-segment cross.
+    expect(Array.from(w.subarray(0, 6))).toEqual([0, 0, 0, 100, 0, 0]);
+    expect(w.length / 6).toBeGreaterThan(1 + 16 + 3 - 1);
+    const model = buildModel(result, "w.3dm", "h", "3dm");
+    expect(model.parts).toHaveLength(0);
+    expect(model.wires).toBe(w);
+    expect(model.bounds.max[0]).toBeCloseTo(100, 4); // cm -> mm
+    expect(model.bounds.max[2]).toBeGreaterThan(50); // the point's cross reaches above z = 5 cm
+    const radius = Math.max(...Array.from(w).filter((_, i) => i % 3 === 1));
+    expect(radius).toBeGreaterThanOrEqual(29.9); // the 3 cm circle
   });
 
   it("an empty file gives an empty result, and garbage bytes never hang", async () => {
