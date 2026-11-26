@@ -64,3 +64,14 @@ describe("modelToMeshParts", () => {
     expect(exportProblems(open)[0]).toMatch(/^Plain: not closed/);
   });
 });
+
+describe("repairParts", () => {
+  it("repairs an open part for export and names what it did", async () => {
+    const { repairParts } = await import("./exportMesh");
+    const m = model();
+    const open = modelToMeshParts(m, new Set()).map((p) => ({ ...p, indices: p.indices.slice(3) }));
+    const r = repairParts(open);
+    expect(exportProblems(r.parts)).toEqual([]);
+    expect(r.summary[0]).toBe("Plain: filled 1 hole");
+  });
+});
