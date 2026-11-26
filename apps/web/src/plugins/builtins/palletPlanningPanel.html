@@ -139,6 +139,18 @@
               <div class="bar"><button type="button" data-apply>Apply position</button><button type="button" id="unplace-unit">Unplace</button></div>
             </form>
           </details>
+          <details id="manual-stack">
+            <summary>Build a stack</summary>
+            <form id="stack-form">
+              <p class="note">Choose units from this job in order from bottom to top. The stack goes on the selected pallet.</p>
+              <div id="stack-layers" class="fields"></div>
+              <div class="grid">
+                <label>Base X <input id="stack-x" type="number" min="0" step="any" data-length required></label>
+                <label>Base Y <input id="stack-y" type="number" min="0" step="any" data-length required></label>
+              </div>
+              <div><button type="button" data-apply>Place stack</button></div>
+            </form>
+          </details>
         </div>
         <details>
           <summary>Add a pallet</summary>
@@ -160,6 +172,15 @@
       </section>
     </fieldset>
   </main>
+  <template id="stack-layer-template">
+    <div class="record">
+      <label><span data-layer-label></span><select data-stack-unit></select></label>
+      <div class="grid">
+        <label>Rotation <select data-stack-rotation><option value="0">0°</option><option value="90">90°</option></select></label>
+        <label class="check"><input type="checkbox" data-stack-inverted> Upside down</label>
+      </div>
+    </div>
+  </template>
   <template id="job-template">
     <div class="record job">
       <div class="job-header">
@@ -238,7 +259,7 @@
     const asText = value => String(Number((value / mmPerUnit).toFixed(3)));
     const currentPallet = () => plan?.pallets.find(pallet => pallet.id === palletId);
     const unitName = unit => rows.get(unit.rowId).productId + " #" + unit.id.split("/").at(-1);
-    const upsideDown = unit => unit.layer % 2 === 0 && rows.get(unit.rowId).stack?.pattern === "alternate";
+    const upsideDown = unit => unit.upsideDown ?? (unit.layer % 2 === 0 && rows.get(unit.rowId).stack?.pattern === "alternate");
     const packingEdge = rules => rules.edgeMm + (rules.productMarginMm ?? 0);
 
     function setBusy(value) {
@@ -491,6 +512,55 @@
       $("unplace-unit").disabled = Boolean(unit.reason);
     }
 
+    function renderStackForm() {
+      const pallet = currentPallet();
+      const selected = palletStacks.get(palletId)?.find(stack => stack.some(unit => unit.id === selectedUnit));
+      const sources = plan.pallets.flatMap((source, index) => source.jobId === pallet.jobId
+        ? source.placements.map(unit => [unit, "Pallet " + (index + 1)]) : []);
+      for (const unit of plan.unplaced) {
+        if (rows.get(unit.rowId).jobId === pallet.jobId) sources.push([unit, "Unplaced"]);
+      }
+      const available = new Map(sources.map(([unit]) => [unit.id, unit]));
+      const choices = [["", "Choose product"], ...sources.map(([unit, origin]) => [unit.id, unitName(unit) + " · " + origin])];
+      const layers = Array.from({ length: plan.rules.maxLayers }, (_, index) => {
+        const card = $("stack-layer-template").content.firstElementChild.cloneNode(true);
+        const unit = card.querySelector("[data-stack-unit]");
+        const rotation = card.querySelector("[data-stack-rotation]");
+        const inverted = card.querySelector("[data-stack-inverted]");
+        card.querySelector("[data-layer-label]").textContent = "Layer " + (index + 1);
+        options(unit, choices, selected?.[index]?.id);
+        function setOrientation(preserve) {
+          const item = available.get(unit.value);
+          rotation.value = String(item?.rotation ?? 0);
+          rotation.disabled = !item || !rows.get(item.rowId).canRotate;
+          inverted.disabled = !item;
+          inverted.checked = Boolean(item) && (preserve ? upsideDown(item) : index % 2 === 1);
+        }
+        unit.onchange = () => setOrientation(false);
+        setOrientation(true);
+        return card;
+      });
+      $("stack-layers").replaceChildren(...layers);
+      $("stack-x").value = asInput(selected?.[0].xMm ?? packingEdge(plan.rules));
+      $("stack-y").value = asInput(selected?.[0].yMm ?? packingEdge(plan.rules));
+    }
+
+    function placeManualStack() {
+      const layers = Array.from($("stack-layers").children, card => ({
+        unitId: card.querySelector("[data-stack-unit]").value,
+        rotation: Number(card.querySelector("[data-stack-rotation]").value),
+        upsideDown: card.querySelector("[data-stack-inverted]").checked
+      }));
+      const units = layers.filter(layer => layer.unitId);
+      if (!units.length || layers.slice(0, units.length).some(layer => !layer.unitId)) {
+        return status("Fill the stack from layer 1 without skipping a layer.", true);
+      }
+      if (new Set(units.map(item => item.unitId)).size !== units.length) {
+        return status("Choose a different product unit for each layer.", true);
+      }
+      edit("assemble-stack", { palletId, xMm: mm($("stack-x")), yMm: mm($("stack-y")), units });
+    }
+
     function renderPallet() {
       const pallet = currentPallet();
       $("pallet-view").hidden = !pallet;
@@ -508,6 +578,7 @@
       $("empty-pallet-actions").hidden = pallet.placements.length > 0;
       canvas.classList.toggle("ready", pallet.placements.length > 0);
       renderSelection();
+      renderStackForm();
       draw();
     }
 
@@ -604,7 +675,7 @@
       $("new-pallet-job").value = currentPallet().jobId;
       renderPallet();
     };
-    $("unit-select").onchange = () => { selectedUnit = $("unit-select").value; renderSelection(); draw(); };
+    $("unit-select").onchange = () => { selectedUnit = $("unit-select").value; renderSelection(); renderStackForm(); draw(); };
     $("remove-pallet").onclick = () => edit("remove-pallet", { palletId });
     bindForm("add-pallet-form", () => edit("add-pallet", {
       jobId: $("new-pallet-job").value, base: readBase("new-length", "new-width")
@@ -613,6 +684,7 @@
       unitId: selectedUnit, palletId: $("target-pallet").value, rotation: Number($("rotation").value),
       xMm: mm($("position-x")), yMm: mm($("position-y")), layer: Number($("target-layer").value)
     }));
+    bindForm("stack-form", placeManualStack);
     $("unplace-unit").onclick = () => edit("unplace", { unitId: selectedUnit });
     $("confirm").onclick = () => edit("confirm");
     $("save-report").onclick = () => request("save-report", { unit: $("units").value });
@@ -631,18 +703,23 @@
       const pallet = currentPallet();
       const edgeMm = packingEdge(plan.rules);
       const { gapMm } = plan.rules;
-      const size = physicalSize(item);
-      const xEnd = item.xMm + size.lengthMm;
-      const yEnd = item.yMm + size.widthMm;
-      if (item.xMm < edgeMm - 1e-6 || item.yMm < edgeMm - 1e-6
-        || xEnd > pallet.base.lengthMm - edgeMm + 1e-6 || yEnd > pallet.base.widthMm - edgeMm + 1e-6) return false;
+      const dx = item.xMm - drag.original.xMm;
+      const dy = item.yMm - drag.original.yMm;
       const gap = gapMm - 1e-6;
-      const affected = new Set(drag.stack.map(other => other.layer));
-      return pallet.placements.every(other => {
-        if (!affected.has(other.layer) || drag.stack.some(unit => unit.id === other.id)) return true;
-        const size = physicalSize(other);
-        return xEnd + gap <= other.xMm || yEnd + gap <= other.yMm
-          || other.xMm + size.lengthMm + gap <= item.xMm || other.yMm + size.widthMm + gap <= item.yMm;
+      return drag.stack.every(unit => {
+        const size = physicalSize(unit);
+        const x = unit.xMm + dx;
+        const y = unit.yMm + dy;
+        const xEnd = x + size.lengthMm;
+        const yEnd = y + size.widthMm;
+        if (x < edgeMm - 1e-6 || y < edgeMm - 1e-6
+          || xEnd > pallet.base.lengthMm - edgeMm + 1e-6 || yEnd > pallet.base.widthMm - edgeMm + 1e-6) return false;
+        return pallet.placements.every(other => {
+          if (other.layer !== unit.layer || other.id === unit.id) return true;
+          const box = physicalSize(other);
+          return xEnd + gap <= other.xMm || yEnd + gap <= other.yMm
+            || other.xMm + box.lengthMm + gap <= x || other.yMm + box.widthMm + gap <= y;
+        });
       });
     }
 
@@ -655,11 +732,12 @@
           && point.yMm >= unit.yMm && point.yMm <= unit.yMm + size.widthMm;
       });
       if (!stack) return;
-      const placement = stack.find(unit => unit.id === selectedUnit) || stack[0];
-      selectedUnit = placement.id;
-      drag = { pointerId: event.pointerId, unit: { ...placement }, start: point, original: placement, stack, moved: false, invalid: false };
+      const [base] = stack;
+      if (!stack.some(unit => unit.id === selectedUnit)) selectedUnit = base.id;
+      drag = { pointerId: event.pointerId, unit: { ...base }, start: point, original: base, stack, moved: false, invalid: false };
       canvas.setPointerCapture(event.pointerId);
       renderSelection();
+      renderStackForm();
       draw();
     };
     canvas.onpointermove = event => {

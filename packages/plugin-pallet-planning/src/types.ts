@@ -65,6 +65,8 @@ export interface Placement {
   yMm: number;
   rotation: Rotation;
   layer: Layer;
+  supportId?: string;
+  upsideDown?: boolean;
 }
 
 export interface PlannedPallet {
@@ -124,8 +126,8 @@ export function packingEdge(rules: PalletRules): number {
   return rules.edgeMm + (rules.productMarginMm ?? 0);
 }
 
-export function isUpsideDown(row: ProductRow, layer: Layer): boolean {
-  return row.stack?.pattern === "alternate" && layer % 2 === 0;
+export function isUpsideDown(row: ProductRow, layer: Layer, override?: boolean): boolean {
+  return override ?? (row.stack?.pattern === "alternate" && layer % 2 === 0);
 }
 
 export function stackHeight(row: ProductRow, layer: Layer): number | undefined {
@@ -149,13 +151,18 @@ export function sharesStack(a: Placement, b: Placement): boolean {
     && Math.abs(a.xMm - b.xMm) <= EPS && Math.abs(a.yMm - b.yMm) <= EPS;
 }
 
+export function supportsPlacement(below: Placement, above: Placement): boolean {
+  return below.layer === above.layer - 1
+    && (above.supportId === undefined ? sharesStack(below, above) : below.id === above.supportId);
+}
+
 /** Group aligned product units in loading order for a single top-down view. */
 export function placementStacks(placements: readonly Placement[]): Placement[][] {
   const stacks: Placement[][] = [];
   for (const item of [...placements].sort((a, b) => a.layer - b.layer)) {
     const stack = item.layer > 1 ? stacks.find(items => {
       const below = items[items.length - 1];
-      return below.layer === item.layer - 1 && sharesStack(below, item);
+      return supportsPlacement(below, item);
     }) : undefined;
     if (stack) stack.push(item);
     else stacks.push([item]);
@@ -167,9 +174,22 @@ export function knownLoadedHeight(
   pallet: PlannedPallet, rows: ReadonlyMap<string, ProductRow>, rules: PalletRules,
 ): number | undefined {
   if (pallet.placements.length === 0) return undefined;
-  const heights = pallet.placements.map(item => stackHeight(rows.get(item.rowId)!, item.layer));
-  if (heights.some(height => height === undefined)) return undefined;
-  return (rules.deckHeightMm ?? 0) + Math.max(...heights as number[]);
+  let tallest = 0;
+  for (const stack of placementStacks(pallet.placements)) {
+    let height = 0;
+    for (const [index, item] of stack.entries()) {
+      const row = rows.get(item.rowId)!;
+      const below = stack[index - 1];
+      const sameProduct = below?.rowId === item.rowId;
+      const nested = sameProduct && (isUpsideDown(row, item.layer, item.upsideDown)
+        || isUpsideDown(row, below.layer, below.upsideDown));
+      const added = sameProduct ? row.stack?.addedHeightMm ?? (nested ? undefined : row.heightMm) : row.heightMm;
+      if (added === undefined) return undefined;
+      height += added;
+    }
+    tallest = Math.max(tallest, height);
+  }
+  return (rules.deckHeightMm ?? 0) + tallest;
 }
 
 export const REFERENCE_RULES: PalletRules = {

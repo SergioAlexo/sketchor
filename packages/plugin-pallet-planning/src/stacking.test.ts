@@ -167,6 +167,44 @@ it("supports a stack-height cap without a deck height", () => {
   expect(plan.pallets[0].packedHeightMm).toBeCloseTo(23 * IN);
 });
 
+it("assembles A1, A2, B1, B2 from two pallets with independent orientations", () => {
+  const base = { ...bench, id: "a", productId: "A", quantity: 2, lengthMm: 71 * IN, widthMm: 63 * IN,
+    stack: { maxLayers: 2, pattern: "upright", addedHeightMm: 5 * IN } } satisfies ProductRow;
+  const upper = { ...base, id: "b", productId: "B", lengthMm: 70 * IN, widthMm: 62 * IN };
+  const generated = generatePalletPlan({
+    products: [base, upper], rules: { ...DEFAULT_PALLET_RULES, maxLayers: 4 },
+  }, version);
+  expect(generated.pallets).toHaveLength(2);
+  const first = generated.pallets.find(pallet => pallet.placements[0].rowId === "a")!;
+  const { xMm, yMm } = first.placements[0];
+  const action = {
+    type: "assemble-stack", palletId: first.id, xMm, yMm,
+    units: ["a/1", "a/2", "b/1", "b/2"].map((unitId, index) => ({
+      unitId, rotation: 0, upsideDown: index % 2 === 1,
+    })),
+  };
+  const plan = editPalletPlan(generated, action, "mixed");
+  const stack = plan.pallets.find(pallet => pallet.id === first.id)!;
+  expect(stack.placements.map(item => [item.id, item.layer, item.upsideDown, item.supportId])).toEqual([
+    ["a/1", 1, false, undefined], ["a/2", 2, true, "a/1"], ["b/1", 3, false, "a/2"], ["b/2", 4, true, "b/1"],
+  ]);
+  expect(stack.placements[2].xMm - xMm).toBeCloseTo(0.5 * IN);
+  expect(stack.packedHeightMm).toBeCloseTo(46 * IN);
+  expect(plan.pallets.find(pallet => pallet.id !== first.id)?.placements).toEqual([]);
+  expect(generated.pallets.map(pallet => pallet.placements.length)).toEqual([2, 2]);
+  const html = buildPalletReportHtml(plan, "in");
+  expect(html).toContain("A #1 / A #2 / B #1 / B #2");
+  expect(html).toContain("<td>B #2</td><td>4</td><td>Upside down</td>");
+  expect(readPalletReport(html)).toEqual(plan);
+  const shifted = editPalletPlan(editPalletPlan(plan, {
+    type: "resize", palletId: first.id, base: { lengthMm: 80 * IN, widthMm: 70 * IN },
+  }, "resized"), { type: "move-stack", palletId: first.id, unitId: "a/1", xMm: xMm + IN, yMm }, "shifted");
+  expect(shifted.pallets.find(pallet => pallet.id === first.id)!.placements[2].xMm).toBeCloseTo(xMm + 1.5 * IN);
+  expect(() => editPalletPlan(generated, {
+    ...action, units: [...action.units.slice(2), ...action.units.slice(0, 2)],
+  }, "overhang")).toThrow(/overhang/);
+});
+
 it("exports the loading sequence, supporting units and original vs edited coordinates", () => {
   const generated = generate({ maxLengthMm: 34 * IN });
   const pallet = generated.pallets[0];

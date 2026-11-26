@@ -1,5 +1,5 @@
 import {
-  isUpsideDown, layerLimit, oriented, packingEdge, packingFootprint, placementStacks, sharesStack, unitId, type PalletPlan,
+  isUpsideDown, layerLimit, oriented, packingEdge, packingFootprint, placementStacks, supportsPlacement, unitId, type PalletPlan,
   type PalletResult, type Placement, type PlannedPallet, type ProductRow,
 } from "./types";
 import { parsePalletPlan } from "./validate";
@@ -44,7 +44,7 @@ function indexAssignments(layout: PalletResult) {
   layout.pallets.forEach((pallet, index) => {
     for (const placement of pallet.placements) {
       const support = placement.layer > 1 && pallet.placements.find(
-        candidate => candidate.layer === placement.layer - 1 && sharesStack(candidate, placement),
+        candidate => supportsPlacement(candidate, placement),
       );
       byUnit.set(placement.id, { pallet, placement, number: index + 1, supportId: support ? support.id : undefined });
     }
@@ -64,7 +64,7 @@ function assignmentValues(input: ReturnType<typeof indexAssignments> | undefined
   const { pallet, placement, supportId, number } = assignment;
   return [
     pallet.id, number, pallet.base.lengthMm, pallet.base.widthMm, pallet.packedHeightMm,
-    placement.layer, isUpsideDown(row, placement.layer) ? "true" : "false", supportId,
+    placement.layer, isUpsideDown(row, placement.layer, placement.upsideDown) ? "true" : "false", supportId,
     placement.xMm, placement.yMm, placement.rotation, undefined,
   ];
 }
@@ -131,6 +131,7 @@ export function buildPalletReportHtml(plan: PalletPlan, unit: "mm" | "in"): stri
   const size = (length: number, width: number) => `${display(length)} × ${display(width)} ${unit}`;
   const dims = (mm: number | undefined) => mm === undefined ? "—" : `${display(mm)} ${unit}`;
   const unitNumber = (id: string) => escape(id.split("/").at(-1) ?? id);
+  const unitLabel = (item: Placement) => `${escape(products.get(item.rowId)!.productId)} #${unitNumber(item.id)}`;
   const palletSections = plan.pallets.map((pallet, index) => {
     const boxStyle = (x: number, y: number, length: number, width: number) =>
       `left:${100 * x / pallet.base.lengthMm}%;bottom:${100 * y / pallet.base.widthMm}%;`
@@ -149,15 +150,15 @@ export function buildPalletReportHtml(plan: PalletPlan, unit: "mm" | "in"): stri
         const boundary = boxStyle(item.xMm - padding, item.yMm - padding, rotated.lengthMm + 2 * padding, rotated.widthMm + 2 * padding);
         outlines.push(`<span class="guide padding" style="${boundary}"></span>`);
       }
-      const label = stack.map(unit => `${escape(product.productId)} #${unitNumber(unit.id)}`).join(" / ");
+      const label = stack.map(unitLabel).join(" / ");
       outlines.push(`<span class="piece" style="${style}">${label}</span>`);
     }
     const rows = [...pallet.placements].sort((a, b) => a.layer - b.layer).map(item => {
       const product = products.get(item.rowId)!;
-      const label = `${escape(product.productId)} #${unitNumber(item.id)}`;
       const support = indexed.byUnit.get(item.id)?.supportId;
-      return `<tr><td>${label}</td><td>${item.layer}</td><td>${isUpsideDown(product, item.layer) ? "Upside down" : "Upright"}</td><td>${item.rotation}°</td>
-<td>${display(item.xMm)} / ${display(item.yMm)}</td><td>${support ? `${escape(product.productId)} #${unitNumber(support)}` : "Deck"}</td></tr>`;
+      const below = support ? indexed.byUnit.get(support)?.placement : undefined;
+      return `<tr><td>${unitLabel(item)}</td><td>${item.layer}</td><td>${isUpsideDown(product, item.layer, item.upsideDown) ? "Upside down" : "Upright"}</td><td>${item.rotation}°</td>
+<td>${display(item.xMm)} / ${display(item.yMm)}</td><td>${below ? unitLabel(below) : "Deck"}</td></tr>`;
     });
     const ratio = pallet.base.lengthMm / pallet.base.widthMm;
     return `<section><h2>Pallet ${index + 1} · Job ${escape(pallet.jobId)}</h2>

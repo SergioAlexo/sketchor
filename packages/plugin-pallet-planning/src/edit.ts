@@ -1,4 +1,4 @@
-import { placementStacks, type PalletPlan, type Placement, type PlannedPallet } from "./types";
+import { EPS, oriented, packingFootprint, placementStacks, type Footprint, type PalletPlan, type Placement, type PlannedPallet } from "./types";
 import { footprint, labelText, parsePalletPlan, parsePlacement, record, truckOrientation } from "./validate";
 
 function findPallet(plan: PalletPlan, value: unknown): PlannedPallet {
@@ -10,7 +10,10 @@ function findPallet(plan: PalletPlan, value: unknown): PlannedPallet {
 function detachUnit(plan: PalletPlan, id: unknown): Pick<Placement, "id" | "rowId"> {
   for (const pallet of plan.pallets) {
     const index = pallet.placements.findIndex(p => p.id === id);
-    if (index >= 0) return pallet.placements.splice(index, 1)[0];
+    if (index >= 0) {
+      pallet.packedHeightMm = undefined;
+      return pallet.placements.splice(index, 1)[0];
+    }
   }
   const index = plan.unplaced.findIndex(p => p.id === id);
   if (index < 0) throw new Error("Select a product unit first.");
@@ -28,6 +31,7 @@ export function editPalletPlan(plan: PalletPlan, raw: unknown, revisionId: strin
     case "place": {
       const pallet = findPallet(next, action.palletId);
       const unit = detachUnit(next, action.unitId);
+      pallet.packedHeightMm = undefined;
       pallet.placements.push(parsePlacement({
         ...unit, xMm: action.xMm, yMm: action.yMm, rotation: action.rotation, layer: action.layer,
       }));
@@ -37,9 +41,46 @@ export function editPalletPlan(plan: PalletPlan, raw: unknown, revisionId: strin
       const pallet = findPallet(next, action.palletId);
       const stack = placementStacks(pallet.placements).find(items => items.some(item => item.id === action.unitId));
       if (!stack) throw new Error("Select a product unit first.");
+      const origin = stack.find(item => item.id === action.unitId)!;
+      const target = parsePlacement({ ...origin, xMm: action.xMm, yMm: action.yMm });
       const moving = new Set(stack);
       pallet.placements = pallet.placements.map(item => moving.has(item)
-        ? parsePlacement({ ...item, xMm: action.xMm, yMm: action.yMm }) : item);
+        ? parsePlacement({
+          ...item, xMm: target.xMm + (item.xMm - origin.xMm), yMm: target.yMm + (item.yMm - origin.yMm),
+        }) : item);
+      break;
+    }
+    case "assemble-stack": {
+      const pallet = findPallet(next, action.palletId);
+      if (!Array.isArray(action.units) || action.units.length < 1 || action.units.length > next.rules.maxLayers) {
+        throw new Error(`Choose 1 to ${next.rules.maxLayers} units in loading order.`);
+      }
+      pallet.packedHeightMm = undefined;
+      const rows = new Map(next.products.map(row => [row.id, row]));
+      const used = new Set<string>();
+      let previous: (Placement & Footprint) | undefined;
+      for (const [index, rawUnit] of action.units.entries()) {
+        const entry = record(rawUnit, "Stack unit");
+        const unitId = labelText(entry.unitId, "Product unit ID", 256);
+        if (used.has(unitId)) throw new Error("Choose a different product unit for each layer.");
+        used.add(unitId);
+        const unit = detachUnit(next, unitId);
+        const row = rows.get(unit.rowId)!;
+        const item = parsePlacement({
+          ...unit, rotation: entry.rotation, upsideDown: entry.upsideDown, layer: index + 1,
+          supportId: previous?.id, xMm: action.xMm, yMm: action.yMm,
+        });
+        const size = oriented(packingFootprint(row), item.rotation);
+        if (previous) {
+          if (size.lengthMm > previous.lengthMm + EPS || size.widthMm > previous.widthMm + EPS) {
+            throw new Error(`${row.productId} on layer ${item.layer} overhangs the product below.`);
+          }
+          item.xMm = previous.xMm + (previous.lengthMm - size.lengthMm) / 2;
+          item.yMm = previous.yMm + (previous.widthMm - size.widthMm) / 2;
+        }
+        pallet.placements.push(item);
+        previous = { ...item, ...size };
+      }
       break;
     }
     case "unplace": {

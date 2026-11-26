@@ -1,5 +1,5 @@
 import {
-  EPS, FORK_ENTRY_SIDE, MAX_PRODUCTS, MAX_STANDARD_BASES, knownLoadedHeight, layerLimit, oriented, packingEdge, packingFootprint, sharesStack, unitId,
+  EPS, FORK_ENTRY_SIDE, MAX_PRODUCTS, MAX_STANDARD_BASES, knownLoadedHeight, oriented, packingEdge, packingFootprint, placementStacks, supportsPlacement, unitId,
   type Footprint, type Layer, type PalletInput, type PalletPlan, type PalletResult,
   type PalletRules, type Placement, type PlannedPallet, type ProductRow, type UnplacedProduct,
 } from "./types";
@@ -147,6 +147,8 @@ export function parsePlacement(raw: unknown): Placement {
     yMm: measurement(placement.yMm, "Product Y", true),
     rotation: placement.rotation,
     layer: layerNumber(placement.layer ?? 1, "Placement layer"),
+    ...(placement.supportId === undefined ? {} : { supportId: labelText(placement.supportId, "Supporting product ID", 256) }),
+    ...(placement.upsideDown === undefined ? {} : { upsideDown: boolean(placement.upsideDown, "Upside-down orientation") }),
   };
 }
 
@@ -200,10 +202,8 @@ function validatePalletGeometry(pallet: PlannedPallet, rules: PalletRules, rows:
     const row = rows.get(p.rowId);
     if (!row || row.jobId !== pallet.jobId) throw new Error(`${name} contains a product from a different job.`);
     if (p.rotation === 90 && !row.canRotate) throw new Error(`${row.productId} cannot be turned.`);
-    if (p.layer > layerLimit(row, rules)) throw new Error(`${row.productId} exceeds the configured layer or loaded height limit.`);
-    if (p.layer > 1 && !placements.some(other => other.layer === p.layer - 1 && sharesStack(p, other))) {
-      throw new Error(`${row.productId} on layer ${p.layer} needs a matching product directly below it.`);
-    }
+    if (p.layer > rules.maxLayers) throw new Error(`${row.productId} exceeds the configured pallet layer limit.`);
+    if (p.layer === 1 && p.supportId !== undefined) throw new Error("Layer 1 sits directly on the pallet.");
     const size = oriented(packingFootprint(row), p.rotation);
     const xEnd = p.xMm + size.lengthMm;
     const yEnd = p.yMm + size.widthMm;
@@ -211,7 +211,7 @@ function validatePalletGeometry(pallet: PlannedPallet, rules: PalletRules, rows:
       || xEnd > base.lengthMm - edge + EPS || yEnd > base.widthMm - edge + EPS) {
       throw new Error(`${row.productId} in ${name} is outside the allowed edge clearance.`);
     }
-    return { x: p.xMm, y: p.yMm, xEnd, yEnd, label: row.productId, layer: p.layer };
+    return { unit: p, x: p.xMm, y: p.yMm, xEnd, yEnd, label: row.productId, layer: p.layer };
   });
   for (const [index, a] of boxes.entries()) {
     for (let j = index + 1; j < boxes.length; j += 1) {
@@ -221,6 +221,33 @@ function validatePalletGeometry(pallet: PlannedPallet, rules: PalletRules, rows:
       const separated = a.xEnd + gap <= b.x || b.xEnd + gap <= a.x || a.yEnd + gap <= b.y || b.yEnd + gap <= a.y;
       if (!separated) throw new Error(`${a.label} and ${b.label} on ${name} overlap or need more gap.`);
     }
+  }
+  const supported = new Set<string>();
+  for (const above of boxes) {
+    if (above.layer === 1) continue;
+    const below = boxes.find(other => supportsPlacement(other.unit, above.unit));
+    if (!below) throw new Error(`${above.label} on layer ${above.layer} needs a supporting product directly below it.`);
+    if (supported.has(below.unit.id)) throw new Error("Each product can support one unit directly above it.");
+    supported.add(below.unit.id);
+    if (above.x < below.x - EPS || above.y < below.y - EPS
+      || above.xEnd > below.xEnd + EPS || above.yEnd > below.yEnd + EPS) {
+      throw new Error(`${above.label} overhangs ${below.label} on the layer below.`);
+    }
+  }
+  for (const stack of placementStacks(placements)) {
+    let previous = "";
+    let count = 0;
+    for (const item of stack) {
+      count = item.rowId === previous ? count + 1 : 1;
+      previous = item.rowId;
+      const row = rows.get(item.rowId)!;
+      if (count > (row.stack?.maxLayers ?? 1)) throw new Error(`${row.productId} exceeds its configured stacking limit.`);
+    }
+  }
+  if (placements.length && rules.maxLoadedHeightMm !== undefined) {
+    const height = knownLoadedHeight(pallet, rows, rules);
+    if (height === undefined) throw new Error(`${name} needs measured stack heights to check the loaded height limit.`);
+    if (height > rules.maxLoadedHeightMm + EPS) throw new Error(`${name} exceeds the loaded height limit.`);
   }
 }
 

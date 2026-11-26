@@ -77,7 +77,7 @@ export function buildPalletDrawing(plan: PalletPlan, unit: DisplayUnitInfo): Com
         ids.push(guide.id);
       }
       const label = stacked
-        ? stack.map(item => `${entry.row.productId} #${item.id.split("/").at(-1)}`).join(" / ")
+        ? stack.map(item => `${rows.get(item.rowId)!.row.productId} #${item.id.split("/").at(-1)}`).join(" / ")
         : entry.row.productId;
       const height = Math.min(footprint.widthMm * 0.35, footprint.lengthMm * 1.25 / label.length);
       const tag = owned(text({ x: px + footprint.lengthMm * 0.06, y: py + (footprint.widthMm - height) / 2 },
