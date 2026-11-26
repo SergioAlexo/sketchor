@@ -50,7 +50,7 @@ export const BUILTIN_MANIFESTS: PluginManifest[] = [
     contributes: {
       commands: [{ id: "pallet-planning.open", title: "Pallet Size Generator" }],
     },
-    permissions: ["write-document", "storage"],
+    permissions: ["read-document", "write-document", "storage"],
   },
   {
     id: "com.sketchor.truck-nesting",

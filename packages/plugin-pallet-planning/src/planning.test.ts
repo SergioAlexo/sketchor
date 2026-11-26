@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { nestByOrders, validateNest } from "@sketchor/plugin-truck-nesting";
 import {
-  buildPalletDrawing, editPalletPlan, generatePalletPlan, parsePalletPlan,
+  buildPalletDrawing, clearPalletDrawing, editPalletPlan, generatePalletPlan, parsePalletPlan,
   REFERENCE_RULES, toTruckOrders, type PalletRules, type ProductRow,
 } from "./index";
 
@@ -13,6 +13,19 @@ const cartons: ProductRow = {
 };
 const generate = (products = [cartons], rules: Partial<PalletRules> = {}) =>
   generatePalletPlan({ products, rules: { ...REFERENCE_RULES, ...rules } }, version);
+
+it("replaces owned geometry without clearing another drawing on the same layer", () => {
+  const commands = buildPalletDrawing(generate(), { unit: "in", perMm: 1 / IN, label: "in" });
+  const generated = commands.flatMap(command => command.type === "add-entity" ? [command.entity] : []);
+  const groups = commands.flatMap(command => command.type === "group-entities"
+    ? [{ id: command.groupId, members: command.ids, name: command.name ?? command.groupId }] : []);
+  const userEntity = { ...generated[0], id: "user-created" };
+  const cleared = clearPalletDrawing({ revision: 1, entities: [...generated, userEntity], groups, constraints: [] });
+  expect(cleared).toEqual([
+    ...groups.map(group => ({ type: "ungroup", groupId: group.id })),
+    { type: "delete-entities", ids: generated.map(entity => entity.id) },
+  ]);
+});
 
 describe("product-to-pallet generation", () => {
   it("fits two cartons side by side with one gap and both edge clearances", () => {

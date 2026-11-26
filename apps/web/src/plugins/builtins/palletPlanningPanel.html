@@ -152,7 +152,6 @@
         <div class="bar">
           <button type="button" id="undo">Undo</button>
           <button type="button" id="redo">Redo</button>
-          <button type="button" id="open-drawing">Open drawing</button>
           <button type="button" id="save-json">Save JSON</button>
           <button type="button" id="save-report">Save loading report</button>
           <button type="button" id="save-csv">Export analysis CSV</button>
@@ -524,7 +523,6 @@
       $("unplaced-count").textContent = plan.unplaced.length;
       $("review").textContent = plan.review === "confirmed" ? "Confirmed" : "Draft";
       $("confirm").disabled = plan.review === "confirmed" || Boolean(plan.unplaced.length) || plan.pallets.some(pallet => !pallet.placements.length);
-      $("open-drawing").disabled = !plan.pallets.length;
       $("unplaced").hidden = !plan.unplaced.length;
       const unplacedRows = new Map();
       for (const item of plan.unplaced) {
@@ -618,7 +616,6 @@
     }));
     $("unplace-unit").onclick = () => edit("unplace", { unitId: selectedUnit });
     $("confirm").onclick = () => edit("confirm");
-    $("open-drawing").onclick = () => request("draw");
     $("save-json").onclick = () => request("save-json");
     $("save-report").onclick = () => request("save-report", { unit: $("units").value });
     $("save-csv").onclick = () => request("save-csv");

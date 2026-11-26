@@ -1,6 +1,6 @@
 import type { DisplayUnitInfo, PluginModule } from "@sketchor/plugin-sdk";
 import {
-  buildPalletDrawing, buildPalletReportCsv, buildPalletReportHtml, editPalletPlan, generatePalletPlan,
+  buildPalletDrawing, buildPalletReportCsv, buildPalletReportHtml, clearPalletDrawing, editPalletPlan, generatePalletPlan,
   DEFAULT_PALLET_RULES, parsePalletPlan, placementStacks, PRODUCT_COLORS, type PalletPlan,
 } from "@sketchor/plugin-pallet-planning";
 import PANEL_HTML from "./palletPlanningPanel.html?raw";
@@ -44,7 +44,14 @@ const plugin: PluginModule = {
       }
     };
 
+    const draw = async (next: PalletPlan) => {
+      const model = await sketchor.document.read();
+      const commands = [...clearPalletDrawing(model), ...buildPalletDrawing(next, unit)];
+      if (commands.length) await sketchor.document.apply(commands);
+    };
+
     const commit = async (next: PalletPlan, message: string, replaceInputs = false) => {
+      if (replaceInputs || next.review === "draft") await draw(next);
       if (plan) pushHistory(undo, plan);
       redo.length = 0;
       plan = next;
@@ -94,8 +101,11 @@ const plugin: PluginModule = {
         case "redo": {
           if (!plan) return;
           const back = msg.type === "undo";
-          const next = (back ? undo : redo).pop();
+          const from = back ? undo : redo;
+          const next = from.at(-1);
           if (!next) return;
+          await draw(next);
+          from.pop();
           const replaceInputs = next.id !== plan.id || next.products !== plan.products || next.rules !== plan.rules;
           pushHistory(back ? redo : undo, plan);
           plan = next;
@@ -111,11 +121,6 @@ const plugin: PluginModule = {
       switch (msg.type) {
         case "edit":
           await commit(editPalletPlan(plan, msg.action, crypto.randomUUID()), "Plan updated.");
-          return;
-        case "draw":
-          if (!plan.pallets.length) throw new Error("Add a pallet before opening a drawing.");
-          await sketchor.app.openDocumentTab("Pallet Plan", buildPalletDrawing(plan, unit));
-          send({ type: "status", message: "Drawing opened in a new Sketchor tab." });
           return;
         case "save-json":
         case "save-csv":
