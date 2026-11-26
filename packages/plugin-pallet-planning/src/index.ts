@@ -4,4 +4,4 @@ export { parsePalletPlan, parsePalletInput } from "./validate";
 export { editPalletPlan } from "./edit";
 export { toTruckOrders, type PalletStop } from "./truck";
 export { buildPalletDrawing, clearPalletDrawing, PRODUCT_COLORS } from "./layout";
-export { buildPalletReportCsv, buildPalletReportHtml } from "./report";
+export { buildPalletReportCsv, buildPalletReportHtml, palletReportFileName, readPalletReport } from "./report";

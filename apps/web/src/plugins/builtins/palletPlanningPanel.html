@@ -59,9 +59,11 @@
   <main>
     <div class="bar spread">
       <label>Units <select id="units" disabled><option value="mm">mm</option><option value="in">in</option></select></label>
-      <button type="button" id="open-json" disabled>Open JSON</button>
-      <input type="file" id="plan-file" accept=".json,application/json" hidden>
+      <button type="button" id="open-report" disabled>Open report</button>
+      <button type="button" id="report-folder" disabled>Report folder…</button>
+      <input type="file" id="plan-file" accept=".html,.htm,.json,text/html,application/json" hidden>
     </div>
+    <p class="note" id="report-location" hidden></p>
     <p id="status" role="status" aria-live="polite">Loading pallet planner…</p>
     <form id="generate-form">
       <fieldset id="input-fields" class="fields" disabled>
@@ -152,9 +154,7 @@
         <div class="bar">
           <button type="button" id="undo">Undo</button>
           <button type="button" id="redo">Redo</button>
-          <button type="button" id="save-json">Save JSON</button>
-          <button type="button" id="save-report">Save loading report</button>
-          <button type="button" id="save-csv">Export analysis CSV</button>
+          <button type="button" id="save-report">Save report</button>
           <button type="button" id="confirm" class="primary">Confirm plan</button>
         </div>
       </section>
@@ -185,11 +185,6 @@
       <div class="bar spread">
         <label class="check"><input name="canRotate" type="checkbox"> Allow 90° turns</label>
         <button type="button" data-remove>Remove product</button>
-      </div>
-      <label class="check"><input name="useMeasured" type="checkbox"> Use measured footprint</label>
-      <div class="grid measured-footprint" hidden>
-        <label>Measured length <input name="measuredLengthMm" type="number" step="any" data-length></label>
-        <label>Measured width <input name="measuredWidthMm" type="number" step="any" data-length></label>
       </div>
       <label>Stack up to <select name="stackLayers">
         <option value="1">1 layer</option><option value="2">2 layers</option><option value="3">3 layers</option>
@@ -230,6 +225,7 @@
     let defaultRules;
     let colors = [];
     let busy = true;
+    let folderSupported = false;
     let initialized = false;
     let drag = null;
     let view = null;
@@ -246,7 +242,15 @@
 
     function setBusy(value) {
       busy = value;
-      for (const id of ["units", "open-json", "input-fields", "result-fields"]) $(id).disabled = busy;
+      for (const id of ["units", "open-report", "input-fields", "result-fields"]) $(id).disabled = busy;
+      $("report-folder").disabled = busy || !folderSupported;
+    }
+
+    function showReportFolder(info) {
+      folderSupported = info.supported;
+      $("report-folder").hidden = !folderSupported;
+      $("report-location").hidden = !info.folder;
+      $("report-location").textContent = info.folder ? "Report folder · " + info.folder : "";
     }
 
     function status(text, error = false) {
@@ -282,18 +286,13 @@
       const element = addRecord("product-template", container, {
         ...row, stackLayers: row.stack?.maxLayers || 1,
         stackPattern: row.stack?.pattern, stackHeight: row.stack?.addedHeightMm,
-        useMeasured: row.measuredLengthMm !== undefined || row.measuredWidthMm !== undefined
+        lengthMm: Math.max(row.lengthMm ?? 0, row.measuredLengthMm ?? 0) || undefined,
+        widthMm: Math.max(row.widthMm ?? 0, row.measuredWidthMm ?? 0) || undefined
       });
       element.dataset.id = row.id || "row-" + Date.now().toString(36) + "-" + (++rowCounter);
       if (row.sourceUnit) element.dataset.sourceUnit = row.sourceUnit;
       if (row.sourceRowId) element.dataset.sourceRowId = row.sourceRowId;
       if (row.notes) element.dataset.legacyNotes = row.notes;
-      const useMeasured = input(element, "useMeasured");
-      useMeasured.onchange = () => {
-        element.querySelector(".measured-footprint").hidden = !useMeasured.checked;
-        for (const name of ["measuredLengthMm", "measuredWidthMm"]) input(element, name).disabled = !useMeasured.checked;
-      };
-      useMeasured.onchange();
       const stackLayers = input(element, "stackLayers");
       stackLayers.onchange = () => {
         const stacked = stackLayers.value !== "1";
@@ -346,8 +345,6 @@
           quantity: number(field("quantity")),
           lengthMm: mm(field("lengthMm")),
           widthMm: mm(field("widthMm")),
-          measuredLengthMm: field("useMeasured").checked && field("measuredLengthMm").value ? mm(field("measuredLengthMm")) : undefined,
-          measuredWidthMm: field("useMeasured").checked && field("measuredWidthMm").value ? mm(field("measuredWidthMm")) : undefined,
           heightMm: field("heightMm").value ? mm(field("heightMm")) : undefined,
           weightKg: field("weightKg").value ? number(field("weightKg")) : undefined,
           notes: element.dataset.legacyNotes,
@@ -587,14 +584,15 @@
     }], { ...defaultRules, maxLengthMm: 52 * 25.4, maxWidthMm: 33 * 25.4, maxLayers: 2 });
     $("units").onchange = () => { setUnits($("units").value); renderPlan(); };
     bindForm("generate-form", () => request("generate", { input: capture() }));
-    $("open-json").onclick = () => $("plan-file").click();
+    $("open-report").onclick = () => $("plan-file").click();
+    $("report-folder").onclick = () => request("pick-report-folder");
     $("plan-file").onchange = async () => {
       const file = $("plan-file").files[0];
       $("plan-file").value = "";
       if (!file || busy) return;
-      if (file.size > 4_000_000) return status("Choose a pallet plan JSON file under 4 MB.", true);
+      if (file.size > 12_000_000) return status("Choose a pallet report under 12 MB.", true);
       try {
-        request("open-json", { data: await file.text() });
+        request("open-report", { data: await file.text() });
       } catch {
         status("Could not read the selected file.", true);
       }
@@ -616,9 +614,7 @@
     }));
     $("unplace-unit").onclick = () => edit("unplace", { unitId: selectedUnit });
     $("confirm").onclick = () => edit("confirm");
-    $("save-json").onclick = () => request("save-json");
     $("save-report").onclick = () => request("save-report", { unit: $("units").value });
-    $("save-csv").onclick = () => request("save-csv");
     $("undo").onclick = () => request("undo");
     $("redo").onclick = () => request("redo");
 
@@ -692,6 +688,7 @@
       if (event.data?.sketchorTheme) { draw(); return; }
       const message = event.data?.pluginMessage;
       if (!message) return;
+      if (message.reportFolder) showReportFolder(message.reportFolder);
       if (message.type === "init" || message.type === "plan") {
         if (message.type === "init") {
           if (initialized) return;

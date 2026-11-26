@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
 import {
   buildPalletDrawing, buildPalletReportCsv, buildPalletReportHtml, editPalletPlan, generatePalletPlan,
-  DEFAULT_PALLET_RULES, isUpsideDown, parsePalletPlan, REFERENCE_RULES, type PalletRules, type ProductRow,
+  DEFAULT_PALLET_RULES, isUpsideDown, palletReportFileName, parsePalletPlan, readPalletReport,
+  REFERENCE_RULES, type PalletRules, type ProductRow,
 } from "./index";
 
 const IN = 25.4;
@@ -14,6 +15,24 @@ const bench: ProductRow = {
 const generate = (rules: Partial<PalletRules> = {}, product = bench) => generatePalletPlan({
   products: [product], rules: { ...REFERENCE_RULES, maxLengthMm: 32 * IN, maxWidthMm: 49 * IN, ...rules },
 }, version);
+
+it("reopens the complete plan from one HTML report with an embedded CSV", () => {
+  const plan = generate({}, { ...bench, productId: 'A </script><script>alert("example")</script>' });
+  const html = buildPalletReportHtml(plan, "in");
+  expect(html).toContain('id="sketchor-pallet-analysis"');
+  expect(html).toContain("final_support_unit_id");
+  expect(html).not.toContain("</script><script>");
+  expect(readPalletReport(html)).toEqual(plan);
+  expect(readPalletReport(JSON.stringify(plan))).toEqual(plan);
+  expect(() => readPalletReport("<p>Unrelated HTML</p>")).toThrow(/no embedded/);
+});
+
+it("names reports from unique, file-safe job numbers and Winnipeg time", () => {
+  const plan = generate({}, { ...bench, jobId: "237/71" });
+  plan.products.push(bench, { ...bench, id: "row-3", jobId: "237/71" });
+  expect(palletReportFileName(plan, new Date("2026-07-15T20:05:32.047Z")))
+    .toBe("237-71_BENCH-DEMO_2026-07-15_15-05-32-047.html");
+});
 
 it("places six benches in two layers and makes a smaller base for the seventh", () => {
   const plan = generate({ maxLayers: 2 });

@@ -14,7 +14,10 @@ import { factorFromMm, type DisplayUnit } from "../../units";
 import { hidePanel, isPanelOpen, onPanelsChange, postToPanel, showPanel, subscribeToPanel } from "./uiManager";
 import { printHtml } from "../../print/printHtml";
 import { listDirectory, readPickedFile, type DirHandleLike } from "./pickedFolder";
-import { autosaveEnabled, autosaveFolderLabel, pickAutosaveFolder, setAutosaveEnabled, supportsAutosave } from "../../io/autosaveFolder";
+import {
+  autosaveEnabled, autosaveFolderLabel, pickAutosaveFolder, pickReportFolder, reportFolderLabel,
+  safeFileName, saveToReportFolder, setAutosaveEnabled, supportsAutosave,
+} from "../../io/autosaveFolder";
 
 /** The autosave folder, as the plugin-facing {@link PrintFolderInfo}. */
 function printFolderInfo(): PrintFolderInfo {
@@ -229,6 +232,24 @@ export async function dispatchCall(ctx: HostContext, method: string, args: unkno
       // activation too.
       const data = args[1] as Uint8Array | string;
       return hostSaveFile(String(args[0]), data, args[2] as SaveFileFilter[] | undefined);
+    }
+
+    case "ui.reportFolder":
+      return { supported: supportsAutosave(), folder: reportFolderLabel(ctx.pluginId) };
+
+    case "ui.pickReportFolder":
+      await pickReportFolder(ctx.pluginId);
+      return { supported: supportsAutosave(), folder: reportFolderLabel(ctx.pluginId) };
+
+    case "ui.saveReportFile": {
+      const name = safeFileName(String(args[0]).replace(/\.html$/i, ""));
+      const html = String(args[1]);
+      if (reportFolderLabel(ctx.pluginId)) {
+        const outcome = await saveToReportFolder(ctx.pluginId, name, html);
+        if (outcome.ok) return { saved: true, name: outcome.file };
+        if (outcome.reason !== "no-folder") throw new Error(outcome.message);
+      }
+      return hostSaveFile(name, html, [{ description: "HTML report", accept: { "text/html": [".html"] } }]);
     }
 
     case "ui.pickFolder":

@@ -2,6 +2,39 @@ import {
   isUpsideDown, layerLimit, oriented, packingEdge, packingFootprint, placementStacks, sharesStack, unitId, type PalletPlan,
   type PalletResult, type Placement, type PlannedPallet, type ProductRow,
 } from "./types";
+import { parsePalletPlan } from "./validate";
+
+const DATA_TAG = '<script type="application/json" id="sketchor-pallet-plan">';
+const reportClock = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Winnipeg", year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3, hourCycle: "h23",
+});
+
+export function palletReportFileName(plan: PalletPlan, savedAt: Date): string {
+  const t = Object.fromEntries(reportClock.formatToParts(savedAt).map(part => [part.type, part.value]));
+  const time = `${t.year}-${t.month}-${t.day}_${t.hour}-${t.minute}-${t.second}-${t.fractionalSecond}`;
+  const jobs = [...new Set(plan.products.map(row => row.jobId))].join("_")
+    .replace(/[\x00-\x1f\\/:*?"<>|\s]+/gu, "-").slice(0, 119 - time.length).replace(/[-_.]+$/u, "");
+  return `${jobs || "Pallets"}_${time}.html`;
+}
+
+/** Reopen the embedded plan without evaluating any of the report markup. */
+export function readPalletReport(source: string): PalletPlan {
+  let data = source.trim();
+  if (data.startsWith("<")) {
+    const start = data.indexOf(DATA_TAG);
+    const end = start < 0 ? -1 : data.indexOf("</script>", start + DATA_TAG.length);
+    if (end < 0) throw new Error("This HTML file has no embedded Sketchor pallet plan.");
+    data = data.slice(start + DATA_TAG.length, end);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    throw new Error("The report's pallet plan data is invalid.");
+  }
+  return parsePalletPlan(parsed);
+}
 
 type Assignment = { pallet: PlannedPallet; placement: Placement; supportId?: string; number: number };
 
@@ -91,6 +124,8 @@ export function buildPalletReportHtml(plan: PalletPlan, unit: "mm" | "in"): stri
   const inset = plan.rules.edgeMm;
   const padding = plan.rules.productMarginMm ?? 0;
   const heightLabel = plan.rules.deckHeightMm ? "Loaded height" : "Stack height";
+  // Escape the HTML script delimiter while keeping the embedded data valid JSON.
+  const payload = JSON.stringify(plan).replaceAll("<", "\\u003c");
   const products = new Map(plan.products.map(row => [row.id, row]));
   const display = (mm: number) => Number((mm / (unit === "in" ? 25.4 : 1)).toFixed(3));
   const size = (length: number, width: number) => `${display(length)} × ${display(width)} ${unit}`;
@@ -147,7 +182,8 @@ h1,h2{margin:18px 0 6px}p{margin:4px 0 10px}
 .piece{position:absolute;box-sizing:border-box;border:1px solid #416d86;background:#dcecf5;display:grid;place-items:center;overflow:hidden;font-size:11px;text-align:center}
 table{width:100%;border-collapse:collapse;text-align:left}
 td,th{border-bottom:1px solid #c5d0db;padding:4px 6px}thead{display:table-header-group}
-@media print{body{margin:0;color:#000}.diagram{break-inside:avoid}h2{break-after:avoid}.piece{print-color-adjust:exact}}
+.analysis{margin:20px 0}.analysis pre{overflow:auto;font-size:12px}
+@media print{body{margin:0;color:#000}.diagram{break-inside:avoid}h2{break-after:avoid}.piece{print-color-adjust:exact}.analysis{display:none}}
 </style><body><h1>Pallet loading report</h1>
 <p>${plan.review === "confirmed" ? "Confirmed" : "Draft"} · Revision ${escape(plan.revisionId)}
  · ${plan.pallets.length} ${plan.pallets.length === 1 ? "pallet" : "pallets"} · ${indexed.byUnit.size} placed · ${plan.unplaced.length} unplaced</p>
@@ -156,5 +192,7 @@ td,th{border-bottom:1px solid #c5d0db;padding:4px 6px}thead{display:table-header
  · Between products ${dims(plan.rules.gapMm)} · Up to ${plan.rules.maxLayers} layers</p>
 <p>Fork entry is on the pallet's ${plan.rules.forkEntrySide} side. Load from layer 1 upwards. X and Y are measured from the lower-left deck corner.
 ${plan.products.some(row => row.stack) ? "Verify the configured stack pattern and support before loading." : ""}</p>
-${palletSections.join("")}${unplaced.length ? `<h2>Unplaced products</h2><ul>${unplaced.join("")}</ul>` : ""}</body></html>`;
+${palletSections.join("")}${unplaced.length ? `<h2>Unplaced products</h2><ul>${unplaced.join("")}</ul>` : ""}
+<details class="analysis"><summary>Analysis data (CSV)</summary><pre id="sketchor-pallet-analysis">${escape(buildPalletReportCsv(plan))}</pre></details>
+${DATA_TAG}${payload}</script></body></html>`;
 }

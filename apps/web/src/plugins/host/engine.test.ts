@@ -10,6 +10,7 @@ import { HOST_API_VERSION, satisfiesHostApi } from "./engine";
 describe("satisfiesHostApi", () => {
   it("accepts a caret range over the current host API version", () => {
     expect(satisfiesHostApi(`^${HOST_API_VERSION}`)).toBe(true);
+    expect(satisfiesHostApi("^0.13.0")).toBe(true);
   });
 
   it("rejects a different major version", () => {

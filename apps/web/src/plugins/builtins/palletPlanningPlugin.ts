@@ -1,13 +1,14 @@
 import type { DisplayUnitInfo, PluginModule } from "@sketchor/plugin-sdk";
 import {
-  buildPalletDrawing, buildPalletReportCsv, buildPalletReportHtml, clearPalletDrawing, editPalletPlan, generatePalletPlan,
-  DEFAULT_PALLET_RULES, parsePalletPlan, placementStacks, PRODUCT_COLORS, type PalletPlan,
+  buildPalletDrawing, buildPalletReportHtml, clearPalletDrawing, editPalletPlan, generatePalletPlan,
+  DEFAULT_PALLET_RULES, palletReportFileName, parsePalletPlan, placementStacks, PRODUCT_COLORS, readPalletReport,
+  type PalletPlan,
 } from "@sketchor/plugin-pallet-planning";
 import PANEL_HTML from "./palletPlanningPanel.html?raw";
 
 const STORAGE_KEY = "current-plan-v1";
 const HISTORY_LIMIT = 20;
-const MAX_IMPORT_LENGTH = 4_000_000;
+const MAX_IMPORT_LENGTH = 12_000_000;
 const MM: DisplayUnitInfo = { unit: "mm", perMm: 1, label: "mm" };
 
 function pushHistory(history: PalletPlan[], plan: PalletPlan) {
@@ -21,18 +22,19 @@ const plugin: PluginModule = {
     const undo: PalletPlan[] = [];
     const redo: PalletPlan[] = [];
     let unit = await sketchor.app.displayUnit().catch(() => MM);
+    let reportFolder = await sketchor.ui.reportFolder().catch(() => ({ supported: false, folder: null }));
     let initialWarning = "";
     try {
       const stored = await sketchor.storage.get(STORAGE_KEY);
       if (stored) plan = parsePalletPlan(stored);
     } catch {
-      initialWarning = "Could not restore the last plan. You can open a saved JSON plan.";
+      initialWarning = "Could not restore the last plan. Open a saved report to continue.";
     }
     const send = (message: object) => sketchor.ui.postMessage(message);
     const sync = (type: "init" | "plan", replaceInputs: boolean, message: string) => send({
       type, plan, replaceInputs, message, canUndo: undo.length > 0, canRedo: redo.length > 0,
       stacks: plan?.pallets.map(pallet => [pallet.id, placementStacks(pallet.placements)]) ?? [],
-      ...(type === "init" ? { unit, rules: DEFAULT_PALLET_RULES, colors: PRODUCT_COLORS } : {}),
+      ...(type === "init" ? { unit, rules: DEFAULT_PALLET_RULES, colors: PRODUCT_COLORS, reportFolder } : {}),
     });
 
     const persist = async (message: string) => {
@@ -40,7 +42,7 @@ const plugin: PluginModule = {
         await sketchor.storage.set(STORAGE_KEY, plan);
         return message;
       } catch {
-        return `${message} Local save failed. Save JSON to keep this revision.`;
+        return `${message} Local save failed. Save the report to keep this revision.`;
       }
     };
 
@@ -83,17 +85,15 @@ const plugin: PluginModule = {
           await commit(next, next.unplaced.length ? "Draft generated with unplaced products." : "Draft generated.", true);
           return;
         }
-        case "open-json": {
+        case "pick-report-folder":
+          reportFolder = await sketchor.ui.pickReportFolder();
+          send({ type: "report-folder", reportFolder });
+          return;
+        case "open-report": {
           if (typeof msg.data !== "string" || msg.data.length > MAX_IMPORT_LENGTH) {
-            throw new Error("Choose a pallet plan JSON file under 4 MB.");
+            throw new Error("Choose a pallet report under 12 MB.");
           }
-          let data: unknown;
-          try {
-            data = JSON.parse(msg.data);
-          } catch {
-            throw new Error("The selected file is not valid JSON.");
-          }
-          const next = parsePalletPlan(data);
+          const next = readPalletReport(msg.data);
           await commit(next, "Pallet plan opened.", true);
           return;
         }
@@ -122,22 +122,12 @@ const plugin: PluginModule = {
         case "edit":
           await commit(editPalletPlan(plan, msg.action, crypto.randomUUID()), "Plan updated.");
           return;
-        case "save-json":
-        case "save-csv":
         case "save-report": {
-          const suffix = plan.revisionId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8);
-          const csv = msg.type === "save-csv";
-          const report = msg.type === "save-report";
-          const extension = csv ? "csv" : report ? "html" : "json";
-          const format = csv ? "text/csv" : report ? "text/html" : "application/json";
-          const data = csv ? buildPalletReportCsv(plan)
-            : report ? buildPalletReportHtml(plan, msg.unit === "in" ? "in" : "mm")
-            : JSON.stringify(plan, null, 2);
-          const result = await sketchor.ui.saveFile(
-            `pallet-${csv || report ? "report" : "plan"}-${suffix || "revision"}.${extension}`, data,
-            [{ description: csv || report ? "Pallet report" : "Pallet plan", accept: { [format]: [`.${extension}`] } }],
+          const result = await sketchor.ui.saveReportFile(
+            palletReportFileName(plan, new Date()),
+            buildPalletReportHtml(plan, msg.unit === "in" ? "in" : "mm"),
           );
-          send({ type: "status", message: result.saved ? (csv || report ? "Pallet report saved." : "Pallet plan saved.") : "" });
+          send({ type: "status", message: result.saved ? `Saved ${result.name}.` : "" });
           return;
         }
       }
