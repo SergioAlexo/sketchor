@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildModel } from "./buildModel";
+import { buildModel, DEFAULT_PART_RGB } from "./buildModel";
 import type { OcctMesh, OcctResult } from "./types";
 
 /**
@@ -191,5 +191,12 @@ describe("malformed importer output", () => {
     const m = buildModel(result([weird]), "w.step", "h", "step");
     expect(m.parts).toHaveLength(1);
     expect(Number.isNaN(m.positions[0])).toBe(false);
+  });
+});
+
+describe("DEFAULT_PART_RGB", () => {
+  it("is the default colour as the model's colour buffer stores it", () => {
+    const m = buildModel({ success: true, meshes: [{ name: "a", attributes: { position: { array: [0, 0, 0, 1, 0, 0, 0, 1, 0] } }, index: { array: [0, 1, 2] } }], root: { name: "r", meshes: [0] } } as never, "t.step", "h", "step");
+    expect(Array.from(m.colors.subarray(0, 3))).toEqual([...DEFAULT_PART_RGB]);
   });
 });
