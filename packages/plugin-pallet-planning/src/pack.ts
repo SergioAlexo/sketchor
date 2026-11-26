@@ -134,20 +134,42 @@ function freeSlotsAfter(slots: Slot[], occupied: Slot): Slot[] {
     && (j < index || other.lengthMm > slot.lengthMm + EPS || other.widthMm > slot.widthMm + EPS)));
 }
 
-/** Place just the selected stacks in the free space of the existing pallet base. */
-export function packSelectedStacks(
-  pallet: PlannedPallet, units: readonly ProductUnit[], rules: PalletRules, products: readonly ProductRow[],
-): Placement[] {
-  const initial = startBin({ ...pallet.base, source: "standard" }, rules);
-  const rows = new Map(products.map(row => [row.id, row]));
+function palletBin(pallet: PlannedPallet, rules: PalletRules, rows: ReadonlyMap<string, ProductRow>): Bin {
+  const bin = startBin({ ...pallet.base, source: "standard" }, rules);
   const gap = rules.gapMm;
   for (const item of pallet.placements) {
     if (item.layer !== 1) continue;
     const size = oriented(packingFootprint(rows.get(item.rowId)!), item.rotation);
-    initial.slots = freeSlotsAfter(initial.slots, {
+    bin.slots = freeSlotsAfter(bin.slots, {
       xMm: item.xMm, yMm: item.yMm, lengthMm: size.lengthMm + gap, widthMm: size.widthMm + gap,
     });
   }
+  return bin;
+}
+
+export function findStackPosition(
+  pallet: PlannedPallet, size: Footprint, rules: PalletRules, rows: ReadonlyMap<string, ProductRow>,
+  preferred?: Pick<Placement, "xMm" | "yMm">,
+): Pick<Placement, "xMm" | "yMm"> {
+  const { slots } = palletBin(pallet, rules, rows);
+  const length = size.lengthMm + rules.gapMm;
+  const width = size.widthMm + rules.gapMm;
+  if (preferred && slots.some(slot =>
+    preferred.xMm >= slot.xMm - EPS && preferred.yMm >= slot.yMm - EPS
+    && preferred.xMm + length <= slot.xMm + slot.lengthMm + EPS
+    && preferred.yMm + width <= slot.yMm + slot.widthMm + EPS
+  )) return preferred;
+  const slot = slots.find(slot => length <= slot.lengthMm + EPS && width <= slot.widthMm + EPS);
+  if (!slot) throw new Error("This stack does not fit in the free space on the destination pallet.");
+  return { xMm: slot.xMm, yMm: slot.yMm };
+}
+
+/** Place just the selected stacks in the free space of the existing pallet base. */
+export function packSelectedStacks(
+  pallet: PlannedPallet, units: readonly ProductUnit[], rules: PalletRules, rows: ReadonlyMap<string, ProductRow>,
+): Placement[] {
+  const initial = palletBin(pallet, rules, rows);
+  const gap = rules.gapMm;
   const ordered = [...units].sort((a, b) => area(packingFootprint(b.row)) - area(packingFootprint(a.row)));
   const total = units.reduce((sum, unit) => sum + unit.ids.length, 0);
   for (const preferTurn of [false, true]) {

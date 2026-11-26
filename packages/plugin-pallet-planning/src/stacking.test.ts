@@ -221,9 +221,10 @@ it("pairs selected units across pallets and preserves a manually assembled stack
   expect(second.placements.some(item => item.rowId === "c")).toBe(true);
   const { xMm, yMm } = first.placements.find(item => item.id === "a/1")!;
   const mixed = editPalletPlan(generated, {
-    type: "assemble-stack", palletId: first.id, xMm, yMm,
+    type: "assemble-stack", palletId: first.id,
     units: ["a/1", "a/2", "b/1", "b/2"].map((unitId, index) => ({ unitId, rotation: 0, upsideDown: index % 2 === 1 })),
   }, "mixed");
+  expect(mixed.pallets.find(p => p.id === first.id)!.placements.find(item => item.id === "a/1")).toMatchObject({ xMm, yMm });
   const pair = { type: "stack-in-pairs", palletId: second.id, unitIds: ["c/4", "c/1", "c/3", "c/2"] };
   const paired = editPalletPlan(mixed, pair, "paired");
   const [firstEdited, secondEdited] = [first, second].map(p => paired.pallets.find(item => item.id === p.id)!);

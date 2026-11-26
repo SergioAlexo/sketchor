@@ -120,11 +120,29 @@
           <ul id="unplaced-list"></ul>
         </div>
         <div id="pallet-view" class="fields" hidden>
-          <label>Pallet <select id="pallet"></select></label>
+          <label>Pallet preview <select id="pallet"></select></label>
           <canvas id="preview" aria-label="Top-down pallet layout"></canvas>
           <p class="note" id="dimensions"></p>
           <div id="empty-pallet-actions" hidden><button type="button" id="remove-pallet">Remove empty pallet</button></div>
-          <details id="edit-product" open>
+          <details id="manual-stack">
+            <summary>Build a stack</summary>
+            <form id="stack-form">
+              <label>Destination pallet <select id="stack-target" required></select></label>
+              <p class="note">Choose products from bottom to top. The planner finds space on the destination pallet.</p>
+              <div id="stack-layers" class="fields"></div>
+              <div><button type="button" data-apply>Place stack</button></div>
+            </form>
+          </details>
+          <details>
+            <summary>Stack in 2 layers</summary>
+            <form id="pair-form">
+              <label>Destination pallet <select id="pair-target" required></select></label>
+              <p class="note">Select units to pair. Each pair goes together in two layers.</p>
+              <div id="pair-units"></div>
+              <div><button type="button" data-apply>Place in 2 layers</button></div>
+            </form>
+          </details>
+          <details id="edit-product">
             <summary>Move or turn a product</summary>
             <form id="place-form">
               <label>Product unit <select id="unit-select"></select></label>
@@ -138,26 +156,6 @@
                 <label>Y <input id="position-y" type="number" min="0" step="any" data-length required></label>
               </div>
               <div class="bar"><button type="button" data-apply>Apply position</button><button type="button" id="unplace-unit">Unplace</button></div>
-            </form>
-          </details>
-          <details id="manual-stack">
-            <summary>Build a stack</summary>
-            <form id="stack-form">
-              <p class="note">Choose units from this job in order from bottom to top. The stack goes on the selected pallet.</p>
-              <div id="stack-layers" class="fields"></div>
-              <div class="grid">
-                <label>Base X <input id="stack-x" type="number" min="0" step="any" data-length required></label>
-                <label>Base Y <input id="stack-y" type="number" min="0" step="any" data-length required></label>
-              </div>
-              <div><button type="button" data-apply>Place stack</button></div>
-            </form>
-          </details>
-          <details>
-            <summary>Stack in 2 layers</summary>
-            <form id="pair-form">
-              <p class="note" id="pair-destination"></p>
-              <div id="pair-units"></div>
-              <div><button type="button" data-apply>Place in 2 layers</button></div>
             </form>
           </details>
         </div>
@@ -251,6 +249,7 @@
     let plan = null;
     let rows = new Map();
     let palletId = "";
+    let destinationToShow = "";
     let selectedUnit = "";
     let palletStacks = new Map();
     let defaultRules;
@@ -506,9 +505,7 @@
         item.id, unitName(item) + (item.reason ? " (unplaced)"
           : item.layer > 1 ? " (layer " + item.layer + (upsideDown(item) ? ", upside down)" : ")") : "")
       ]), selectedUnit);
-      options($("target-pallet"), plan.pallets.flatMap((other, index) =>
-        other.jobId === rows.get(unit.rowId).jobId ? [[other.id, "Pallet " + (index + 1) + " · " + sizeText(other.base)]] : []
-      ), pallet.id);
+      options($("target-pallet"), destinations(pallet.jobId), pallet.id);
       const limit = Math.min(plan.rules.maxLayers, rows.get(unit.rowId).stack?.maxLayers ?? 1);
       options($("target-layer"), Array.from({ length: limit }, (_, index) => {
         const layer = index + 1;
@@ -530,9 +527,12 @@
       return sources;
     }
 
-    function renderPairForm(pallet, sources) {
-      const number = plan.pallets.indexOf(pallet) + 1;
-      $("pair-destination").textContent = "Select units to pair by product on Pallet " + number + ".";
+    function destinations(jobId) {
+      return plan.pallets.flatMap((pallet, index) => pallet.jobId === jobId
+        ? [[pallet.id, "Pallet " + (index + 1) + " · " + sizeText(pallet.base)]] : []);
+    }
+
+    function renderPairForm(sources) {
       $("pair-units").replaceChildren(...sources.map(([unit, origin]) => {
         const label = document.createElement("label");
         label.className = "check";
@@ -544,7 +544,7 @@
       }));
     }
 
-    function renderStackForm(sources = jobUnits(currentPallet())) {
+    function renderStackForm(sources) {
       const selected = palletStacks.get(palletId)?.find(stack => stack.some(unit => unit.id === selectedUnit));
       const available = new Map(sources.map(([unit]) => [unit.id, unit]));
       const choices = [["", "Choose product"], ...sources.map(([unit, origin]) => [unit.id, unitName(unit) + " · " + origin])];
@@ -567,8 +567,6 @@
         return card;
       });
       $("stack-layers").replaceChildren(...layers);
-      $("stack-x").value = asInput(selected?.[0].xMm ?? packingEdge(plan.rules));
-      $("stack-y").value = asInput(selected?.[0].yMm ?? packingEdge(plan.rules));
     }
 
     function placeManualStack() {
@@ -584,7 +582,7 @@
       if (new Set(units.map(item => item.unitId)).size !== units.length) {
         return status("Choose a different product unit for each layer.", true);
       }
-      edit("assemble-stack", { palletId, xMm: mm($("stack-x")), yMm: mm($("stack-y")), units });
+      placeOn("assemble-stack", $("stack-target").value, { units });
     }
 
     function renderPallet() {
@@ -605,8 +603,14 @@
       canvas.classList.toggle("ready", pallet.placements.length > 0);
       renderSelection();
       const sources = jobUnits(pallet);
+      const targets = destinations(pallet.jobId);
+      for (const id of ["stack-target", "pair-target"]) {
+        const select = $(id);
+        const choices = targets.length > 1 ? [["", "Choose a pallet"], ...targets] : targets;
+        options(select, choices, select.value);
+      }
       renderStackForm(sources);
-      renderPairForm(pallet, sources);
+      renderPairForm(sources);
       draw();
     }
 
@@ -645,6 +649,10 @@
     }
 
     const edit = (type, data = {}) => request("edit", { action: { type, ...data } });
+    function placeOn(type, target, data) {
+      destinationToShow = target;
+      edit(type, { ...data, palletId: target });
+    }
     const readBase = (length, width) => ({ lengthMm: mm($(length)), widthMm: mm($(width)) });
     function bindForm(id, action) {
       // The plugin iframe has scripts enabled. Panel actions use messages to
@@ -703,7 +711,7 @@
       $("new-pallet-job").value = currentPallet().jobId;
       renderPallet();
     };
-    $("unit-select").onchange = () => { selectedUnit = $("unit-select").value; renderSelection(); renderStackForm(); draw(); };
+    $("unit-select").onchange = () => { selectedUnit = $("unit-select").value; renderSelection(); draw(); };
     $("remove-pallet").onclick = () => edit("remove-pallet", { palletId });
     bindForm("add-pallet-form", () => edit("add-pallet", {
       jobId: $("new-pallet-job").value, base: readBase("new-length", "new-width")
@@ -713,8 +721,8 @@
       xMm: mm($("position-x")), yMm: mm($("position-y")), layer: Number($("target-layer").value)
     }));
     bindForm("stack-form", placeManualStack);
-    bindForm("pair-form", () => edit("stack-in-pairs", {
-      palletId, unitIds: Array.from($("pair-units").querySelectorAll("input:checked"), input => input.value)
+    bindForm("pair-form", () => placeOn("stack-in-pairs", $("pair-target").value, {
+      unitIds: Array.from($("pair-units").querySelectorAll("input:checked"), input => input.value)
     }));
     $("unplace-unit").onclick = () => edit("unplace", { unitId: selectedUnit });
     $("confirm").onclick = () => edit("confirm");
@@ -768,7 +776,6 @@
       drag = { pointerId: event.pointerId, unit: { ...base }, start: point, original: base, stack, moved: false, invalid: false };
       canvas.setPointerCapture(event.pointerId);
       renderSelection();
-      renderStackForm();
       draw();
     };
     canvas.onpointermove = event => {
@@ -809,18 +816,25 @@
           $("units").value = message.unit.unit === "in" ? "in" : "mm";
           setUnits($("units").value);
         }
+        if (destinationToShow && message.type === "plan" && message.plan?.parentRevisionId === plan?.revisionId) {
+          palletId = destinationToShow;
+          selectedUnit = "";
+        }
         plan = message.plan;
         palletStacks = new Map(message.stacks);
         if (message.replaceInputs) hydrate(plan?.products || [], plan?.rules || message.rules);
         if (plan && message.replaceInputs) {
           $("inputs").open = false;
           $("pallet-rules").open = false;
+          $("stack-target").value = "";
+          $("pair-target").value = "";
         }
         rows = new Map(plan?.products.map((row, index) => [row.id, { ...row, color: colors[index % colors.length] }]));
         $("undo").disabled = !message.canUndo;
         $("redo").disabled = !message.canRedo;
         renderPlan();
       }
+      destinationToShow = "";
       setBusy(false);
       status(message.message || "", message.type === "error");
     });

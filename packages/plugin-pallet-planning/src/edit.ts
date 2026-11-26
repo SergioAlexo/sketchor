@@ -1,6 +1,6 @@
 import { EPS, MAX_PRODUCTS, layerLimit, oriented, packingFootprint, placementStacks, type Footprint, type PalletPlan, type Placement, type PlannedPallet } from "./types";
 import { footprint, labelText, parsePalletPlan, parsePlacement, record, truckOrientation } from "./validate";
-import { packSelectedStacks } from "./pack";
+import { findStackPosition, packSelectedStacks } from "./pack";
 
 function findPallet(plan: PalletPlan, value: unknown): PlannedPallet {
   const pallet = plan.pallets.find(p => p.id === value);
@@ -59,17 +59,22 @@ export function editPalletPlan(plan: PalletPlan, raw: unknown, revisionId: strin
       pallet.packedHeightMm = undefined;
       const rows = new Map(next.products.map(row => [row.id, row]));
       const used = new Set<string>();
-      let previous: (Placement & Footprint) | undefined;
-      for (const [index, rawUnit] of action.units.entries()) {
+      const entries = action.units.map(rawUnit => {
         const entry = record(rawUnit, "Stack unit");
         const unitId = labelText(entry.unitId, "Product unit ID", 256);
         if (used.has(unitId)) throw new Error("Choose a different product unit for each layer.");
         used.add(unitId);
-        const unit = detachUnit(next, unitId);
+        return { entry, unitId };
+      });
+      const preferred = pallet.placements.find(item => item.id === entries[0].unitId && item.layer === 1);
+      const units = entries.map(({ entry, unitId }) => ({ entry, unit: detachUnit(next, unitId) }));
+      const autoPosition = action.xMm === undefined && action.yMm === undefined;
+      let previous: (Placement & Footprint) | undefined;
+      for (const [index, { entry, unit }] of units.entries()) {
         const row = rows.get(unit.rowId)!;
         const item = parsePlacement({
           ...unit, rotation: entry.rotation, upsideDown: entry.upsideDown, layer: index + 1,
-          supportId: previous?.id, xMm: action.xMm, yMm: action.yMm,
+          supportId: previous?.id, xMm: autoPosition ? 0 : action.xMm, yMm: autoPosition ? 0 : action.yMm,
         });
         const size = oriented(packingFootprint(row), item.rotation);
         if (previous) {
@@ -78,6 +83,10 @@ export function editPalletPlan(plan: PalletPlan, raw: unknown, revisionId: strin
           }
           item.xMm = previous.xMm + (previous.lengthMm - size.lengthMm) / 2;
           item.yMm = previous.yMm + (previous.widthMm - size.widthMm) / 2;
+        } else if (autoPosition) {
+          const { xMm, yMm } = findStackPosition(pallet, size, next.rules, rows, preferred);
+          item.xMm = xMm;
+          item.yMm = yMm;
         }
         pallet.placements.push(item);
         previous = { ...item, ...size };
@@ -114,7 +123,7 @@ export function editPalletPlan(plan: PalletPlan, raw: unknown, revisionId: strin
         return Array.from({ length: Math.ceil(group.length / 2) }, (_, i) => ({ row, ids: group.slice(2 * i, 2 * i + 2) }));
       });
       pallet.packedHeightMm = undefined;
-      pallet.placements.push(...packSelectedStacks(pallet, pairs, next.rules, next.products));
+      pallet.placements.push(...packSelectedStacks(pallet, pairs, next.rules, rows));
       break;
     }
     case "unplace": {
