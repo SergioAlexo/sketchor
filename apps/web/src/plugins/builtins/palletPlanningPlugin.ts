@@ -1,7 +1,7 @@
 import type { DisplayUnitInfo, PluginModule } from "@sketchor/plugin-sdk";
 import {
-  buildPalletDrawing, editPalletPlan, generatePalletPlan, parsePalletPlan, PRODUCT_COLORS,
-  REFERENCE_RULES, type PalletPlan,
+  buildPalletDrawing, buildPalletReportCsv, buildPalletReportHtml, editPalletPlan, generatePalletPlan,
+  parsePalletPlan, PRODUCT_COLORS, REFERENCE_RULES, type PalletPlan,
 } from "@sketchor/plugin-pallet-planning";
 import PANEL_HTML from "./palletPlanningPanel.html?raw";
 
@@ -116,13 +116,22 @@ const plugin: PluginModule = {
           await sketchor.app.openDocumentTab("Pallet Plan", buildPalletDrawing(plan, unit));
           send({ type: "status", message: "Drawing opened in a new Sketchor tab." });
           return;
-        case "save-json": {
+        case "save-json":
+        case "save-csv":
+        case "save-report": {
           const suffix = plan.revisionId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8);
+          const csv = msg.type === "save-csv";
+          const report = msg.type === "save-report";
+          const extension = csv ? "csv" : report ? "html" : "json";
+          const format = csv ? "text/csv" : report ? "text/html" : "application/json";
+          const data = csv ? buildPalletReportCsv(plan)
+            : report ? buildPalletReportHtml(plan, msg.unit === "in" ? "in" : "mm")
+            : JSON.stringify(plan, null, 2);
           const result = await sketchor.ui.saveFile(
-            `pallet-plan-${suffix || "revision"}.json`, JSON.stringify(plan, null, 2),
-            [{ description: "Pallet plan", accept: { "application/json": [".json"] } }],
+            `pallet-${csv || report ? "report" : "plan"}-${suffix || "revision"}.${extension}`, data,
+            [{ description: csv || report ? "Pallet report" : "Pallet plan", accept: { [format]: [`.${extension}`] } }],
           );
-          send({ type: "status", message: result.saved ? "Pallet plan saved." : "" });
+          send({ type: "status", message: result.saved ? (csv || report ? "Pallet report saved." : "Pallet plan saved.") : "" });
           return;
         }
       }

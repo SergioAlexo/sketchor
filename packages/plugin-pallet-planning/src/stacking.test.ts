@@ -1,0 +1,117 @@
+import { expect, it } from "vitest";
+import {
+  buildPalletDrawing, buildPalletReportCsv, buildPalletReportHtml, editPalletPlan, generatePalletPlan,
+  isUpsideDown, parsePalletPlan, REFERENCE_RULES, type PalletRules, type ProductRow,
+} from "./index";
+
+const IN = 25.4;
+const version = { id: "bench-plan", revisionId: "generated", parentRevisionId: null };
+const bench: ProductRow = {
+  id: "bench-row", jobId: "BENCH-DEMO", productId: "Bench",
+  lengthMm: 30 * IN, widthMm: 15 * IN, heightMm: 18 * IN, quantity: 7, canRotate: false,
+  stack: { maxLayers: 3, pattern: "alternate", addedHeightMm: 5 * IN },
+};
+const generate = (rules: Partial<PalletRules> = {}, product = bench) => generatePalletPlan({
+  products: [product], rules: { ...REFERENCE_RULES, maxLengthMm: 32 * IN, maxWidthMm: 49 * IN, ...rules },
+}, version);
+
+it("places six benches in two layers and makes a smaller base for the seventh", () => {
+  const plan = generate({ maxLayers: 2 });
+  expect(plan.pallets.map(p => p.placements.length)).toEqual([6, 1]);
+  expect(plan.pallets[0].base.widthMm).toBeCloseTo(49 * IN);
+  expect(plan.pallets[1].base.widthMm).toBeCloseTo(17 * IN);
+  expect(plan.pallets[1].placements[0]).toMatchObject({ id: "bench-row/7", layer: 1 });
+  expect(plan.pallets[0].placements.filter(item => isUpsideDown(bench, item.layer))).toHaveLength(3);
+  expect(parsePalletPlan(plan)).toEqual(plan);
+});
+
+it("uses a third level only after filling the first two levels", () => {
+  const plan = generate({ maxLayers: 3 });
+  expect(plan.pallets).toHaveLength(1);
+  const items = plan.pallets[0].placements;
+  expect(items.map(item => item.layer)).toEqual([1, 1, 1, 2, 2, 2, 3]);
+  expect(items[6].id).toBe("bench-row/7");
+  expect(isUpsideDown(bench, items[6].layer)).toBe(false);
+  const groups = buildPalletDrawing(plan, { unit: "in", perMm: 1 / IN, label: "in" })
+    .filter(c => c.type === "group-entities");
+  expect(groups.filter(c => c.name?.startsWith("P1")).map(c => c.name)).toEqual([
+    "P1 · BENCH-DEMO · Layer 1 · 32 × 49 in",
+    "P1 · BENCH-DEMO · Layer 2 · 32 × 49 in",
+    "P1 · BENCH-DEMO · Layer 3 · 32 × 49 in",
+  ]);
+});
+
+it("requires explicit stacking permission and an aligned support on the preceding layer", () => {
+  expect(generate({}, { ...bench, stack: undefined }).pallets.map(p => p.placements.length)).toEqual([3, 3, 1]);
+  const plan = generate();
+  const pallet = plan.pallets[0];
+  const topUnit = pallet.placements.at(-1)!;
+  expect(() => editPalletPlan(plan, {
+    type: "place", palletId: pallet.id, unitId: topUnit.id, xMm: IN, yMm: 2 * IN, rotation: 0, layer: 3,
+  }, "offset")).toThrow(/directly below/);
+  expect(() => editPalletPlan(plan, {
+    type: "unplace", unitId: pallet.placements[0].id,
+  }, "unsupported")).toThrow(/directly below/);
+});
+
+it("accounts for the measured stack increment and deck in the loaded height limit", () => {
+  const plan = generate({ deckHeightMm: 4 * IN, maxLoadedHeightMm: 27 * IN });
+  expect(plan.pallets.map(p => p.placements.length)).toEqual([6, 1]);
+  expect(plan.pallets[0].packedHeightMm).toBeCloseTo(27 * IN);
+  const tooShort = generate({ deckHeightMm: 4 * IN, maxLoadedHeightMm: 21 * IN });
+  expect(tooShort.pallets).toHaveLength(0);
+  expect(tooShort.unplaced.map(item => item.reason)).toEqual(Array(7).fill("height"));
+  expect(() => generate({ deckHeightMm: 4 * IN, maxLoadedHeightMm: 27 * IN }, {
+    ...bench, stack: { maxLayers: 3, pattern: "alternate" },
+  })).toThrow(/measured added height/);
+});
+
+it("uses the larger measured footprint before choosing a pallet size", () => {
+  const measured = { ...bench, measuredLengthMm: 31 * IN, measuredWidthMm: 14 * IN };
+  expect(generate({}, measured).unplaced).toHaveLength(7);
+  const plan = generate({ maxLengthMm: 33 * IN }, measured);
+  expect(plan.pallets[0].base.lengthMm).toBeCloseTo(33 * IN);
+  expect(plan.pallets[0].base.widthMm).toBeCloseTo(49 * IN);
+  expect(() => parsePalletPlan(plan)).not.toThrow();
+});
+
+it("exports the loading sequence, supporting units and original vs edited coordinates", () => {
+  const generated = generate({ maxLengthMm: 34 * IN });
+  const pallet = generated.pallets[0];
+  const resized = editPalletPlan(generated, {
+    type: "resize", palletId: pallet.id, base: { lengthMm: 34 * IN, widthMm: 49 * IN },
+  }, "resized");
+  const moved = editPalletPlan(resized, {
+    type: "move-stack", palletId: pallet.id, unitId: "bench-row/1", xMm: 2 * IN, yMm: IN,
+  }, "moved");
+  expect(moved.pallets[0].placements.filter(p => p.xMm === 2 * IN).map(p => p.layer)).toEqual([1, 2, 3]);
+  expect(moved.generation?.pallets[0].placements[0].xMm).toBeCloseTo(IN);
+  const [header, ...rows] = buildPalletReportCsv(moved).trimEnd().split("\r\n");
+  expect(rows).toHaveLength(7);
+  const top = Object.fromEntries(header.split(",").map((key, i) => [key, rows[6].split(",")[i]]));
+  expect(top).toMatchObject({
+    revision_id: '"moved"', generated_revision_id: '"generated"', final_layer: "3",
+    final_support_unit_id: '"bench-row/4"', final_upside_down: '"false"',
+    generated_x_mm: "25.4", final_x_mm: "50.8", changed_since_generation: '"true"',
+  });
+  const html = buildPalletReportHtml(moved, "in");
+  expect(html).toContain("Layer 3 · 1 product");
+  expect(html).toContain("Upside down");
+  expect(html).toContain("Bench #7");
+});
+
+it("opens prior single-layer JSON and escapes report labels", () => {
+  const flat = generate({ maxLayers: 1 }, { ...bench, jobId: "=test", productId: "<Bench>", stack: undefined });
+  const { generation, ...legacy } = flat;
+  const migrated = parsePalletPlan({
+    ...legacy, schemaVersion: 1,
+    pallets: legacy.pallets.map(pallet => ({
+      ...pallet, placements: pallet.placements.map(({ layer, ...item }) => item),
+    })),
+  });
+  expect(migrated.schemaVersion).toBe(2);
+  expect(migrated.pallets[0].placements[0].layer).toBe(1);
+  expect(migrated.generation).toBeUndefined();
+  expect(buildPalletReportHtml(migrated, "mm")).toContain("&lt;Bench&gt;");
+  expect(buildPalletReportCsv(migrated)).toContain("\"'=test\"");
+});

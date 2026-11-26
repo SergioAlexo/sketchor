@@ -1,12 +1,12 @@
 import {
-  EPS, oriented, unitId, type Footprint, type PalletPlan,
+  EPS, knownLoadedHeight, layerLimit, oriented, packingFootprint, unitId, type Footprint, type Layer, type PalletPlan,
   type PalletRules, type Placement, type PlannedPallet, type ProductRow, type Rotation,
   type UnplacedProduct,
 } from "./types";
 import { parsePalletInput } from "./validate";
 
 interface ProductUnit {
-  id: string;
+  ids: string[];
   row: ProductRow;
 }
 
@@ -67,9 +67,10 @@ function startBin(option: BaseOption, rules: PalletRules): Bin {
 
 function findFit(bin: Bin, row: ProductRow, gapMm: number): Fit | undefined {
   let best: Fit | undefined;
-  const rotations: Rotation[] = row.canRotate && row.lengthMm !== row.widthMm ? [0, 90] : [0];
+  const size = packingFootprint(row);
+  const rotations: Rotation[] = row.canRotate && size.lengthMm !== size.widthMm ? [0, 90] : [0];
   for (const rotation of rotations) {
-    const footprint = oriented(row, rotation);
+    const footprint = oriented(size, rotation);
     const reserved = { lengthMm: footprint.lengthMm + gapMm, widthMm: footprint.widthMm + gapMm };
     for (const [index, slot] of bin.slots.entries()) {
       if (reserved.lengthMm > slot.lengthMm + EPS || reserved.widthMm > slot.widthMm + EPS) continue;
@@ -95,9 +96,10 @@ function put(bin: Bin, unit: ProductUnit, fit: Fit, splitAlongLength: boolean): 
     widthMm: slot.widthMm - reserved.widthMm,
   };
   bin.slots.splice(fit.index, 1, ...[right, top].filter(s => s.lengthMm > EPS && s.widthMm > EPS));
-  bin.placements.push({
-    id: unit.id, rowId: unit.row.id, rotation: fit.rotation, xMm: slot.xMm, yMm: slot.yMm,
-  });
+  unit.ids.forEach((id, index) => bin.placements.push({
+    id, rowId: unit.row.id, rotation: fit.rotation, xMm: slot.xMm, yMm: slot.yMm,
+    layer: (index + 1) as Layer,
+  }));
   bin.lengthUsed = Math.max(bin.lengthUsed, slot.xMm + footprint.lengthMm);
   bin.widthUsed = Math.max(bin.widthUsed, slot.yMm + footprint.widthMm);
 }
@@ -134,7 +136,7 @@ function trial(
       bins.push(bin);
       put(bin, unit, fit, splitAlongLength);
     } else {
-      unplaced.push({ id: unit.id, rowId: unit.row.id, reason: "size" });
+      for (const id of unit.ids) unplaced.push({ id, rowId: unit.row.id, reason: "size" });
     }
   }
   return { bins, unplaced };
@@ -149,9 +151,13 @@ function packJob(units: ProductUnit[], options: BaseOption[], rules: PalletRules
   const fitsEmpty = new Map([...rows.values()].map(row => [
     row.id, new Set(options.filter(option => findFit(startBin(option, rules), row, rules.gapMm))),
   ]));
+  const longestSide = (row: ProductRow) => {
+    const size = packingFootprint(row);
+    return Math.max(size.lengthMm, size.widthMm);
+  };
   const orders = [
-    [...units].sort((a, b) => area(b.row) - area(a.row)),
-    [...units].sort((a, b) => Math.max(b.row.lengthMm, b.row.widthMm) - Math.max(a.row.lengthMm, a.row.widthMm)),
+    [...units].sort((a, b) => area(packingFootprint(b.row)) - area(packingFootprint(a.row))),
+    [...units].sort((a, b) => longestSide(b.row) - longestSide(a.row)),
   ];
   let best = trial(orders[0], options, rules, false, fitsEmpty);
   let bestArea = Infinity;
@@ -176,32 +182,61 @@ function packJob(units: ProductUnit[], options: BaseOption[], rules: PalletRules
   return best;
 }
 
+/** Keep all base positions and fill lower layers before using a higher one. */
+function balanceLayers(placements: Placement[]): Placement[] {
+  if (placements.every(item => item.layer === 1)) return placements;
+  const byRow = new Map<string, Placement[]>();
+  for (const item of placements) {
+    const row = byRow.get(item.rowId) ?? [];
+    row.push(item);
+    byRow.set(item.rowId, row);
+  }
+  return [...byRow.values()].flatMap(items => {
+    const bases = items.filter(item => item.layer === 1);
+    return items.map(({ id }, index) => ({
+      ...bases[index % bases.length], id, layer: (Math.floor(index / bases.length) + 1) as Layer,
+    }));
+  });
+}
+
 export function generatePalletPlan(
   input: unknown,
   version: Pick<PalletPlan, "id" | "revisionId" | "parentRevisionId">,
 ): PalletPlan {
   const { products, rules } = parsePalletInput(input);
+  const rows = new Map(products.map(row => [row.id, row]));
   const groups = new Map<string, ProductUnit[]>();
+  const unplaced: UnplacedProduct[] = [];
   for (const row of products) {
+    const limit = layerLimit(row, rules);
+    const ids = Array.from({ length: row.quantity }, (_, i) => unitId(row.id, i));
+    if (limit === 0) {
+      for (const id of ids) unplaced.push({ id, rowId: row.id, reason: "height" });
+      continue;
+    }
     const group = groups.get(row.jobId) ?? [];
-    for (let i = 0; i < row.quantity; i += 1) group.push({ id: unitId(row.id, i), row });
+    for (let i = 0; i < ids.length; i += limit) group.push({ ids: ids.slice(i, i + limit), row });
     groups.set(row.jobId, group);
   }
   const options = baseOptions(rules);
   const pallets: PlannedPallet[] = [];
-  const unplaced: UnplacedProduct[] = [];
   for (const [jobId, units] of groups) {
     const result = packJob(units, options, rules);
     result.bins.forEach((bin, index) => {
       const base = finishBase(bin, rules);
-      pallets.push({
+      const pallet: PlannedPallet = {
         id: `${version.id}/${units[0].row.id}/p${index + 1}`,
         jobId, base, loadedFootprint: { ...base },
         baseSource: bin.option.source, baseName: bin.option.name,
-        placements: bin.placements, truckOrientation: "auto",
-      });
+        placements: balanceLayers(bin.placements), truckOrientation: "auto",
+      };
+      pallet.packedHeightMm = knownLoadedHeight(pallet, rows, rules);
+      pallets.push(pallet);
     });
     unplaced.push(...result.unplaced);
   }
-  return { schemaVersion: 1, ...version, review: "draft", products, rules, pallets, unplaced };
+  return {
+    schemaVersion: 2, ...version, review: "draft", products, rules, pallets, unplaced,
+    generation: { solver: "guillotine-layered-v2", revisionId: version.revisionId, pallets, unplaced },
+  };
 }

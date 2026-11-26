@@ -65,25 +65,32 @@
       <summary>Products and pallet rules</summary>
       <form id="generate-form">
         <fieldset id="input-fields" class="fields" disabled>
+          <div class="grid three">
+            <label>Max pallet length <input id="max-length" type="number" step="any" data-length required></label>
+            <label>Max pallet width <input id="max-width" type="number" step="any" data-length required></label>
+            <label>Max layers <select id="max-layers"><option>1</option><option>2</option><option>3</option></select></label>
+          </div>
           <div id="products" aria-label="Product rows"></div>
           <div class="bar">
             <button type="button" id="add-product">Add product</button>
             <button type="button" id="example">Load example</button>
+            <button type="button" id="bench-example">Load 7-bench example</button>
           </div>
           <details>
             <summary>Pallet rules</summary>
             <div class="fields">
-              <p class="note">The starting limits are for preview. Enter your shop limits here.</p>
+              <p class="note">The reference uses a 96 in width limit and 1 in clearances. Set the length and other limits for this job.</p>
               <div class="grid">
-                <label>Maximum length <input id="max-length" type="number" step="any" data-length required></label>
-                <label>Maximum width <input id="max-width" type="number" step="any" data-length required></label>
                 <label>Edge clearance <input id="edge" type="number" step="any" min="0" data-length required></label>
                 <label>Product gap <input id="gap" type="number" step="any" min="0" data-length required></label>
+                <label>Max loaded height <input id="max-loaded-height" type="number" step="any" data-length></label>
+                <label>Deck height <input id="deck-height" type="number" step="any" min="0" data-length></label>
                 <label>Custom size increment <input id="increment" type="number" step="any" data-length required></label>
                 <label class="check"><input id="allow-custom" type="checkbox" checked> Allow custom bases</label>
               </div>
               <div id="stock" aria-label="Standard pallet bases"></div>
-              <div><button type="button" id="add-stock">Add standard base</button></div>
+              <div class="bar"><button type="button" id="add-stock">Add standard base</button>
+                <button type="button" id="reference-clearances">Use reference width and gaps</button></div>
             </div>
           </details>
           <button class="primary" id="generate" type="button" data-apply>Generate pallets</button>
@@ -94,7 +101,7 @@
     <fieldset id="result-fields" disabled>
       <section id="results" aria-label="Pallet plan" hidden>
         <div class="metrics">
-          <span><strong id="pallet-count">0</strong> pallets</span>
+          <span><strong id="pallet-count">0</strong> <span id="pallet-count-label">pallets</span></span>
           <span><strong id="placed-count">0</strong> placed</span>
           <span><strong id="unplaced-count">0</strong> unplaced</span>
           <span id="review">Draft</span>
@@ -104,7 +111,10 @@
           <ul id="unplaced-list"></ul>
         </div>
         <div id="pallet-view" class="fields" hidden>
-          <label>Pallet <select id="pallet"></select></label>
+          <div class="grid">
+            <label>Pallet <select id="pallet"></select></label>
+            <label>View layer <select id="view-layer"></select></label>
+          </div>
           <canvas id="preview" aria-label="Top-down pallet layout"></canvas>
           <p class="note" id="dimensions"></p>
           <details>
@@ -136,6 +146,7 @@
               <div class="grid">
                 <label>Destination pallet <select id="target-pallet"></select></label>
                 <label>Product rotation <select id="rotation"><option value="0">0°</option><option value="90">90°</option></select></label>
+                <label>Destination layer <select id="target-layer"></select></label>
               </div>
               <div class="grid">
                 <label>X <input id="position-x" type="number" min="0" step="any" data-length required></label>
@@ -161,6 +172,8 @@
           <button type="button" id="redo">Redo</button>
           <button type="button" id="open-drawing">Open drawing</button>
           <button type="button" id="save-json">Save JSON</button>
+          <button type="button" id="save-report">Save loading report</button>
+          <button type="button" id="save-csv">Export analysis CSV</button>
           <button type="button" id="confirm" class="primary">Confirm plan</button>
         </div>
       </section>
@@ -169,7 +182,7 @@
   <template id="product-template">
     <div class="record product">
       <div class="grid">
-        <label>Job <input name="jobId" maxlength="120" required></label>
+        <label>Job number <input name="jobId" maxlength="120" required></label>
         <label>Product <input name="productId" maxlength="120" required></label>
       </div>
       <div class="grid three">
@@ -177,18 +190,27 @@
         <label>Length <input name="lengthMm" type="number" step="any" data-length required></label>
         <label>Width <input name="widthMm" type="number" step="any" data-length required></label>
       </div>
+      <div class="grid">
+        <label>Height <input name="heightMm" type="number" step="any" data-length></label>
+        <label>Unit weight (kg) <input name="weightKg" type="number" step="any"></label>
+      </div>
       <div class="bar spread">
         <label class="check"><input name="canRotate" type="checkbox"> Allow 90° turn</label>
         <button type="button" data-remove>Remove product</button>
       </div>
-      <details>
-        <summary>Product details</summary>
-        <div class="grid">
-          <label>Height <input name="heightMm" type="number" step="any" data-length></label>
-          <label>Unit weight (kg) <input name="weightKg" type="number" step="any"></label>
-        </div>
-        <label>Notes <input name="notes" maxlength="300"></label>
-      </details>
+      <label class="check"><input name="useMeasured" type="checkbox"> Use measured footprint</label>
+      <div class="grid measured-footprint" hidden>
+        <label>Measured length <input name="measuredLengthMm" type="number" step="any" data-length></label>
+        <label>Measured width <input name="measuredWidthMm" type="number" step="any" data-length></label>
+      </div>
+      <label>Stack up to <select name="stackLayers">
+        <option value="1">1 layer</option><option value="2">2 layers</option><option value="3">3 layers</option>
+      </select></label>
+      <div class="grid stack-options" hidden>
+        <label>Stack pattern <select name="stackPattern"><option value="upright">All upright</option>
+          <option value="alternate">Alternate upside down</option></select></label>
+        <label>Added height per layer <input name="stackHeight" type="number" step="any" min="0" data-length></label>
+      </div>
     </div>
   </template>
   <template id="base-template">
@@ -206,7 +228,8 @@
     const send = message => parent.postMessage({ pluginMessage: message }, "*");
     const lengthFields = {
       "max-length": "maxLengthMm", "max-width": "maxWidthMm", edge: "edgeMm",
-      gap: "gapMm", increment: "incrementMm"
+      gap: "gapMm", increment: "incrementMm", "deck-height": "deckHeightMm",
+      "max-loaded-height": "maxLoadedHeightMm"
     };
     const canvas = $("preview");
     const ctx = canvas.getContext("2d");
@@ -215,6 +238,8 @@
     let rows = new Map();
     let palletId = "";
     let selectedUnit = "";
+    let selectedLayer = 1;
+    let referenceRules;
     let colors = [];
     let busy = true;
     let drag = null;
@@ -226,7 +251,10 @@
     const asInput = value => String(Number((value / mmPerUnit).toFixed(12)));
     const asText = value => String(Number((value / mmPerUnit).toFixed(3)));
     const currentPallet = () => plan?.pallets.find(pallet => pallet.id === palletId);
-    const unitName = unit => rows.get(unit.rowId).productId + " · " + unit.id.split("/").at(-1);
+    const unitName = unit => rows.get(unit.rowId).productId + " #" + unit.id.split("/").at(-1);
+    const upsideDown = unit => unit.layer === 2 && rows.get(unit.rowId).stack?.pattern === "alternate";
+    const sameStack = (a, b) => a.rowId === b.rowId && a.rotation === b.rotation
+      && Math.abs(a.xMm - b.xMm) <= 1e-6 && Math.abs(a.yMm - b.yMm) <= 1e-6;
 
     function setBusy(value) {
       busy = value;
@@ -263,10 +291,28 @@
     }
 
     function addProduct(row = { quantity: 1 }) {
-      const element = addRecord("product-template", "products", row);
+      const element = addRecord("product-template", "products", {
+        ...row, stackLayers: row.stack?.maxLayers || 1,
+        stackPattern: row.stack?.pattern, stackHeight: row.stack?.addedHeightMm,
+        useMeasured: row.measuredLengthMm !== undefined || row.measuredWidthMm !== undefined
+      });
       element.dataset.id = row.id || "row-" + Date.now().toString(36) + "-" + (++rowCounter);
       if (row.sourceUnit) element.dataset.sourceUnit = row.sourceUnit;
       if (row.sourceRowId) element.dataset.sourceRowId = row.sourceRowId;
+      if (row.notes) element.dataset.legacyNotes = row.notes;
+      const useMeasured = input(element, "useMeasured");
+      useMeasured.onchange = () => {
+        element.querySelector(".measured-footprint").hidden = !useMeasured.checked;
+        for (const name of ["measuredLengthMm", "measuredWidthMm"]) input(element, name).disabled = !useMeasured.checked;
+      };
+      useMeasured.onchange();
+      const stackLayers = input(element, "stackLayers");
+      stackLayers.onchange = () => {
+        const stacked = stackLayers.value !== "1";
+        element.querySelector(".stack-options").hidden = !stacked;
+        input(element, "stackHeight").disabled = !stacked;
+      };
+      stackLayers.onchange();
     }
 
     function hydrate(products, rules) {
@@ -274,7 +320,8 @@
       $("stock").replaceChildren();
       for (const row of products) addProduct(row);
       if (!products.length) addProduct();
-      for (const [id, key] of Object.entries(lengthFields)) $(id).value = asInput(rules[key]);
+      for (const [id, key] of Object.entries(lengthFields)) $(id).value = rules[key] === undefined ? "" : asInput(rules[key]);
+      $("max-layers").value = String(rules.maxLayers);
       $("allow-custom").checked = rules.allowCustom;
       for (const base of rules.standardBases) addRecord("base-template", "stock", base);
     }
@@ -282,6 +329,7 @@
     function capture() {
       const products = Array.from($("products").children, element => {
         const field = name => input(element, name);
+        const stackLayers = Number(field("stackLayers").value);
         return {
           id: element.dataset.id,
           jobId: field("jobId").value,
@@ -289,16 +337,23 @@
           quantity: number(field("quantity")),
           lengthMm: mm(field("lengthMm")),
           widthMm: mm(field("widthMm")),
+          measuredLengthMm: field("useMeasured").checked && field("measuredLengthMm").value ? mm(field("measuredLengthMm")) : undefined,
+          measuredWidthMm: field("useMeasured").checked && field("measuredWidthMm").value ? mm(field("measuredWidthMm")) : undefined,
           heightMm: field("heightMm").value ? mm(field("heightMm")) : undefined,
           weightKg: field("weightKg").value ? number(field("weightKg")) : undefined,
-          notes: field("notes").value.trim(),
+          notes: element.dataset.legacyNotes,
           canRotate: field("canRotate").checked,
+          stack: stackLayers > 1 ? {
+            maxLayers: stackLayers,
+            pattern: field("stackPattern").value,
+            addedHeightMm: field("stackHeight").value ? mm(field("stackHeight")) : undefined
+          } : undefined,
           sourceRowId: element.dataset.sourceRowId,
           sourceUnit: element.dataset.sourceUnit || $("units").value
         };
       });
-      const rules = { allowCustom: $("allow-custom").checked };
-      for (const [id, key] of Object.entries(lengthFields)) rules[key] = mm($(id));
+      const rules = { allowCustom: $("allow-custom").checked, maxLayers: Number($("max-layers").value) };
+      for (const [id, key] of Object.entries(lengthFields)) rules[key] = $(id).value ? mm($(id)) : undefined;
       rules.standardBases = Array.from($("stock").children, element => ({
         name: input(element, "name").value,
         lengthMm: mm(input(element, "lengthMm")),
@@ -320,7 +375,9 @@
     }
 
     function physicalSize(unit) {
-      const { lengthMm, widthMm } = rows.get(unit.rowId);
+      const row = rows.get(unit.rowId);
+      const lengthMm = Math.max(row.lengthMm, row.measuredLengthMm ?? 0);
+      const widthMm = Math.max(row.widthMm, row.measuredWidthMm ?? 0);
       return unit.rotation === 90 ? { lengthMm: widthMm, widthMm: lengthMm } : { lengthMm, widthMm };
     }
 
@@ -357,6 +414,7 @@
         ctx.globalAlpha = 1;
       }
       for (const placement of pallet.placements) {
+        if (placement.layer !== selectedLayer) continue;
         const item = drag?.unit.id === placement.id && drag.moved ? drag.unit : placement;
         const size = physicalSize(item);
         const x = left + item.xMm * scale;
@@ -364,7 +422,8 @@
         const ih = size.widthMm * scale;
         const y = bottom - item.yMm * scale - ih;
         const row = rows.get(item.rowId);
-        ctx.fillStyle = row.color;
+        const flipped = upsideDown(item);
+        ctx.fillStyle = flipped ? "#dca86d" : row.color;
         ctx.globalAlpha = item.id === selectedUnit ? 1 : .8;
         ctx.fillRect(x, y, iw, ih);
         ctx.globalAlpha = 1;
@@ -383,7 +442,7 @@
           ctx.fillStyle = "#101820";
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillText(row.productId, x + iw / 2, y + ih / 2, iw - 6);
+          ctx.fillText(unitName(item) + (flipped ? " ↓" : ""), x + iw / 2, y + ih / 2, iw - 6);
           ctx.restore();
         }
       }
@@ -392,16 +451,24 @@
     function renderSelection() {
       const pallet = currentPallet();
       const units = pallet ? [
-        ...pallet.placements, ...plan.unplaced.filter(item => rows.get(item.rowId).jobId === pallet.jobId)
+        ...pallet.placements.filter(item => item.layer === selectedLayer),
+        ...plan.unplaced.filter(item => rows.get(item.rowId).jobId === pallet.jobId)
       ] : [];
       const unit = units.find(item => item.id === selectedUnit) || units[0];
       $("edit-product").hidden = !unit;
       if (!unit) return;
       selectedUnit = unit.id;
-      options($("unit-select"), units.map(item => [item.id, unitName(item) + (item.reason ? " (unplaced)" : "")]), selectedUnit);
+      options($("unit-select"), units.map(item => [
+        item.id, unitName(item) + (item.reason ? " (unplaced)" : upsideDown(item) ? " (upside down)" : "")
+      ]), selectedUnit);
       options($("target-pallet"), plan.pallets.flatMap((other, index) =>
         other.jobId === rows.get(unit.rowId).jobId ? [[other.id, "Pallet " + (index + 1) + " · " + sizeText(other.base)]] : []
       ), pallet.id);
+      const limit = Math.min(plan.rules.maxLayers, rows.get(unit.rowId).stack?.maxLayers ?? 1);
+      options($("target-layer"), Array.from({ length: limit }, (_, index) => {
+        const layer = index + 1;
+        return [String(layer), "Layer " + layer + (upsideDown({ ...unit, layer }) ? " (upside down)" : "")];
+      }), String(unit.layer ?? selectedLayer));
       $("position-x").value = asInput(unit.xMm ?? plan.rules.edgeMm);
       $("position-y").value = asInput(unit.yMm ?? plan.rules.edgeMm);
       $("rotation").value = String(unit.rotation ?? 0);
@@ -413,13 +480,21 @@
       const pallet = currentPallet();
       $("pallet-view").hidden = !pallet;
       if (!pallet) return;
+      const levelCounts = new Map([[1, 0]]);
+      for (const item of pallet.placements) levelCounts.set(item.layer, (levelCounts.get(item.layer) || 0) + 1);
+      options($("view-layer"), [...levelCounts].sort((a, b) => a[0] - b[0]).map(([layer, count]) => [
+        String(layer), "Layer " + layer + " · " + count + (count === 1 ? " product" : " products")
+      ]), String(selectedLayer));
+      selectedLayer = Number($("view-layer").value);
       const used = pallet.placements.reduce((sum, unit) => {
+        if (unit.layer !== 1) return sum;
         const size = physicalSize(unit);
         return sum + size.lengthMm * size.widthMm;
       }, 0);
       const utilization = Math.round(100 * used / (pallet.base.lengthMm * pallet.base.widthMm));
-      $("dimensions").textContent = sizeText(pallet.base) + " · " + utilization + "% used · "
-        + (pallet.baseName || (pallet.baseSource === "manual" ? "Edited base" : "Custom base"));
+      $("dimensions").textContent = sizeText(pallet.base) + " · " + utilization + "% deck used · "
+        + (pallet.baseName || (pallet.baseSource === "manual" ? "Edited base" : "Custom base"))
+        + (pallet.packedHeightMm === undefined ? "" : " · " + asText(pallet.packedHeightMm) + " " + $("units").value + " loaded height");
       $("base-length").value = asInput(pallet.base.lengthMm);
       $("base-width").value = asInput(pallet.base.widthMm);
       $("remove-pallet").disabled = pallet.placements.length > 0;
@@ -435,6 +510,7 @@
       if (!plan) return;
       const placed = plan.pallets.reduce((count, pallet) => count + pallet.placements.length, 0);
       $("pallet-count").textContent = plan.pallets.length;
+      $("pallet-count-label").textContent = plan.pallets.length === 1 ? "pallet" : "pallets";
       $("placed-count").textContent = placed;
       $("unplaced-count").textContent = plan.unplaced.length;
       $("review").textContent = plan.review === "confirmed" ? "Confirmed" : "Draft";
@@ -444,7 +520,7 @@
       const unplacedRows = new Map();
       for (const item of plan.unplaced) {
         const key = rows.get(item.rowId).productId + " · " + rows.get(item.rowId).jobId + " · "
-          + (item.reason === "manual" ? "Unplaced by operator" : "No base fits with these rules");
+          + ({ manual: "Unplaced by operator", height: "Exceeds the loaded height limit", size: "No base fits with these rules" })[item.reason];
         unplacedRows.set(key, (unplacedRows.get(key) || 0) + 1);
       }
       $("unplaced-list").replaceChildren(...Array.from(unplacedRows, ([label, count]) => {
@@ -492,10 +568,19 @@
 
     $("add-product").onclick = () => addProduct({ jobId: input($("products").lastElementChild || document, "jobId")?.value, quantity: 1 });
     $("add-stock").onclick = () => addRecord("base-template", "stock", {});
+    $("reference-clearances").onclick = () => {
+      $("max-width").value = asInput(referenceRules.maxWidthMm);
+      $("edge").value = asInput(referenceRules.edgeMm);
+      $("gap").value = asInput(referenceRules.gapMm);
+    };
     $("example").onclick = () => {
       $("products").replaceChildren();
       addProduct({ jobId: "DEMO-1", productId: "Long carton", quantity: 2, lengthMm: 2032, widthMm: 457.2 });
     };
+    $("bench-example").onclick = () => hydrate([{
+      jobId: "BENCH-DEMO", productId: "Bench", quantity: 7, lengthMm: 30 * 25.4, widthMm: 15 * 25.4,
+      stack: { maxLayers: 3, pattern: "alternate" }
+    }], { ...referenceRules, maxLengthMm: 32 * 25.4, maxWidthMm: 49 * 25.4, maxLayers: 2 });
     $("units").onchange = () => { setUnits($("units").value); renderPlan(); };
     bindForm("generate-form", () => request("generate", { input: capture() }));
     $("open-json").onclick = () => $("plan-file").click();
@@ -513,8 +598,15 @@
     $("pallet").onchange = () => {
       palletId = $("pallet").value;
       selectedUnit = "";
+      selectedLayer = 1;
       $("new-pallet-job").value = currentPallet().jobId;
       renderPallet();
+    };
+    $("view-layer").onchange = () => {
+      selectedLayer = Number($("view-layer").value);
+      selectedUnit = "";
+      renderSelection();
+      draw();
     };
     $("unit-select").onchange = () => { selectedUnit = $("unit-select").value; renderSelection(); draw(); };
     bindForm("resize-form", () => edit("resize", { palletId, base: readBase("base-length", "base-width") }));
@@ -527,12 +619,14 @@
     }));
     bindForm("place-form", () => edit("place", {
       unitId: selectedUnit, palletId: $("target-pallet").value, rotation: Number($("rotation").value),
-      xMm: mm($("position-x")), yMm: mm($("position-y"))
+      xMm: mm($("position-x")), yMm: mm($("position-y")), layer: Number($("target-layer").value)
     }));
     $("unplace-unit").onclick = () => edit("unplace", { unitId: selectedUnit });
     $("confirm").onclick = () => edit("confirm");
     $("open-drawing").onclick = () => request("draw");
     $("save-json").onclick = () => request("save-json");
+    $("save-report").onclick = () => request("save-report", { unit: $("units").value });
+    $("save-csv").onclick = () => request("save-csv");
     $("undo").onclick = () => request("undo");
     $("redo").onclick = () => request("redo");
 
@@ -553,8 +647,9 @@
       if (item.xMm < edgeMm - 1e-6 || item.yMm < edgeMm - 1e-6
         || xEnd > pallet.base.lengthMm - edgeMm + 1e-6 || yEnd > pallet.base.widthMm - edgeMm + 1e-6) return false;
       const gap = gapMm - 1e-6;
+      const affected = new Set(pallet.placements.filter(other => sameStack(drag.original, other)).map(other => other.layer));
       return pallet.placements.every(other => {
-        if (other.id === item.id) return true;
+        if (!affected.has(other.layer) || sameStack(drag.original, other)) return true;
         const size = physicalSize(other);
         return xEnd + gap <= other.xMm || yEnd + gap <= other.yMm
           || other.xMm + size.lengthMm + gap <= item.xMm || other.yMm + size.widthMm + gap <= item.yMm;
@@ -565,6 +660,7 @@
       if (busy || drag || !view || event.button !== 0) return;
       const point = cursor(event);
       const placement = currentPallet()?.placements.find(unit => {
+        if (unit.layer !== selectedLayer) return false;
         const size = physicalSize(unit);
         return point.xMm >= unit.xMm && point.xMm <= unit.xMm + size.lengthMm
           && point.yMm >= unit.yMm && point.yMm <= unit.yMm + size.widthMm;
@@ -593,7 +689,7 @@
       const { unit, moved } = drag;
       drag = null;
       draw();
-      if (moved) edit("place", { palletId, unitId: unit.id, rotation: unit.rotation, xMm: unit.xMm, yMm: unit.yMm });
+      if (moved) edit("move-stack", { palletId, unitId: unit.id, xMm: unit.xMm, yMm: unit.yMm });
     };
     canvas.onlostpointercapture = () => { drag = null; draw(); };
     new ResizeObserver(draw).observe(canvas);
@@ -605,6 +701,7 @@
       if (!message) return;
       if (message.type === "init" || message.type === "plan") {
         if (message.type === "init") {
+          referenceRules = message.rules;
           colors = message.colors;
           $("units").value = message.unit.unit === "in" ? "in" : "mm";
           setUnits($("units").value);

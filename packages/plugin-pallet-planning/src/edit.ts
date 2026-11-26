@@ -1,4 +1,4 @@
-import type { PalletPlan, Placement, PlannedPallet } from "./types";
+import { sharesStack, type PalletPlan, type Placement, type PlannedPallet } from "./types";
 import { footprint, labelText, parsePalletPlan, parsePlacement, record, truckOrientation } from "./validate";
 
 function findPallet(plan: PalletPlan, value: unknown): PlannedPallet {
@@ -29,8 +29,16 @@ export function editPalletPlan(plan: PalletPlan, raw: unknown, revisionId: strin
       const pallet = findPallet(next, action.palletId);
       const unit = detachUnit(next, action.unitId);
       pallet.placements.push(parsePlacement({
-        ...unit, xMm: action.xMm, yMm: action.yMm, rotation: action.rotation,
+        ...unit, xMm: action.xMm, yMm: action.yMm, rotation: action.rotation, layer: action.layer,
       }));
+      break;
+    }
+    case "move-stack": {
+      const pallet = findPallet(next, action.palletId);
+      const selected = pallet.placements.find(item => item.id === action.unitId);
+      if (!selected) throw new Error("Select a product unit first.");
+      pallet.placements = pallet.placements.map(item => sharesStack(item, selected)
+        ? parsePlacement({ ...item, xMm: action.xMm, yMm: action.yMm }) : item);
       break;
     }
     case "unplace": {

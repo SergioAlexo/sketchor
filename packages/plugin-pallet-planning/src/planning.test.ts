@@ -120,7 +120,7 @@ describe("editable revisions", () => {
   it("rejects empty, incomplete, and unsupported plan records", () => {
     expect(() => parsePalletPlan(null)).toThrow(/missing or invalid/);
     expect(() => parsePalletPlan({ ...generate(), pallets: [] })).toThrow(/missing product units/);
-    expect(() => parsePalletPlan({ ...generate(), schemaVersion: 2 })).toThrow(/Unsupported/);
+    expect(() => parsePalletPlan({ ...generate(), schemaVersion: 99 })).toThrow(/Unsupported/);
   });
 
   it("builds native drawing commands with one group per base and product", () => {

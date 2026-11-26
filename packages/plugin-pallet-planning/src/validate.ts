@@ -1,6 +1,7 @@
 import {
-  EPS, MAX_PRODUCTS, MAX_STANDARD_BASES, oriented, unitId, type Footprint, type PalletInput,
-  type PalletPlan, type PalletRules, type Placement, type PlannedPallet, type ProductRow, type UnplacedProduct,
+  EPS, MAX_PRODUCTS, MAX_STANDARD_BASES, knownLoadedHeight, layerLimit, oriented, packingFootprint, sharesStack, unitId,
+  type Footprint, type Layer, type PalletInput, type PalletPlan, type PalletResult,
+  type PalletRules, type Placement, type PlannedPallet, type ProductRow, type UnplacedProduct,
 } from "./types";
 
 export function record(value: unknown, label: string): Record<string, unknown> {
@@ -44,6 +45,24 @@ export function footprint(value: unknown, label: string): Footprint {
   };
 }
 
+function layerNumber(value: unknown, label: string): Layer {
+  if (value === 1 || value === 2 || value === 3) return value;
+  throw new Error(`${label} must be 1, 2, or 3.`);
+}
+
+function productStack(value: unknown, label: string): ProductRow["stack"] {
+  if (value === undefined) return undefined;
+  const stack = record(value, `${label} stacking`);
+  if ((stack.maxLayers !== 2 && stack.maxLayers !== 3)
+    || (stack.pattern !== "upright" && stack.pattern !== "alternate")) {
+    throw new Error(`${label} needs a valid stacking pattern and a 2- or 3-layer limit.`);
+  }
+  return {
+    maxLayers: stack.maxLayers, pattern: stack.pattern,
+    addedHeightMm: stack.addedHeightMm === undefined ? undefined : measurement(stack.addedHeightMm, `${label} added layer height`, true),
+  };
+}
+
 export function parsePalletInput(value: unknown): PalletInput {
   const input = record(value, "Pallet inputs");
   const profile = record(input.rules, "Pallet rules");
@@ -54,12 +73,19 @@ export function parsePalletInput(value: unknown): PalletInput {
     gapMm: measurement(profile.gapMm, "Product gap", true),
     incrementMm: measurement(profile.incrementMm, "Custom size increment"),
     allowCustom: boolean(profile.allowCustom, "Allow custom bases"),
+    maxLayers: layerNumber(profile.maxLayers ?? 3, "Maximum pallet layers"),
+    deckHeightMm: profile.deckHeightMm === undefined ? undefined : measurement(profile.deckHeightMm, "Deck height", true),
+    maxLoadedHeightMm: profile.maxLoadedHeightMm === undefined ? undefined : measurement(profile.maxLoadedHeightMm, "Maximum loaded height"),
     standardBases: list(profile.standardBases, MAX_STANDARD_BASES, "Standard bases").map((raw, index) => {
       const name = `Standard base ${index + 1}`;
       const base = record(raw, name);
       return { ...footprint(base, name), name: labelText(base.name, `${name} name`) };
     }),
   };
+  if (rules.maxLoadedHeightMm !== undefined
+    && (rules.deckHeightMm === undefined || rules.deckHeightMm >= rules.maxLoadedHeightMm)) {
+    throw new Error("Enter the deck height below the maximum loaded height.");
+  }
   if (rules.edgeMm * 2 >= Math.min(rules.maxLengthMm, rules.maxWidthMm)) {
     throw new Error("Edge clearance leaves no usable space on a pallet.");
   }
@@ -81,11 +107,20 @@ export function parsePalletInput(value: unknown): PalletInput {
     if (!Number.isInteger(quantity)) throw new Error(`${label} quantity must be a whole number.`);
     total += quantity;
     if (total > MAX_PRODUCTS) throw new Error(`A plan can contain at most ${MAX_PRODUCTS} product units.`);
+    const stack = productStack(row.stack, label);
+    if (rules.maxLoadedHeightMm !== undefined) {
+      if (row.heightMm === undefined) throw new Error(`${label} needs a height when a loaded height limit is set.`);
+      if (rules.maxLayers > 1 && stack?.pattern === "alternate" && stack.addedHeightMm === undefined) {
+        throw new Error(`${label} needs the measured added height of an upside-down layer for the height limit.`);
+      }
+    }
     return {
-      ...footprint(row, label), id, quantity,
+      ...footprint(row, label), id, quantity, stack,
       jobId: labelText(row.jobId, `${label} job`),
       productId: labelText(row.productId, `${label} product`),
       canRotate: boolean(row.canRotate, `${label} rotation`),
+      measuredLengthMm: row.measuredLengthMm === undefined ? undefined : measurement(row.measuredLengthMm, `${label} measured length`),
+      measuredWidthMm: row.measuredWidthMm === undefined ? undefined : measurement(row.measuredWidthMm, `${label} measured width`),
       heightMm: row.heightMm === undefined ? undefined : measurement(row.heightMm, `${label} height`),
       weightKg: row.weightKg === undefined ? undefined : measurement(row.weightKg, `${label} weight`),
       notes: optionalText(row.notes, `${label} notes`, 300),
@@ -106,6 +141,7 @@ export function parsePlacement(raw: unknown): Placement {
     xMm: measurement(placement.xMm, "Product X", true),
     yMm: measurement(placement.yMm, "Product Y", true),
     rotation: placement.rotation,
+    layer: layerNumber(placement.layer ?? 1, "Placement layer"),
   };
 }
 
@@ -138,7 +174,7 @@ function parsePallet(raw: unknown): PlannedPallet {
 
 function parseUnplaced(raw: unknown): UnplacedProduct {
   const item = record(raw, "Unplaced product");
-  if (item.reason !== "size" && item.reason !== "manual") throw new Error("Unplaced product reason is invalid.");
+  if (item.reason !== "size" && item.reason !== "height" && item.reason !== "manual") throw new Error("Unplaced product reason is invalid.");
   return {
     id: labelText(item.id, "Unplaced product ID", 256),
     rowId: labelText(item.rowId, "Unplaced product row ID"),
@@ -158,18 +194,23 @@ function validatePalletGeometry(pallet: PlannedPallet, rules: PalletRules, rows:
     const row = rows.get(p.rowId);
     if (!row || row.jobId !== pallet.jobId) throw new Error(`${name} contains a product from a different job.`);
     if (p.rotation === 90 && !row.canRotate) throw new Error(`${row.productId} cannot be turned.`);
-    const size = oriented(row, p.rotation);
+    if (p.layer > layerLimit(row, rules)) throw new Error(`${row.productId} exceeds the configured layer or loaded height limit.`);
+    if (p.layer > 1 && !placements.some(other => other.layer === p.layer - 1 && sharesStack(p, other))) {
+      throw new Error(`${row.productId} on layer ${p.layer} needs a matching product directly below it.`);
+    }
+    const size = oriented(packingFootprint(row), p.rotation);
     const xEnd = p.xMm + size.lengthMm;
     const yEnd = p.yMm + size.widthMm;
     if (p.xMm < rules.edgeMm - EPS || p.yMm < rules.edgeMm - EPS
       || xEnd > base.lengthMm - rules.edgeMm + EPS || yEnd > base.widthMm - rules.edgeMm + EPS) {
       throw new Error(`${row.productId} in ${name} is outside the allowed edge clearance.`);
     }
-    return { x: p.xMm, y: p.yMm, xEnd, yEnd, label: row.productId };
+    return { x: p.xMm, y: p.yMm, xEnd, yEnd, label: row.productId, layer: p.layer };
   });
   for (const [index, a] of boxes.entries()) {
     for (let j = index + 1; j < boxes.length; j += 1) {
       const b = boxes[j];
+      if (a.layer !== b.layer) continue;
       const gap = rules.gapMm - EPS;
       const separated = a.xEnd + gap <= b.x || b.xEnd + gap <= a.x || a.yEnd + gap <= b.y || b.yEnd + gap <= a.y;
       if (!separated) throw new Error(`${a.label} and ${b.label} on ${name} overlap or need more gap.`);
@@ -177,11 +218,7 @@ function validatePalletGeometry(pallet: PlannedPallet, rules: PalletRules, rows:
   }
 }
 
-export function parsePalletPlan(raw: unknown): PalletPlan {
-  const plan = record(raw, "Pallet plan");
-  if (plan.schemaVersion !== 1) throw new Error("Unsupported pallet plan version.");
-  if (plan.review !== "draft" && plan.review !== "confirmed") throw new Error("Pallet plan review state is invalid.");
-  const { products, rules } = parsePalletInput(plan);
+function parseResult(plan: Record<string, unknown>, { products, rules }: PalletInput): PalletResult {
   const rows = new Map(products.map(row => [row.id, row]));
   const allUnits = new Map(products.flatMap(row =>
     Array.from({ length: row.quantity }, (_, i) => [unitId(row.id, i), row.id] as const),
@@ -200,16 +237,32 @@ export function parsePalletPlan(raw: unknown): PalletPlan {
     palletIds.add(pallet.id);
     for (const placement of pallet.placements) takeUnit(placement);
     validatePalletGeometry(pallet, rules, rows, `pallet ${index + 1}`);
+    pallet.packedHeightMm = knownLoadedHeight(pallet, rows, rules) ?? pallet.packedHeightMm;
   }
   for (const item of unplaced) takeUnit(item);
   if (allUnits.size) throw new Error("The plan is missing product units.");
+  return { pallets, unplaced };
+}
+
+export function parsePalletPlan(raw: unknown): PalletPlan {
+  const plan = record(raw, "Pallet plan");
+  if (plan.schemaVersion !== 1 && plan.schemaVersion !== 2) throw new Error("Unsupported pallet plan version.");
+  if (plan.review !== "draft" && plan.review !== "confirmed") throw new Error("Pallet plan review state is invalid.");
+  const input = parsePalletInput(plan);
+  const { pallets, unplaced } = parseResult(plan, input);
   if (plan.review === "confirmed" && (unplaced.length || pallets.some(p => !p.placements.length))) {
     throw new Error("Place every product and remove empty pallets before confirming.");
   }
+  const generated = plan.generation === undefined ? undefined : record(plan.generation, "Generated layout");
   return {
-    schemaVersion: 1, products, rules, pallets, unplaced, review: plan.review,
+    schemaVersion: 2, ...input, pallets, unplaced, review: plan.review,
     id: labelText(plan.id, "Plan ID"),
     revisionId: labelText(plan.revisionId, "Revision ID"),
     parentRevisionId: plan.parentRevisionId === null ? null : labelText(plan.parentRevisionId, "Parent revision ID"),
+    generation: generated && {
+      ...parseResult(generated, input),
+      solver: labelText(generated.solver, "Solver"),
+      revisionId: labelText(generated.revisionId, "Generated revision ID"),
+    },
   };
 }
