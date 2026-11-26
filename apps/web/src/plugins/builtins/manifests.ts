@@ -39,6 +39,20 @@ export const BUILTIN_MANIFESTS: PluginManifest[] = [
     permissions: ["read-document", "write-document"],
   },
   {
+    id: "com.sketchor.pallet-planning",
+    version: "1.0.0",
+    name: "Pallet Size Generator",
+    description: "Size pallets from product dimensions and edit the 2D layouts.",
+    publisher: "Sketchor",
+    engines: { sketchor: `^${HOST_API_VERSION}` },
+    main: "palletPlanningPlugin.ts",
+    ui: "palletPlanningPanel.html",
+    contributes: {
+      commands: [{ id: "pallet-planning.open", title: "Pallet Size Generator" }],
+    },
+    permissions: ["write-document", "storage"],
+  },
+  {
     id: "com.sketchor.truck-nesting",
     version: "2.0.0",
     name: "Truck Load Planner",

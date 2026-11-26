@@ -1350,6 +1350,18 @@ export function App() {
           <div className="action-sep" />
           <button
             className="action"
+            title="Pallet Size Generator"
+            aria-label="Pallet Size Generator"
+            data-testid="pallet-planning-open"
+            onClick={() => void runCommand("pallet-planning.open")}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M3 17h18M5 20v-3m7 3v-3m7 3v-3M5 6h6v8H5zm9 0h5v8h-5z"
+                stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            className="action"
             title={withKey("Truck Load Planner — right-click to add a shortcut", "app.truckNesting")}
             data-testid="truck-nesting-open"
             onClick={() => void runCommand("truck-nesting.open")}

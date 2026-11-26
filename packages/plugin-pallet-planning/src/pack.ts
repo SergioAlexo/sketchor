@@ -1,0 +1,207 @@
+import {
+  EPS, oriented, unitId, type Footprint, type PalletPlan,
+  type PalletRules, type Placement, type PlannedPallet, type ProductRow, type Rotation,
+  type UnplacedProduct,
+} from "./types";
+import { parsePalletInput } from "./validate";
+
+interface ProductUnit {
+  id: string;
+  row: ProductRow;
+}
+
+interface Slot extends Footprint {
+  xMm: number;
+  yMm: number;
+}
+
+interface BaseOption extends Footprint {
+  name?: string;
+  source: "custom" | "standard";
+}
+
+interface Bin {
+  option: BaseOption;
+  slots: Slot[];
+  placements: Placement[];
+  lengthUsed: number;
+  widthUsed: number;
+}
+
+interface Fit {
+  slot: Slot;
+  index: number;
+  rotation: Rotation;
+  footprint: Footprint;
+  reserved: Footprint;
+  waste: number;
+}
+
+const area = ({ lengthMm, widthMm }: Footprint) => lengthMm * widthMm;
+
+function baseOptions(rules: PalletRules): BaseOption[] {
+  const stock: BaseOption[] = rules.standardBases
+    .filter(base => base.lengthMm <= rules.maxLengthMm + EPS && base.widthMm <= rules.maxWidthMm + EPS)
+    .map(base => ({ ...base, source: "standard" }));
+  stock.sort((a, b) => area(a) - area(b) || a.lengthMm - b.lengthMm || a.widthMm - b.widthMm);
+  if (!rules.allowCustom) return stock;
+  const roundDown = (n: number) => Math.floor((n + EPS) / rules.incrementMm) * rules.incrementMm;
+  return [...stock, {
+    lengthMm: roundDown(rules.maxLengthMm),
+    widthMm: roundDown(rules.maxWidthMm),
+    source: "custom",
+  }];
+}
+
+function startBin(option: BaseOption, rules: PalletRules): Bin {
+  // Reserve one gap on each footprint's far sides. The extra gap at the outer
+  // boundary keeps the stock edge margin independent of the inter-product gap.
+  const slot = {
+    xMm: rules.edgeMm,
+    yMm: rules.edgeMm,
+    lengthMm: option.lengthMm - 2 * rules.edgeMm + rules.gapMm,
+    widthMm: option.widthMm - 2 * rules.edgeMm + rules.gapMm,
+  };
+  return { option, slots: [slot], placements: [], lengthUsed: 0, widthUsed: 0 };
+}
+
+function findFit(bin: Bin, row: ProductRow, gapMm: number): Fit | undefined {
+  let best: Fit | undefined;
+  const rotations: Rotation[] = row.canRotate && row.lengthMm !== row.widthMm ? [0, 90] : [0];
+  for (const rotation of rotations) {
+    const footprint = oriented(row, rotation);
+    const reserved = { lengthMm: footprint.lengthMm + gapMm, widthMm: footprint.widthMm + gapMm };
+    for (const [index, slot] of bin.slots.entries()) {
+      if (reserved.lengthMm > slot.lengthMm + EPS || reserved.widthMm > slot.widthMm + EPS) continue;
+      const waste = area(slot) - area(reserved);
+      if (!best || waste < best.waste - EPS) best = { slot, index, rotation, footprint, reserved, waste };
+    }
+  }
+  return best;
+}
+
+function put(bin: Bin, unit: ProductUnit, fit: Fit, splitAlongLength: boolean): void {
+  const { slot, reserved, footprint } = fit;
+  const right: Slot = {
+    xMm: slot.xMm + reserved.lengthMm,
+    yMm: slot.yMm,
+    lengthMm: slot.lengthMm - reserved.lengthMm,
+    widthMm: splitAlongLength ? slot.widthMm : reserved.widthMm,
+  };
+  const top: Slot = {
+    xMm: slot.xMm,
+    yMm: slot.yMm + reserved.widthMm,
+    lengthMm: splitAlongLength ? reserved.lengthMm : slot.lengthMm,
+    widthMm: slot.widthMm - reserved.widthMm,
+  };
+  bin.slots.splice(fit.index, 1, ...[right, top].filter(s => s.lengthMm > EPS && s.widthMm > EPS));
+  bin.placements.push({
+    id: unit.id, rowId: unit.row.id, rotation: fit.rotation, xMm: slot.xMm, yMm: slot.yMm,
+  });
+  bin.lengthUsed = Math.max(bin.lengthUsed, slot.xMm + footprint.lengthMm);
+  bin.widthUsed = Math.max(bin.widthUsed, slot.yMm + footprint.widthMm);
+}
+
+function finishBase(bin: Bin, rules: PalletRules): Footprint {
+  if (bin.option.source === "standard") {
+    return { lengthMm: bin.option.lengthMm, widthMm: bin.option.widthMm };
+  }
+  const round = (mm: number) => Math.ceil((mm + rules.edgeMm - EPS) / rules.incrementMm) * rules.incrementMm;
+  return { lengthMm: Math.max(rules.incrementMm, round(bin.lengthUsed)), widthMm: Math.max(rules.incrementMm, round(bin.widthUsed)) };
+}
+
+function trial(
+  units: ProductUnit[], options: BaseOption[], rules: PalletRules, splitAlongLength: boolean,
+  fitsEmpty: ReadonlyMap<string, ReadonlySet<BaseOption>>,
+): { bins: Bin[]; unplaced: UnplacedProduct[] } {
+  const bins: Bin[] = [];
+  const unplaced: UnplacedProduct[] = [];
+  for (const unit of units) {
+    let placed = false;
+    for (const bin of bins) {
+      const fit = findFit(bin, unit.row, rules.gapMm);
+      if (!fit) continue;
+      put(bin, unit, fit, splitAlongLength);
+      placed = true;
+      break;
+    }
+    if (placed) continue;
+    const allowed = fitsEmpty.get(unit.row.id);
+    const option = options.find(candidate => allowed?.has(candidate));
+    const bin = option && startBin(option, rules);
+    const fit = bin && findFit(bin, unit.row, rules.gapMm);
+    if (bin && fit) {
+      bins.push(bin);
+      put(bin, unit, fit, splitAlongLength);
+    } else {
+      unplaced.push({ id: unit.id, rowId: unit.row.id, reason: "size" });
+    }
+  }
+  return { bins, unplaced };
+}
+
+function packJob(units: ProductUnit[], options: BaseOption[], rules: PalletRules) {
+  const stock = options.filter(option => option.source === "standard");
+  const custom = options.filter(option => option.source === "custom");
+  const priorities = [options, ...stock.map(option => [option, ...options.filter(other => other !== option)])];
+  if (stock.length && custom.length) priorities.push([...custom, ...stock]);
+  const rows = new Map(units.map(unit => [unit.row.id, unit.row]));
+  const fitsEmpty = new Map([...rows.values()].map(row => [
+    row.id, new Set(options.filter(option => findFit(startBin(option, rules), row, rules.gapMm))),
+  ]));
+  const orders = [
+    [...units].sort((a, b) => area(b.row) - area(a.row)),
+    [...units].sort((a, b) => Math.max(b.row.lengthMm, b.row.widthMm) - Math.max(a.row.lengthMm, a.row.widthMm)),
+  ];
+  let best = trial(orders[0], options, rules, false, fitsEmpty);
+  let bestArea = Infinity;
+  let bestCustoms = Infinity;
+  for (const order of orders) {
+    for (const priority of priorities) {
+      for (const splitAlongLength of [false, true]) {
+        const result = trial(order, priority, rules, splitAlongLength, fitsEmpty);
+        const totalArea = result.bins.reduce((sum, bin) => sum + area(finishBase(bin, rules)), 0);
+        const customs = result.bins.filter(bin => bin.option.source === "custom").length;
+        const comparison = result.unplaced.length - best.unplaced.length
+          || result.bins.length - best.bins.length
+          || (Math.abs(totalArea - bestArea) > EPS ? totalArea - bestArea : 0)
+          || customs - bestCustoms;
+        if (comparison >= 0) continue;
+        best = result;
+        bestArea = totalArea;
+        bestCustoms = customs;
+      }
+    }
+  }
+  return best;
+}
+
+export function generatePalletPlan(
+  input: unknown,
+  version: Pick<PalletPlan, "id" | "revisionId" | "parentRevisionId">,
+): PalletPlan {
+  const { products, rules } = parsePalletInput(input);
+  const groups = new Map<string, ProductUnit[]>();
+  for (const row of products) {
+    const group = groups.get(row.jobId) ?? [];
+    for (let i = 0; i < row.quantity; i += 1) group.push({ id: unitId(row.id, i), row });
+    groups.set(row.jobId, group);
+  }
+  const options = baseOptions(rules);
+  const pallets: PlannedPallet[] = [];
+  const unplaced: UnplacedProduct[] = [];
+  for (const [jobId, units] of groups) {
+    const result = packJob(units, options, rules);
+    result.bins.forEach((bin, index) => {
+      const base = finishBase(bin, rules);
+      pallets.push({
+        id: `${version.id}/${units[0].row.id}/p${index + 1}`,
+        jobId, base, loadedFootprint: { ...base },
+        baseSource: bin.option.source, baseName: bin.option.name,
+        placements: bin.placements, truckOrientation: "auto",
+      });
+    });
+    unplaced.push(...result.unplaced);
+  }
+  return { schemaVersion: 1, ...version, review: "draft", products, rules, pallets, unplaced };
+}

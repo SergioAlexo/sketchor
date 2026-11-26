@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: var(--sk-bg, #1d2025);
+      --panel: var(--sk-panel, #282c34);
+      --border: var(--sk-border, #454c57);
+      --fg: var(--sk-text, #edf1f5);
+      --muted: var(--sk-text-dim, #bac3ce);
+      --accent: var(--sk-accent, #77b8ee);
+      --danger: var(--sk-danger, #f08282);
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 system-ui, sans-serif; }
+    main { display: grid; gap: 12px; padding: 12px; }
+    form, #results, .fields { display: grid; gap: 10px; }
+    p { margin: 0; }
+    button, input, select { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; }
+    input, select { min-width: 0; width: 100%; padding: 6px; }
+    input[type=checkbox] { width: auto; accent-color: var(--accent); }
+    button { cursor: pointer; padding: 6px 10px; white-space: nowrap; }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled { opacity: .5; cursor: default; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    label { display: grid; gap: 3px; min-width: 0; color: var(--muted); }
+    label.check { display: flex; align-items: center; gap: 5px; }
+    fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
+    details { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 9px; }
+    details[open] > summary { margin-bottom: 9px; }
+    summary { cursor: pointer; font-weight: 600; }
+    .bar { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+    .bar.spread { justify-content: space-between; }
+    .bar label { display: flex; align-items: center; gap: 7px; }
+    .bar select { width: auto; }
+    .grid { display: grid; gap: 7px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .record { padding: 8px; border: 1px solid var(--border); border-radius: 6px; display: grid; gap: 7px; }
+    #products, #stock { display: grid; gap: 8px; }
+    .primary { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+    .note { color: var(--muted); font-size: 12px; }
+    .alert { color: var(--danger); }
+    .metrics { display: flex; flex-wrap: wrap; gap: 6px 14px; font-variant-numeric: tabular-nums; }
+    .metrics strong { color: var(--accent); }
+    #preview { display: block; width: 100%; height: 234px; touch-action: none; border: 1px solid var(--border); border-radius: 7px; }
+    #preview.ready { cursor: crosshair; }
+    #unplaced-list { margin: 6px 0 0; padding-left: 20px; max-height: 110px; overflow: auto; }
+    #status { position: sticky; top: 0; z-index: 1; background: var(--bg); padding: 5px; overflow-wrap: anywhere; }
+    #status:empty { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="bar spread">
+      <label>Units <select id="units" disabled><option value="mm">mm</option><option value="in">in</option></select></label>
+      <button type="button" id="open-json" disabled>Open JSON</button>
+      <input type="file" id="plan-file" accept=".json,application/json" hidden>
+    </div>
+    <p id="status" role="status" aria-live="polite"></p>
+    <details id="inputs" open>
+      <summary>Products and pallet rules</summary>
+      <form id="generate-form">
+        <fieldset id="input-fields" class="fields" disabled>
+          <div id="products" aria-label="Product rows"></div>
+          <div class="bar">
+            <button type="button" id="add-product">Add product</button>
+            <button type="button" id="example">Load example</button>
+          </div>
+          <details>
+            <summary>Pallet rules</summary>
+            <div class="fields">
+              <p class="note">The starting limits are for preview. Enter your shop limits here.</p>
+              <div class="grid">
+                <label>Maximum length <input id="max-length" type="number" step="any" data-length required></label>
+                <label>Maximum width <input id="max-width" type="number" step="any" data-length required></label>
+                <label>Edge clearance <input id="edge" type="number" step="any" min="0" data-length required></label>
+                <label>Product gap <input id="gap" type="number" step="any" min="0" data-length required></label>
+                <label>Custom size increment <input id="increment" type="number" step="any" data-length required></label>
+                <label class="check"><input id="allow-custom" type="checkbox" checked> Allow custom bases</label>
+              </div>
+              <div id="stock" aria-label="Standard pallet bases"></div>
+              <div><button type="button" id="add-stock">Add standard base</button></div>
+            </div>
+          </details>
+          <button class="primary" id="generate" type="button" data-apply>Generate pallets</button>
+        </fieldset>
+      </form>
+    </details>
+
+    <fieldset id="result-fields" disabled>
+      <section id="results" aria-label="Pallet plan" hidden>
+        <div class="metrics">
+          <span><strong id="pallet-count">0</strong> pallets</span>
+          <span><strong id="placed-count">0</strong> placed</span>
+          <span><strong id="unplaced-count">0</strong> unplaced</span>
+          <span id="review">Draft</span>
+        </div>
+        <div id="unplaced" hidden>
+          <p class="alert">Products to place</p>
+          <ul id="unplaced-list"></ul>
+        </div>
+        <div id="pallet-view" class="fields" hidden>
+          <label>Pallet <select id="pallet"></select></label>
+          <canvas id="preview" aria-label="Top-down pallet layout"></canvas>
+          <p class="note" id="dimensions"></p>
+          <details>
+            <summary>Pallet dimensions and handling</summary>
+            <form id="resize-form">
+              <div class="grid">
+                <label>Base length <input id="base-length" type="number" step="any" data-length required></label>
+                <label>Base width <input id="base-width" type="number" step="any" data-length required></label>
+              </div>
+              <div class="bar">
+                <button type="button" data-apply>Resize base</button>
+                <button type="button" id="remove-pallet">Remove empty pallet</button>
+              </div>
+            </form>
+            <form id="handling-form">
+              <div class="grid">
+                <label>Truck orientation <select id="truck-orientation">
+                  <option value="auto">Allow turning</option><option value="fixed">As entered</option><option value="turned">Turn 90°</option>
+                </select></label>
+                <label>Handling tag <input id="handling-tag" maxlength="120"></label>
+              </div>
+              <div><button type="button" data-apply>Apply handling</button></div>
+            </form>
+          </details>
+          <details id="edit-product" open>
+            <summary>Move or turn a product</summary>
+            <form id="place-form">
+              <label>Product unit <select id="unit-select"></select></label>
+              <div class="grid">
+                <label>Destination pallet <select id="target-pallet"></select></label>
+                <label>Product rotation <select id="rotation"><option value="0">0°</option><option value="90">90°</option></select></label>
+              </div>
+              <div class="grid">
+                <label>X <input id="position-x" type="number" min="0" step="any" data-length required></label>
+                <label>Y <input id="position-y" type="number" min="0" step="any" data-length required></label>
+              </div>
+              <div class="bar"><button type="button" data-apply>Apply position</button><button type="button" id="unplace-unit">Unplace</button></div>
+            </form>
+          </details>
+        </div>
+        <details>
+          <summary>Add a pallet</summary>
+          <form id="add-pallet-form">
+            <label>Job <select id="new-pallet-job" required></select></label>
+            <div class="grid">
+              <label>Base length <input id="new-length" type="number" step="any" data-length required></label>
+              <label>Base width <input id="new-width" type="number" step="any" data-length required></label>
+            </div>
+            <div><button type="button" data-apply>Add pallet</button></div>
+          </form>
+        </details>
+        <div class="bar">
+          <button type="button" id="undo">Undo</button>
+          <button type="button" id="redo">Redo</button>
+          <button type="button" id="open-drawing">Open drawing</button>
+          <button type="button" id="save-json">Save JSON</button>
+          <button type="button" id="confirm" class="primary">Confirm plan</button>
+        </div>
+      </section>
+    </fieldset>
+  </main>
+  <template id="product-template">
+    <div class="record product">
+      <div class="grid">
+        <label>Job <input name="jobId" maxlength="120" required></label>
+        <label>Product <input name="productId" maxlength="120" required></label>
+      </div>
+      <div class="grid three">
+        <label>Quantity <input name="quantity" type="number" min="1" max="1000" step="1" required></label>
+        <label>Length <input name="lengthMm" type="number" step="any" data-length required></label>
+        <label>Width <input name="widthMm" type="number" step="any" data-length required></label>
+      </div>
+      <div class="bar spread">
+        <label class="check"><input name="canRotate" type="checkbox"> Allow 90° turn</label>
+        <button type="button" data-remove>Remove product</button>
+      </div>
+      <details>
+        <summary>Product details</summary>
+        <div class="grid">
+          <label>Height <input name="heightMm" type="number" step="any" data-length></label>
+          <label>Unit weight (kg) <input name="weightKg" type="number" step="any"></label>
+        </div>
+        <label>Notes <input name="notes" maxlength="300"></label>
+      </details>
+    </div>
+  </template>
+  <template id="base-template">
+    <div class="record stock">
+      <label>Base name <input name="name" maxlength="120" required></label>
+      <div class="grid">
+        <label>Length <input name="lengthMm" type="number" step="any" data-length required></label>
+        <label>Width <input name="widthMm" type="number" step="any" data-length required></label>
+      </div>
+      <div><button type="button" data-remove>Remove base</button></div>
+    </div>
+  </template>
+  <script>
+    const $ = id => document.getElementById(id);
+    const send = message => parent.postMessage({ pluginMessage: message }, "*");
+    const lengthFields = {
+      "max-length": "maxLengthMm", "max-width": "maxWidthMm", edge: "edgeMm",
+      gap: "gapMm", increment: "incrementMm"
+    };
+    const canvas = $("preview");
+    const ctx = canvas.getContext("2d");
+    let mmPerUnit = 1;
+    let plan = null;
+    let rows = new Map();
+    let palletId = "";
+    let selectedUnit = "";
+    let colors = [];
+    let busy = true;
+    let drag = null;
+    let view = null;
+    let rowCounter = 0;
+    const input = (element, name) => element.querySelector('[name="' + name + '"]');
+    const number = element => element.valueAsNumber;
+    const mm = element => number(element) * mmPerUnit;
+    const asInput = value => String(Number((value / mmPerUnit).toFixed(12)));
+    const asText = value => String(Number((value / mmPerUnit).toFixed(3)));
+    const currentPallet = () => plan?.pallets.find(pallet => pallet.id === palletId);
+    const unitName = unit => rows.get(unit.rowId).productId + " · " + unit.id.split("/").at(-1);
+
+    function setBusy(value) {
+      busy = value;
+      for (const id of ["units", "open-json", "input-fields", "result-fields"]) $(id).disabled = busy;
+    }
+
+    function status(text, error = false) {
+      $("status").textContent = text;
+      $("status").classList.toggle("alert", error);
+    }
+
+    function request(type, data = {}) {
+      if (busy) return;
+      setBusy(true);
+      status(type === "generate" ? "Generating pallets…" : "");
+      send({ type, revisionId: plan?.revisionId, ...data });
+    }
+
+    function options(select, entries, preferred) {
+      select.replaceChildren(...entries.map(([value, label]) => new Option(label, value)));
+      if (entries.some(([value]) => value === preferred)) select.value = preferred;
+    }
+
+    function addRecord(template, container, record) {
+      const element = $(template).content.firstElementChild.cloneNode(true);
+      for (const field of element.querySelectorAll("[name]")) {
+        const value = record[field.name];
+        if (field.type === "checkbox") field.checked = Boolean(value);
+        else if (value !== undefined) field.value = field.hasAttribute("data-length") ? asInput(value) : String(value);
+      }
+      element.querySelector("[data-remove]").onclick = () => element.remove();
+      $(container).append(element);
+      return element;
+    }
+
+    function addProduct(row = { quantity: 1 }) {
+      const element = addRecord("product-template", "products", row);
+      element.dataset.id = row.id || "row-" + Date.now().toString(36) + "-" + (++rowCounter);
+      if (row.sourceUnit) element.dataset.sourceUnit = row.sourceUnit;
+      if (row.sourceRowId) element.dataset.sourceRowId = row.sourceRowId;
+    }
+
+    function hydrate(products, rules) {
+      $("products").replaceChildren();
+      $("stock").replaceChildren();
+      for (const row of products) addProduct(row);
+      if (!products.length) addProduct();
+      for (const [id, key] of Object.entries(lengthFields)) $(id).value = asInput(rules[key]);
+      $("allow-custom").checked = rules.allowCustom;
+      for (const base of rules.standardBases) addRecord("base-template", "stock", base);
+    }
+
+    function capture() {
+      const products = Array.from($("products").children, element => {
+        const field = name => input(element, name);
+        return {
+          id: element.dataset.id,
+          jobId: field("jobId").value,
+          productId: field("productId").value,
+          quantity: number(field("quantity")),
+          lengthMm: mm(field("lengthMm")),
+          widthMm: mm(field("widthMm")),
+          heightMm: field("heightMm").value ? mm(field("heightMm")) : undefined,
+          weightKg: field("weightKg").value ? number(field("weightKg")) : undefined,
+          notes: field("notes").value.trim(),
+          canRotate: field("canRotate").checked,
+          sourceRowId: element.dataset.sourceRowId,
+          sourceUnit: element.dataset.sourceUnit || $("units").value
+        };
+      });
+      const rules = { allowCustom: $("allow-custom").checked };
+      for (const [id, key] of Object.entries(lengthFields)) rules[key] = mm($(id));
+      rules.standardBases = Array.from($("stock").children, element => ({
+        name: input(element, "name").value,
+        lengthMm: mm(input(element, "lengthMm")),
+        widthMm: mm(input(element, "widthMm"))
+      }));
+      return { products, rules };
+    }
+
+    function setUnits(value) {
+      const next = value === "in" ? 25.4 : 1;
+      for (const field of document.querySelectorAll("input[data-length]")) {
+        if (field.value) field.value = String(Number((number(field) * mmPerUnit / next).toFixed(12)));
+      }
+      mmPerUnit = next;
+    }
+
+    function sizeText(size) {
+      return asText(size.lengthMm) + " × " + asText(size.widthMm) + " " + $("units").value;
+    }
+
+    function physicalSize(unit) {
+      const { lengthMm, widthMm } = rows.get(unit.rowId);
+      return unit.rotation === 90 ? { lengthMm: widthMm, widthMm: lengthMm } : { lengthMm, widthMm };
+    }
+
+    function draw() {
+      const pallet = currentPallet();
+      if (!pallet || !ctx || canvas.clientWidth < 50 || canvas.clientHeight < 50) return;
+      const style = getComputedStyle(document.documentElement);
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      const dpr = window.devicePixelRatio || 1;
+      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const { lengthMm, widthMm } = pallet.base;
+      const scale = Math.min((w - 40) / lengthMm, (h - 40) / widthMm);
+      const left = (w - lengthMm * scale) / 2;
+      const bottom = (h + widthMm * scale) / 2;
+      view = { scale, left, bottom };
+      const edge = plan.rules.edgeMm * scale;
+      const bg = style.getPropertyValue("--sk-panel").trim() || "#282c34";
+      const ink = style.getPropertyValue("--sk-text").trim() || "#edf1f5";
+      ctx.fillStyle = bg;
+      ctx.fillRect(left, bottom - widthMm * scale, lengthMm * scale, widthMm * scale);
+      ctx.strokeStyle = ink;
+      ctx.strokeRect(left, bottom - widthMm * scale, lengthMm * scale, widthMm * scale);
+      if (edge > 0 && lengthMm * scale > 2 * edge && widthMm * scale > 2 * edge) {
+        ctx.setLineDash([3, 4]);
+        ctx.globalAlpha = .55;
+        ctx.strokeRect(left + edge, bottom - widthMm * scale + edge, lengthMm * scale - 2 * edge, widthMm * scale - 2 * edge);
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+      for (const placement of pallet.placements) {
+        const item = drag?.unit.id === placement.id && drag.moved ? drag.unit : placement;
+        const size = physicalSize(item);
+        const x = left + item.xMm * scale;
+        const iw = size.lengthMm * scale;
+        const ih = size.widthMm * scale;
+        const y = bottom - item.yMm * scale - ih;
+        const row = rows.get(item.rowId);
+        ctx.fillStyle = row.color;
+        ctx.globalAlpha = item.id === selectedUnit ? 1 : .8;
+        ctx.fillRect(x, y, iw, ih);
+        ctx.globalAlpha = 1;
+        if (item.id === selectedUnit) {
+          ctx.strokeStyle = drag?.invalid ? "#ff6666" : ink;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, iw, ih);
+          ctx.lineWidth = 1;
+        }
+        if (iw >= 28 && ih >= 14) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x + 2, y + 1, iw - 4, ih - 2);
+          ctx.clip();
+          ctx.font = "600 12px system-ui";
+          ctx.fillStyle = "#101820";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(row.productId, x + iw / 2, y + ih / 2, iw - 6);
+          ctx.restore();
+        }
+      }
+    }
+
+    function renderSelection() {
+      const pallet = currentPallet();
+      const units = pallet ? [
+        ...pallet.placements, ...plan.unplaced.filter(item => rows.get(item.rowId).jobId === pallet.jobId)
+      ] : [];
+      const unit = units.find(item => item.id === selectedUnit) || units[0];
+      $("edit-product").hidden = !unit;
+      if (!unit) return;
+      selectedUnit = unit.id;
+      options($("unit-select"), units.map(item => [item.id, unitName(item) + (item.reason ? " (unplaced)" : "")]), selectedUnit);
+      options($("target-pallet"), plan.pallets.flatMap((other, index) =>
+        other.jobId === rows.get(unit.rowId).jobId ? [[other.id, "Pallet " + (index + 1) + " · " + sizeText(other.base)]] : []
+      ), pallet.id);
+      $("position-x").value = asInput(unit.xMm ?? plan.rules.edgeMm);
+      $("position-y").value = asInput(unit.yMm ?? plan.rules.edgeMm);
+      $("rotation").value = String(unit.rotation ?? 0);
+      $("rotation").disabled = !rows.get(unit.rowId).canRotate;
+      $("unplace-unit").disabled = Boolean(unit.reason);
+    }
+
+    function renderPallet() {
+      const pallet = currentPallet();
+      $("pallet-view").hidden = !pallet;
+      if (!pallet) return;
+      const used = pallet.placements.reduce((sum, unit) => {
+        const size = physicalSize(unit);
+        return sum + size.lengthMm * size.widthMm;
+      }, 0);
+      const utilization = Math.round(100 * used / (pallet.base.lengthMm * pallet.base.widthMm));
+      $("dimensions").textContent = sizeText(pallet.base) + " · " + utilization + "% used · "
+        + (pallet.baseName || (pallet.baseSource === "manual" ? "Edited base" : "Custom base"));
+      $("base-length").value = asInput(pallet.base.lengthMm);
+      $("base-width").value = asInput(pallet.base.widthMm);
+      $("remove-pallet").disabled = pallet.placements.length > 0;
+      $("handling-tag").value = pallet.tag || "";
+      $("truck-orientation").value = pallet.truckOrientation;
+      canvas.classList.toggle("ready", pallet.placements.length > 0);
+      renderSelection();
+      draw();
+    }
+
+    function renderPlan() {
+      $("results").hidden = !plan;
+      if (!plan) return;
+      const placed = plan.pallets.reduce((count, pallet) => count + pallet.placements.length, 0);
+      $("pallet-count").textContent = plan.pallets.length;
+      $("placed-count").textContent = placed;
+      $("unplaced-count").textContent = plan.unplaced.length;
+      $("review").textContent = plan.review === "confirmed" ? "Confirmed" : "Draft";
+      $("confirm").disabled = plan.review === "confirmed" || Boolean(plan.unplaced.length) || plan.pallets.some(pallet => !pallet.placements.length);
+      $("open-drawing").disabled = !plan.pallets.length;
+      $("unplaced").hidden = !plan.unplaced.length;
+      const unplacedRows = new Map();
+      for (const item of plan.unplaced) {
+        const key = rows.get(item.rowId).productId + " · " + rows.get(item.rowId).jobId + " · "
+          + (item.reason === "manual" ? "Unplaced by operator" : "No base fits with these rules");
+        unplacedRows.set(key, (unplacedRows.get(key) || 0) + 1);
+      }
+      $("unplaced-list").replaceChildren(...Array.from(unplacedRows, ([label, count]) => {
+        const li = document.createElement("li");
+        li.textContent = count + " × " + label;
+        return li;
+      }));
+
+      options($("pallet"), plan.pallets.map((pallet, index) =>
+        [pallet.id, "Pallet " + (index + 1) + " · " + pallet.jobId + " · " + sizeText(pallet.base)]
+      ), palletId);
+      palletId = $("pallet").value;
+      const jobs = [...new Set(plan.products.map(row => row.jobId))];
+      options($("new-pallet-job"), jobs.map(job => [job, job]), currentPallet()?.jobId);
+      if (!$("new-length").value) $("new-length").value = asInput(plan.rules.maxLengthMm);
+      if (!$("new-width").value) $("new-width").value = asInput(plan.rules.maxWidthMm);
+      renderPallet();
+    }
+
+    const edit = (type, data = {}) => request("edit", { action: { type, ...data } });
+    const readBase = (length, width) => ({ lengthMm: mm($(length)), widthMm: mm($(width)) });
+    function bindForm(id, action) {
+      // The plugin iframe has scripts enabled. Panel actions use messages to
+      // the worker, so the browser never has to submit or navigate a form.
+      const form = $(id);
+      const run = () => {
+        if (busy) return;
+        const invalid = form.querySelector("input:invalid, select:invalid");
+        if (invalid) {
+          for (let el = invalid.parentElement; el && el !== form; el = el.parentElement) {
+            if (el.tagName === "DETAILS") el.open = true;
+          }
+          invalid.reportValidity();
+          return;
+        }
+        action();
+      };
+      form.querySelector("[data-apply]").onclick = run;
+      form.addEventListener("keydown", event => {
+        if (event.key !== "Enter" || event.target.tagName !== "INPUT") return;
+        event.preventDefault();
+        run();
+      });
+    }
+
+    $("add-product").onclick = () => addProduct({ jobId: input($("products").lastElementChild || document, "jobId")?.value, quantity: 1 });
+    $("add-stock").onclick = () => addRecord("base-template", "stock", {});
+    $("example").onclick = () => {
+      $("products").replaceChildren();
+      addProduct({ jobId: "DEMO-1", productId: "Long carton", quantity: 2, lengthMm: 2032, widthMm: 457.2 });
+    };
+    $("units").onchange = () => { setUnits($("units").value); renderPlan(); };
+    bindForm("generate-form", () => request("generate", { input: capture() }));
+    $("open-json").onclick = () => $("plan-file").click();
+    $("plan-file").onchange = async () => {
+      const file = $("plan-file").files[0];
+      $("plan-file").value = "";
+      if (!file || busy) return;
+      if (file.size > 4_000_000) return status("Choose a pallet plan JSON file under 4 MB.", true);
+      try {
+        request("open-json", { data: await file.text() });
+      } catch {
+        status("Could not read the selected file.", true);
+      }
+    };
+    $("pallet").onchange = () => {
+      palletId = $("pallet").value;
+      selectedUnit = "";
+      $("new-pallet-job").value = currentPallet().jobId;
+      renderPallet();
+    };
+    $("unit-select").onchange = () => { selectedUnit = $("unit-select").value; renderSelection(); draw(); };
+    bindForm("resize-form", () => edit("resize", { palletId, base: readBase("base-length", "base-width") }));
+    $("remove-pallet").onclick = () => edit("remove-pallet", { palletId });
+    bindForm("handling-form", () => edit("handling", {
+      palletId, truckOrientation: $("truck-orientation").value, tag: $("handling-tag").value.trim()
+    }));
+    bindForm("add-pallet-form", () => edit("add-pallet", {
+      jobId: $("new-pallet-job").value, base: readBase("new-length", "new-width")
+    }));
+    bindForm("place-form", () => edit("place", {
+      unitId: selectedUnit, palletId: $("target-pallet").value, rotation: Number($("rotation").value),
+      xMm: mm($("position-x")), yMm: mm($("position-y"))
+    }));
+    $("unplace-unit").onclick = () => edit("unplace", { unitId: selectedUnit });
+    $("confirm").onclick = () => edit("confirm");
+    $("open-drawing").onclick = () => request("draw");
+    $("save-json").onclick = () => request("save-json");
+    $("undo").onclick = () => request("undo");
+    $("redo").onclick = () => request("redo");
+
+    function cursor(event) {
+      const bounds = canvas.getBoundingClientRect();
+      return {
+        xMm: (event.clientX - bounds.left - canvas.clientLeft - view.left) / view.scale,
+        yMm: (view.bottom - event.clientY + bounds.top + canvas.clientTop) / view.scale
+      };
+    }
+
+    function validPreview(item) {
+      const pallet = currentPallet();
+      const { edgeMm, gapMm } = plan.rules;
+      const size = physicalSize(item);
+      const xEnd = item.xMm + size.lengthMm;
+      const yEnd = item.yMm + size.widthMm;
+      if (item.xMm < edgeMm - 1e-6 || item.yMm < edgeMm - 1e-6
+        || xEnd > pallet.base.lengthMm - edgeMm + 1e-6 || yEnd > pallet.base.widthMm - edgeMm + 1e-6) return false;
+      const gap = gapMm - 1e-6;
+      return pallet.placements.every(other => {
+        if (other.id === item.id) return true;
+        const size = physicalSize(other);
+        return xEnd + gap <= other.xMm || yEnd + gap <= other.yMm
+          || other.xMm + size.lengthMm + gap <= item.xMm || other.yMm + size.widthMm + gap <= item.yMm;
+      });
+    }
+
+    canvas.onpointerdown = event => {
+      if (busy || drag || !view || event.button !== 0) return;
+      const point = cursor(event);
+      const placement = currentPallet()?.placements.find(unit => {
+        const size = physicalSize(unit);
+        return point.xMm >= unit.xMm && point.xMm <= unit.xMm + size.lengthMm
+          && point.yMm >= unit.yMm && point.yMm <= unit.yMm + size.widthMm;
+      });
+      if (!placement) return;
+      selectedUnit = placement.id;
+      drag = { pointerId: event.pointerId, unit: { ...placement }, start: point, original: placement, moved: false, invalid: false };
+      canvas.setPointerCapture(event.pointerId);
+      renderSelection();
+      draw();
+    };
+    canvas.onpointermove = event => {
+      if (drag?.pointerId !== event.pointerId) return;
+      const point = cursor(event);
+      const dx = point.xMm - drag.start.xMm;
+      const dy = point.yMm - drag.start.yMm;
+      if (!drag.moved && Math.hypot(dx, dy) * view.scale < 3) return;
+      drag.moved = true;
+      drag.unit.xMm = drag.original.xMm + dx;
+      drag.unit.yMm = drag.original.yMm + dy;
+      drag.invalid = !validPreview(drag.unit);
+      draw();
+    };
+    canvas.onpointerup = event => {
+      if (drag?.pointerId !== event.pointerId) return;
+      const { unit, moved } = drag;
+      drag = null;
+      draw();
+      if (moved) edit("place", { palletId, unitId: unit.id, rotation: unit.rotation, xMm: unit.xMm, yMm: unit.yMm });
+    };
+    canvas.onlostpointercapture = () => { drag = null; draw(); };
+    new ResizeObserver(draw).observe(canvas);
+
+    window.addEventListener("message", event => {
+      if (event.source !== parent) return;
+      if (event.data?.sketchorTheme) { draw(); return; }
+      const message = event.data?.pluginMessage;
+      if (!message) return;
+      if (message.type === "init" || message.type === "plan") {
+        if (message.type === "init") {
+          colors = message.colors;
+          $("units").value = message.unit.unit === "in" ? "in" : "mm";
+          setUnits($("units").value);
+        }
+        plan = message.plan;
+        if (message.replaceInputs) hydrate(plan?.products || [], plan?.rules || message.rules);
+        if (plan && message.replaceInputs) $("inputs").open = false;
+        rows = new Map(plan?.products.map((row, index) => [row.id, { ...row, color: colors[index % colors.length] }]));
+        $("undo").disabled = !message.canUndo;
+        $("redo").disabled = !message.canRedo;
+        renderPlan();
+      }
+      setBusy(false);
+      status(message.message || "", message.type === "error");
+    });
+    send({ type: "ready" });
+  </script>
+</body>
+</html>
