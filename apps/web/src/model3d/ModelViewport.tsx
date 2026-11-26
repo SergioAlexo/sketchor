@@ -23,7 +23,7 @@ import { useTheme } from "../theme/themeStore";
 import { formatBytes } from "./importError";
 import { measureSelection, partOf, refLabel, type MeasureSegment, type SelRef } from "./measure";
 import { faceOutlineBlocker, outlineOfFace, outlineOfView } from "./faceTo2d";
-import { exportBytes, exportFileName, exportProblems, modelToMeshParts, type MeshExportFormat, type MeshExportUnit } from "./exportMesh";
+import { exportBytes, exportFileName, exportProblems, modelToMeshParts, repairParts, type MeshExportFormat, type MeshExportUnit } from "./exportMesh";
 import { saveBytesAs } from "../io/saveBytes";
 import { pickEdge, pickVertex, type Projector } from "./picking";
 import { useOpenLoads } from "./stepImport";
@@ -938,20 +938,26 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
   const [exportUnit, setExportUnit] = useState<MeshExportUnit>("mm");
   const exportAs = async (format: MeshExportFormat) => {
     setExportMenu(false);
-    const parts = modelToMeshParts(model, hidden);
+    let parts = modelToMeshParts(model, hidden);
     if (parts.length === 0) {
       useApp.getState().setSaveNotice({ kind: "error", message: "Nothing to export: every part is hidden", at: Date.now() });
       return;
     }
     const problems = exportProblems(parts);
+    let repairNote = "";
     if (problems.length > 0) {
       const list = problems.slice(0, 8).join("\n") + (problems.length > 8 ? `\n…and ${problems.length - 8} more` : "");
-      if (!window.confirm(`Some parts may not print as they are:\n\n${list}\n\nExport anyway?`)) return;
+      if (window.confirm(`Some parts may not print as they are:\n\n${list}\n\nRepair them before exporting? (OK repairs; Cancel offers to export them as they are)`)) {
+        const fixed = repairParts(parts);
+        parts = fixed.parts;
+        repairNote = fixed.summary.join("; ");
+      } else if (!window.confirm("Export without repairing?")) return;
     }
     try {
       const bytes = await exportBytes(model, parts, format, exportUnit);
       const is3mf = format === "3mf";
-      await saveBytesAs(exportFileName(model, format), bytes, is3mf ? { description: "3MF model", mime: "model/3mf", ext: "3mf" } : { description: "STL mesh", mime: "model/stl", ext: "stl" });
+      const saved = await saveBytesAs(exportFileName(model, format), bytes, is3mf ? { description: "3MF model", mime: "model/3mf", ext: "3mf" } : { description: "STL mesh", mime: "model/stl", ext: "stl" });
+      if (saved && repairNote) useApp.getState().setSaveNotice({ kind: "saved", message: `Exported a repaired copy — ${repairNote}`, at: Date.now() });
     } catch (err) {
       useApp.getState().setSaveNotice({ kind: "error", message: `Export failed: ${(err as Error).message}`, at: Date.now() });
     }

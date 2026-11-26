@@ -1,4 +1,4 @@
-import { checkMesh, describeMeshCheck, write3mf, writeStl, type MeshPart } from "@sketchor/core";
+import { checkMesh, describeMeshCheck, describeRepair, repairChangedNothing, repairMesh, write3mf, writeStl, type MeshPart } from "@sketchor/core";
 import { DEFAULT_PART_RGB } from "./buildModel";
 import type { Model3D } from "./types";
 
@@ -55,4 +55,15 @@ export async function exportBytes(model: Model3D, parts: readonly MeshPart[], fo
   const title = model.name.replace(/\.[^.]*$/, "");
   if (format === "3mf") return write3mf(parts, { unit: unit === "in" ? "inch" : unit === "m" ? "meter" : "millimeter", metadata: { Title: title } });
   return writeStl(parts, { format: format === "stl-ascii" ? "ascii" : "binary", scale: UNIT_SCALE[unit], colors: format === "stl" && parts.some((p) => p.colors), name: title });
+}
+
+/** F-11: every part through the one-click repair; the summary line names what changed per part. */
+export function repairParts(parts: readonly MeshPart[]): { parts: MeshPart[]; summary: string[] } {
+  const summary: string[] = [];
+  const out = parts.map((p) => {
+    const r = repairMesh(p);
+    if (!repairChangedNothing(r.report) || r.report.holesLeft) summary.push(`${p.name}: ${describeRepair(r.report)}`);
+    return r.part;
+  });
+  return { parts: out, summary };
 }
