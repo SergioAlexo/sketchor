@@ -23,6 +23,8 @@ import { useTheme } from "../theme/themeStore";
 import { formatBytes } from "./importError";
 import { measureSelection, partOf, refLabel, type MeasureSegment, type SelRef } from "./measure";
 import { faceOutlineBlocker, outlineOfFace, outlineOfView } from "./faceTo2d";
+import { exportBytes, exportFileName, exportProblems, modelToMeshParts, type MeshExportFormat, type MeshExportUnit } from "./exportMesh";
+import { saveBytesAs } from "../io/saveBytes";
 import { pickEdge, pickVertex, type Projector } from "./picking";
 import { useOpenLoads } from "./stepImport";
 import type { Model3D } from "./types";
@@ -931,6 +933,29 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
     useApp.getState().syncLayersFromDoc();
     useApp.getState().requestFit();
   };
+  /** F-11: the visible parts as STL or 3MF, after a warning if a slicer would object to them. */
+  const [exportMenu, setExportMenu] = useState(false);
+  const [exportUnit, setExportUnit] = useState<MeshExportUnit>("mm");
+  const exportAs = async (format: MeshExportFormat) => {
+    setExportMenu(false);
+    const parts = modelToMeshParts(model, hidden);
+    if (parts.length === 0) {
+      useApp.getState().setSaveNotice({ kind: "error", message: "Nothing to export: every part is hidden", at: Date.now() });
+      return;
+    }
+    const problems = exportProblems(parts);
+    if (problems.length > 0) {
+      const list = problems.slice(0, 8).join("\n") + (problems.length > 8 ? `\n…and ${problems.length - 8} more` : "");
+      if (!window.confirm(`Some parts may not print as they are:\n\n${list}\n\nExport anyway?`)) return;
+    }
+    try {
+      const bytes = await exportBytes(model, parts, format, exportUnit);
+      const is3mf = format === "3mf";
+      await saveBytesAs(exportFileName(model, format), bytes, is3mf ? { description: "3MF model", mime: "model/3mf", ext: "3mf" } : { description: "STL mesh", mime: "model/stl", ext: "stl" });
+    } catch (err) {
+      useApp.getState().setSaveNotice({ kind: "error", message: `Export failed: ${(err as Error).message}`, at: Date.now() });
+    }
+  };
   /** F-07: project the visible parts along a view preset (or the current camera) into a new 2D tab. */
   const [viewMenu, setViewMenu] = useState(false);
   const viewTo2d = (preset: ViewPreset | "current") => {
@@ -1064,6 +1089,37 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
                   {p === "current" ? "Current view" : p[0].toUpperCase() + p.slice(1)}
                 </button>
               ))}
+            </div>
+          )}
+        </span>
+        <span style={{ position: "relative", display: "inline-flex" }}>
+          <ToolButton
+            title="Export the visible parts as STL or 3MF, for printing or another program"
+            label="Export"
+            icon={ICONS.export}
+            active={exportMenu}
+            onClick={() => setExportMenu((v) => !v)}
+            testId="model-export"
+          />
+          {exportMenu && (
+            <div className="model-view-menu" data-testid="model-export-menu" style={{ position: "absolute", top: "100%", right: 0, zIndex: 20, display: "flex", flexDirection: "column", gap: 2, background: "var(--panel, #25262b)", border: "1px solid var(--border, #444)", borderRadius: 6, padding: 4, minWidth: 170 }}>
+              <button className="btn ghost sm" onClick={() => void exportAs("3mf")} data-testid="model-export-3mf" title="Sizes, names and colours kept; opens in PrusaSlicer, Bambu Studio, Cura and 3D Builder">
+                3MF (recommended)
+              </button>
+              <button className="btn ghost sm" onClick={() => void exportAs("stl")} data-testid="model-export-stl">
+                STL (binary)
+              </button>
+              <button className="btn ghost sm" onClick={() => void exportAs("stl-ascii")} data-testid="model-export-stl-ascii">
+                STL (text)
+              </button>
+              <label className="model-export-unit" style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", fontSize: 12 }}>
+                Units
+                <select value={exportUnit} onChange={(e) => setExportUnit(e.target.value as MeshExportUnit)} data-testid="model-export-unit">
+                  <option value="mm">mm</option>
+                  <option value="in">inch</option>
+                  <option value="m">m</option>
+                </select>
+              </label>
             </div>
           )}
         </span>
@@ -1217,6 +1273,12 @@ const ICONS = {
     <svg viewBox="0 0 24 24" width="18" height="18">
       <path d="M9 9h6v6H9z" {...stroke} />
       <path d="M4 4h3M4 4v3M20 4h-3M20 4v3M4 20h3M4 20v-3M20 20h-3M20 20v-3" {...stroke} />
+    </svg>
+  ),
+  export: (
+    <svg viewBox="0 0 24 24" width="18" height="18">
+      <path d="M12 4v11M8 11l4 4 4-4" {...stroke} />
+      <path d="M5 17v3h14v-3" {...stroke} />
     </svg>
   ),
   to2d: (

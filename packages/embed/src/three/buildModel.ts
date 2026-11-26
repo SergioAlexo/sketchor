@@ -17,6 +17,8 @@ import { extractTopology, NO_FACE } from "./topology";
 
 /** Part colour when the file doesn't carry one — a neutral CAD grey. */
 const DEFAULT_COLOR: [number, number, number] = [0.78, 0.79, 0.82];
+/** F-11: the 0–255 colour a part without a colour of its own is drawn in (an exporter leaves it out rather than writing it as the part's colour). */
+export const DEFAULT_PART_RGB: readonly [number, number, number] = [199, 201, 209];
 
 const EMPTY_BOUNDS = (): Bounds3 => ({ min: [0, 0, 0], max: [0, 0, 0] });
 
