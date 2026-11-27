@@ -46,6 +46,13 @@ import {
   problemHint,
   groupsFromRows,
   parseSheetText,
+  AMADA_PRESETS,
+  amadaPreset,
+  machineFromPreset,
+  parsePartsCsv,
+  groupsFromCsvRows,
+  groupThickness,
+  groupRunJob,
   resolveItem,
   sumRepeatedRows,
   type JobGroup,
@@ -445,6 +452,15 @@ const plugin: PluginModule = {
     /** N-52: offcuts of the last result and the inventory rows it consumed, until saved (or the next run). */
     let lastRemnants: { rem: Remnant; material?: string; materialId?: string; thickness?: number }[] = [];
     let lastUsed: number[] = [];
+    /**
+     * Multi-material results: per sheet, the kerf its group was nested with
+     * (G-code offsets the path by it) and the group's file-name tag; plus the
+     * smallest part gap of any group, for the layout checks. Empty / null for
+     * a single-material result, which follows the job's current kerf.
+     */
+    let lastSheetKerf: number[] = [];
+    let lastSheetTag: string[] = [];
+    let lastGap: number | null = null;
     let cancelRequested = false;
     let running = false;
     let fileCounter = files.size;
@@ -466,11 +482,27 @@ const plugin: PluginModule = {
       error?: string;
     }
 
+    /**
+     * Drawings added with "Add drawings" / "Add files" as lookup entries, so a
+     * list can be nested without a folder: `added/<file key>/<name>.dxf`.
+     */
+    const addedLookup = (): { relPath: string }[] =>
+      [...files.values()].filter((f) => !f.error && f.parts.length > 0).map((f) => ({ relPath: `added/${f.key}/${f.name.replace(/[\\/]/g, "_")}${/\.dxf$/i.test(f.name) ? "" : ".dxf"}` }));
+    /** The parsed drawing behind a resolved lookup path (folder file or added drawing). */
+    const groupFileFor = (relPath: string): FileRec | undefined => (relPath.startsWith("added/") ? files.get(relPath.split("/")[1] ?? "") : groupFiles.get(relPath));
+    /** Folder first (the shop's drawing library), then the drawings added to this job. */
+    const resolveGroupItem = (it: { num: string; qty: number }) => {
+      const inFolder = folder ? resolveItem(it.num, it.qty, folder.files, DRAWING_EXTS) : null;
+      if (inFolder?.file) return inFolder;
+      const added = addedLookup();
+      return added.length > 0 ? resolveItem(it.num, it.qty, added, DRAWING_EXTS) : inFolder;
+    };
+
     const itemStatus = (it: { num: string; qty: number }): ItemStatus => {
-      if (!folder) return { ...it, state: "nofolder", per: 1, need: null };
-      const r = resolveItem(it.num, it.qty, folder.files, DRAWING_EXTS);
+      const r = resolveGroupItem(it);
+      if (!r) return { ...it, state: "nofolder", per: 1, need: null };
       if (!r.file) return { ...it, state: "missing", per: 1, need: r.need };
-      const f = groupFiles.get(r.file.relPath);
+      const f = groupFileFor(r.file.relPath);
       if (!f) return { ...it, state: "loading", relPath: r.file.relPath, per: r.per, need: r.need };
       if (f.error) return { ...it, state: "failed", relPath: r.file.relPath, per: r.per, need: r.need, error: f.error };
       return { ...it, state: "ok", relPath: r.file.relPath, per: r.per, need: r.need };
@@ -504,14 +536,14 @@ const plugin: PluginModule = {
      */
     const partsProblem = (recs: Map<string, PartRec>): string => {
       if (job.mode === "groups") {
-        if (job.groups.length === 0) return "no groups yet - paste a parts list and click Groups from the list";
-        if (!folder) return "no drawing folder chosen";
+        if (job.groups.length === 0) return "no groups yet - load a CSV or paste a parts list and click Groups from the list";
+        if (!folder && addedLookup().length === 0) return "no drawings - choose a folder or add the DXF files";
         const probs: { name: string; reason: string }[] = [];
         for (const g of job.groups) {
-          if (g.items.length === 0) probs.push({ name: `${MATERIAL_NAMES[g.material] ?? g.material} ${g.thickness}"`, reason: "group has no parts" });
+          if (g.items.length === 0) probs.push({ name: groupLabel(g), reason: "group has no parts" });
           for (const it of g.items) {
             const st = itemStatus(it);
-            if (st.state === "missing") probs.push({ name: it.num, reason: "no DXF file found in the folder" });
+            if (st.state === "missing") probs.push({ name: it.num, reason: folder ? "no DXF file found in the folder or the added drawings" : "no added drawing has that name - add it or choose a folder" });
             else if (st.state === "failed") probs.push({ name: it.num, reason: st.error ?? "the drawing could not be read" });
           }
         }
@@ -523,42 +555,103 @@ const plugin: PluginModule = {
       return job.parts.some((x) => x.qty > 0) ? "" : "every quantity is 0";
     };
 
+    /** "Carbon steel 3 mm", "AL 5052 1/8\"" - a group's name in the panel, the report and file names. */
+    const groupLabel = (g: JobGroup): string => {
+      const t = g.thickness.trim();
+      return `${MATERIAL_NAMES[g.material] ?? g.material}${t ? (g.thicknessUnit === "mm" ? ` ${t} mm` : ` ${t}"`) : ""}`;
+    };
+
+    /** A kerf in mm as a field in the machine file's unit (what applyProfile writes too). */
+    const kerfField = (mm: number, u: "mm" | "in"): LengthField => (u === "in" ? { v: String(Math.round((mm / MM_PER_IN) * 10000) / 10000), u: "in" } : { v: String(Math.round(mm * 1000) / 1000), u: "mm" });
+
+    /** The machine file's cut row for a group's material and thickness, when a sheet machine file is selected. */
+    const groupProfileRow = (g: JobGroup) => {
+      const prof = activeProfile();
+      const t = lengthMm(groupThickness(g));
+      return prof && t > 0 ? { prof, row: profileRowFor(prof, g.material, t) } : null;
+    };
+
+    /** Kerf the machine file gives a group (null = none: the job's kerf applies). */
+    const profileKerfFor = (g: JobGroup): LengthField | null => {
+      const m = groupProfileRow(g);
+      return m?.row?.kerfMm ? kerfField(m.row.kerfMm, m.prof.units) : null;
+    };
+
     const buildGroupRuns = (): Run[] => {
       const runs: Run[] = [];
       for (const g of job.groups) {
-        const needByFile = new Map<string, number>();
+        // Items resolving to the same drawing are summed; the first item's rotation / priority / due date apply.
+        const byFile = new Map<string, { need: number; item: (typeof g.items)[number] }>();
         for (const it of g.items) {
           const s = itemStatus(it);
-          if (s.state === "ok" && s.relPath) needByFile.set(s.relPath, (needByFile.get(s.relPath) ?? 0) + (s.need ?? it.qty));
+          if (s.state !== "ok" || !s.relPath) continue;
+          const cur = byFile.get(s.relPath);
+          if (cur) cur.need += s.need ?? it.qty;
+          else byFile.set(s.relPath, { need: s.need ?? it.qty, item: it });
         }
         const recs = new Map<string, PartRec>();
         const parts: JobPart[] = [];
-        for (const [relPath, need] of needByFile) {
-          for (const p of groupFiles.get(relPath)?.parts ?? []) {
-            recs.set(p.key, p);
-            parts.push({ key: p.key, sourceIds: [], name: p.name, qty: need, rotation: g.rotation, mirror: false, allowInHoles: false });
+        for (const [relPath, { need, item }] of byFile) {
+          for (const p of groupFileFor(relPath)?.parts ?? []) {
+            // The same drawing can sit in two groups (two thicknesses of one part): each run keeps its own key.
+            const key = `${g.id}::${p.key}`;
+            recs.set(key, { ...p, key });
+            parts.push({
+              key,
+              sourceIds: [],
+              name: p.name,
+              qty: need,
+              rotation: item.rotation ?? g.rotation,
+              mirror: false,
+              allowInHoles: false,
+              ...(item.priority ? { priority: item.priority } : {}),
+              ...(item.due ? { due: item.due } : {}),
+            });
           }
         }
-        const label = `${MATERIAL_NAMES[g.material] ?? g.material}${g.thickness ? ` ${g.thickness}"` : ""}`;
-        runs.push({ label, job: { ...job, mode: "manual", material: g.material, thickness: { v: g.thickness, u: "in" }, sheet: g.sheet, sheetSource: "standard", stock: [], buyExtra: false, parts }, recs });
+        runs.push({ label: groupLabel(g), job: groupRunJob(job, g, parts, profileKerfFor(g)), recs });
       }
       return runs;
     };
 
     const groupsView = () =>
-      job.groups.map((g) => ({
+      job.groups.map((g) => {
+        const run = groupRunJob(job, g, [], profileKerfFor(g));
+        const kerfMm = jobParamsMm(run).kerf;
+        const m = groupProfileRow(g);
+        const kerfFrom = g.kerf && g.kerf.v.trim() !== "" ? "group" : profileKerfFor(g) ? "machine" : "job";
+        const machineHint = m
+          ? m.row
+            ? `${m.prof.name}: ${m.row.exact ? "cut row" : "estimated from the nearest rows"} - feed ${fmtSpeed(m.row.feedMmPerMin, job.outputUnit)}, pierce ${Math.round(m.row.pierceSec * 100) / 100} s${m.row.note ? ` (${m.row.note})` : ""}`
+            : `${m.prof.name} has no cut row for ${MATERIAL_NAMES[g.material] ?? g.material} - the job's kerf and speeds apply.`
+          : "";
+        return {
         id: g.id,
+        label: groupLabel(g),
         material: g.material,
         thickness: g.thickness,
+        thicknessUnit: g.thicknessUnit ?? "in",
+        kerf: g.kerf?.v ?? "",
+        kerfUnit: g.kerf?.u ?? bareUnitFor(job.outputUnit),
+        kerfAuto: fmtFine(kerfMm),
+        kerfFrom,
+        machineHint,
         sheet: g.sheet,
         rotation: g.rotation,
-        sheetOptions: sheetsFor(g.material).map((s) => ({ w: s.size.w, h: s.size.h, label: `${fmtMm(s.size.w * MM_PER_IN, job.outputUnit)} × ${fmtMm(s.size.h * MM_PER_IN, job.outputUnit)}` })),
+        // A size from the CSV's sheet column may not be in the catalog: list it first so the select shows what will be cut.
+        sheetOptions: [...(sheetsFor(g.material).some((s) => sameSheet(s.size, g.sheet)) ? [] : [{ size: g.sheet, fromList: true }]), ...sheetsFor(g.material)].map((s) => ({
+          w: s.size.w,
+          h: s.size.h,
+          label: `${fmtMm(s.size.w * MM_PER_IN, job.outputUnit)} × ${fmtMm(s.size.h * MM_PER_IN, job.outputUnit)}${"fromList" in s ? " (from the list)" : ""}`,
+        })),
         thicknessOptions: thicknessesFor(g.material).map((t) => ({ value: t.value, label: t.label ? `${t.value}" · ${t.label}` : `${t.value}"` })),
         items: g.items.map((it) => {
           const s = itemStatus(it);
-          return { num: it.num, qty: it.qty, state: s.state, file: s.relPath, per: s.per, need: s.need, error: s.error };
+          const file = s.relPath?.startsWith("added/") ? `added: ${s.relPath.split("/").slice(2).join("/")}` : s.relPath;
+          return { num: it.num, qty: it.qty, state: s.state, file, per: s.per, need: s.need, error: s.error, rotation: it.rotation ?? "", priority: it.priority ?? "", due: it.due ?? "" };
         }),
-      }));
+        };
+      });
 
     const persistJob = () => void sketchor.storage.set(KEY_JOB, job).catch(() => undefined);
     const persistCustom = () => void sketchor.storage.set(KEY_CUSTOM, custom).catch(() => undefined);
@@ -606,6 +699,8 @@ const plugin: PluginModule = {
     // ---------- view ----------
 
     const fmt = (mm: number) => fmtMm(mm, job.outputUnit);
+    /** Kerf-sized lengths: `fmt` rounds mm to 0.1, which would show a 0.15 mm kerf as 0.2. */
+    const fmtFine = (mm: number) => (["mm", "cm", "m"].includes(bareUnitFor(job.outputUnit)) ? `${Math.round(mm * 1000) / 1000} mm` : `${Math.round((mm / MM_PER_IN) * 10000) / 10000}"`);
     const num3 = (mm: number) => String(Math.round((bareUnitFor(job.outputUnit) === "in" ? mm / MM_PER_IN : bareUnitFor(job.outputUnit) === "cm" ? mm / 10 : bareUnitFor(job.outputUnit) === "m" ? mm / 1000 : mm) * 1000) / 1000);
     const thumbOf = (outer: Pt[]) => {
       const step = Math.max(1, Math.ceil(outer.length / 60));
@@ -711,6 +806,8 @@ const plugin: PluginModule = {
         groups: groupsView(),
         bomText,
         folder: folder ? { name: folder.name, count: folder.files.length, truncated: !!folder.truncated } : null,
+        addedDrawings: job.mode === "groups" ? addedLookup().length : 0,
+        amadaPresets: AMADA_PRESETS.map((p) => ({ id: p.id, model: p.model, sheet: `${fmt(p.sheet.w)} × ${fmt(p.sheet.h)}` })),
         unsupported,
         engineHint: engineHintLines(job.engine, job, unsupported),
         partsProblem: partsProblem(recs),
@@ -866,6 +963,17 @@ const plugin: PluginModule = {
 
     // ---------- nest ----------
 
+    /** "Carbon steel 3 mm" -> "Carbon-steel-3mm": a group's name as a file / folder name. */
+    const fileTag = (label: string): string =>
+      label
+        .replace(/"/g, "in")
+        .replace(/(\d) mm\b/g, "$1mm")
+        .replace(/[^\w.-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60) || "group";
+    /** A sheet's export file name, prefixed with its group in a multi-material result. */
+    const taggedName = (sheetIndex: number, name: string): string => (lastSheetTag[sheetIndex] ? `${lastSheetTag[sheetIndex]}_${name}` : name);
+
     interface Run {
       label: string;
       job: NestJob;
@@ -927,7 +1035,7 @@ const plugin: PluginModule = {
       }
       rows.push(["Machine", { laser: "Laser", waterjet: "Waterjet", router: "CNC router", other: "Other" }[job.machine] ?? job.machine]);
       rows.push(["Engine", job.engine === "raster" ? "Raster" : "True shape"]);
-      rows.push([job.machine === "router" ? "Bit diameter (kerf)" : "Kerf", field(job.params.kerf)]);
+      rows.push([job.machine === "router" ? "Bit diameter (kerf)" : "Kerf", grouped ? "per group - see each group's heading" : field(job.params.kerf)]);
       rows.push(["Web (gap)", field(job.params.web)]);
       rows.push(["Edge margin", field(job.params.margin)]);
       if (job.machine === "laser") rows.push(["Clamp strip", field(job.params.clamp)]);
@@ -994,6 +1102,9 @@ const plugin: PluginModule = {
       }
 
       const grouped = job.mode === "groups" && runs.length > 0;
+      lastSheetKerf = grouped ? result.sheets.map((_, i) => jobParamsMm(runs[sheetRun[i] ?? 0]!.job).kerf) : [];
+      lastSheetTag = grouped ? result.sheets.map((_, i) => fileTag(runs[sheetRun[i] ?? 0]!.label)) : [];
+      lastGap = grouped ? Math.min(...runs.map((r) => jobParamsMm(r.job).spacing)) : null;
       const sheetLabel = (sheet: TrueNestSheet, i: number): string => {
         const run = runs[sheetRun[i] ?? 0];
         return `Sheet ${i + 1}/${result.sheets.length}${grouped && run ? " – " + run.label : ""} – ${fmt(sheet.width)} × ${fmt(sheet.height)}`;
@@ -1116,7 +1227,7 @@ const plugin: PluginModule = {
         details: [...reportDetails(grouped), ...speedDetails(result, grouped), ...(job.commonLine ? ([["Common-line cutting", `on - ${fmt(commonSaved)} of edges shared by neighbouring parts are cut once (parts spaced one kerf apart)`]] as [string, string][]) : [])],
         groupSections: grouped
           ? runs.map((run, ri) => ({
-              title: `${run.label} - sheet ${fmt(run.job.sheet.w * MM_PER_IN)} × ${fmt(run.job.sheet.h * MM_PER_IN)}`,
+              title: `${run.label} - sheet ${fmt(run.job.sheet.w * MM_PER_IN)} × ${fmt(run.job.sheet.h * MM_PER_IN)} - kerf ${fmtFine(jobParamsMm(run.job).kerf)}`,
               sheets: sheetLabels.filter((_, i) => (sheetRun[i] ?? 0) === ri),
               parts: run.job.parts
                 .filter((jp) => jp.qty > 0 && run.recs.has(jp.key))
@@ -1263,7 +1374,7 @@ const plugin: PluginModule = {
     const readNow = (entities: readonly Entity[]): ManualReadResult => {
       const m = manual!;
       const doc = new Map(entities.map((e) => [e.id, e] as const));
-      return readManualNest(m.instances, m.sheets, doc, { gap: jobParamsMm(job).spacing, ordered: m.ordered });
+      return readManualNest(m.instances, m.sheets, doc, { gap: lastGap ?? jobParamsMm(job).spacing, ordered: m.ordered });
     };
 
     /**
@@ -1362,7 +1473,7 @@ const plugin: PluginModule = {
         entitiesToDxf(sheetDxfEntities(ln.sheets[i]!, i, ln.sheetLabels[i]!, ln.placements, { preset, includeSheetOutline: msg.includeSheet === true }), dxfUnit, dxfScale);
       const filters = [{ description: "DXF Drawing", accept: { "application/dxf": [".dxf"] } }];
       if (sheetIndex >= 0) {
-        const name = sheetDxfFileName(sheetIndex);
+        const name = taggedName(sheetIndex, sheetDxfFileName(sheetIndex));
         const res = await sketchor.ui.saveFile(name, sheetDxf(sheetIndex), filters);
         if (res.saved) notify(`Saved ${res.name ?? name}.`);
         return;
@@ -1373,7 +1484,8 @@ const plugin: PluginModule = {
         return;
       }
       // "All as ZIP" always makes a .zip, even for one sheet; a single DXF is the per-sheet button.
-      const zip = makeZip(ln.sheets.map((_, i) => ({ name: sheetDxfFileName(i), data: sheetDxf(i) })));
+      // Multi-material: one folder per material + thickness, the way the sheets go to the machine.
+      const zip = makeZip(ln.sheets.map((_, i) => ({ name: lastSheetTag[i] ? `${lastSheetTag[i]}/${sheetDxfFileName(i)}` : sheetDxfFileName(i), data: sheetDxf(i) })));
       const res = await sketchor.ui.saveFile("nest-sheets.zip", zip, [{ description: "ZIP archive", accept: { "application/zip": [".zip"] } }]);
       if (res.saved) notify(`Saved ${res.name ?? "nest-sheets.zip"} (${ln.sheets.length} sheets).`);
     };
@@ -1393,7 +1505,7 @@ const plugin: PluginModule = {
             return out;
           });
         });
-      return buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined, leadIn: job.leadIn ?? "line", ...(job.commonLine ? { commonLine: true } : {}) });
+      return buildCutPlan(gp, { kerf: lastSheetKerf[sheetIndex] ?? jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined, leadIn: job.leadIn ?? "line", ...(job.commonLine ? { commonLine: true } : {}) });
     };
 
     /** N-43: one sheet's cut order, pierces and dashed rapids, in a tab of its own so the result drawing is never touched. */
@@ -1433,7 +1545,7 @@ const plugin: PluginModule = {
         // N-42: the job's post-processor; an unknown id (an older job, a removed profile) falls back to the default.
         profile: postProfileFromSpec(resolvePost(job.postId, custom.posts)),
       });
-      const name = `nest-sheet-${sheetIndex + 1}.nc`;
+      const name = taggedName(sheetIndex, `nest-sheet-${sheetIndex + 1}.nc`);
       const res = await sketchor.ui.saveFile(name, gcode, [{ description: "G-code", accept: { "text/plain": [".nc", ".gcode", ".tap"] } }]);
       if (res.saved) notify(`Saved ${res.name ?? name}.`);
     };
@@ -1613,11 +1725,12 @@ const plugin: PluginModule = {
             added += 1;
           }
         }
-        job = { ...job, parts: next };
+        // Groups mode: the files are drawings for the list's part numbers, not parts of their own.
+        if (msg.forGroups !== true) job = { ...job, parts: next };
         persistJob();
         persistFiles();
         await pushView();
-        if (added > 0) notify(`${added} part(s) added from ${incoming.length} file(s).`);
+        if (added > 0) notify(msg.forGroups === true ? `${added} drawing(s) added - list items with the same name use them.` : `${added} part(s) added from ${incoming.length} file(s).`);
         if (problems.length > 0) fail(problems.join("\n"));
         return;
       }
@@ -1635,6 +1748,9 @@ const plugin: PluginModule = {
       if (type === "clear") {
         job = { ...job, parts: [], groups: [] };
         files.clear();
+        lastSheetKerf = [];
+        lastSheetTag = [];
+        lastGap = null;
         lastNest = null;
         manual = null;
         lastManual = null;
@@ -1691,14 +1807,29 @@ const plugin: PluginModule = {
           bomText = msg.text.slice(0, 2_000_000);
           void sketchor.storage.set(KEY_BOM, bomText).catch(() => undefined);
         }
+        // A CAD BOM whose material cells say "SHEET ..." keeps its old reading (it also drops tubes and hardware);
+        // anything else is read as a CSV parts list with material and thickness columns.
         const parsed = parseSheetText(bomText);
-        const groups = groupsFromRows(sumRepeatedRows(parsed.rows), job.material);
-        if (groups.length === 0) return fail("No SHEET rows found in the list. Paste a parts list with part numbers, quantities and a material column.");
+        let groups = groupsFromRows(sumRepeatedRows(parsed.rows), job.material);
+        let summary = parsed.skipped ? `; ${parsed.skipped} non-sheet row(s) skipped` : "";
+        if (groups.length === 0) {
+          const metric = ["mm", "cm", "m"].includes(bareUnitFor(job.outputUnit));
+          const csv = parsePartsCsv(bomText, { defaultThicknessUnit: metric ? "mm" : "in" });
+          const fallbackT = lengthMm(job.thickness) > 0 ? (["mm", "cm", "m"].includes(job.thickness.u) ? { v: String(Math.round(lengthMm(job.thickness) * 1000) / 1000), u: "mm" as const } : job.thickness.u === "in" ? job.thickness : { v: String(Math.round((lengthMm(job.thickness) / MM_PER_IN) * 10000) / 10000), u: "in" as const }) : null;
+          groups = groupsFromCsvRows(csv.rows, { material: job.material, thickness: fallbackT, sheetFor: (m) => (m === job.material ? { ...job.sheet } : { ...sheetsFor(m)[0]!.size }) });
+          const notes: string[] = [];
+          if (csv.qtyMissing) notes.push(`${csv.qtyMissing} row(s) without a quantity nest once`);
+          if (csv.materialUnknown) notes.push(`${csv.materialUnknown} unknown material(s) set to ${MATERIAL_NAMES[job.material] ?? job.material}`);
+          if (csv.columns.includes("thickness") || csv.rows.some((r) => r.thickness)) notes.push(`bare thickness numbers read as ${metric ? "mm" : "inches"}`);
+          else notes.push(`no thickness column - ${fallbackT ? `using ${fallbackT.v} ${fallbackT.u}` : "set each group's thickness"}`);
+          summary = notes.length ? `; ${notes.join("; ")}` : "";
+        }
+        if (groups.length === 0) return fail("No parts found in the list. Use a CSV with a header such as Part, Qty, Material, Thickness (or paste a CAD parts list with a SHEET material column).");
         job = { ...job, mode: "groups", groups };
         persistJob();
         await loadGroupFiles();
         await pushView();
-        notify(`${groups.length} group(s), ${groups.reduce((n, g) => n + g.items.length, 0)} part number(s)${parsed.skipped ? `; ${parsed.skipped} non-sheet row(s) skipped` : ""}.`);
+        notify(`${groups.length} group(s) (${groups.map(groupLabel).join(", ")}), ${groups.reduce((n, g) => n + g.items.length, 0)} part number(s)${summary}.`);
         return;
       }
 
@@ -1716,6 +1847,13 @@ const plugin: PluginModule = {
               next.rotation = defaultRotationFor(next.material);
             }
             if (typeof patch.thickness === "string") next.thickness = patch.thickness;
+            if (patch.thicknessUnit === "mm") next.thicknessUnit = "mm";
+            else if (patch.thicknessUnit === "in") delete next.thicknessUnit;
+            if (typeof patch.kerf === "string") {
+              const v = patch.kerf.trim().slice(0, 20);
+              if (v === "") delete next.kerf;
+              else next.kerf = { v, u: bareUnitFor(job.outputUnit) };
+            }
             if (isObj(patch.sheet) && num(patch.sheet.w) > 0 && num(patch.sheet.h) > 0) next.sheet = { w: num(patch.sheet.w), h: num(patch.sheet.h) };
             if (typeof patch.rotation === "string" && ["none", "flip", "r90", "r45", "r30", "r15", "r10", "free"].includes(patch.rotation)) next.rotation = patch.rotation as RotationCode;
             return next;
@@ -1825,6 +1963,15 @@ const plugin: PluginModule = {
       // ---------- NT-02: machine files ----------
       if (type === "profile-new") {
         if (profiles.length >= MAX_PROFILES) return fail(`Up to ${MAX_PROFILES} machine files.`);
+        const preset = typeof msg.preset === "string" ? amadaPreset(msg.preset) : undefined;
+        if (preset) {
+          const id = newProfileId();
+          profiles = [...profiles, machineFromPreset(preset, id)];
+          persistProfiles();
+          await pushView();
+          notify(`Added "${preset.profile.name}". Its cut table is a typical starting point, not Amada's data - check it against your machine's cutting conditions.`);
+          return void post({ type: "profile-created", id });
+        }
         const from = profiles.find((x) => x.id === str(msg.copyOf));
         const id = newProfileId();
         const pr: MachineProfile = from ? { ...from, id, name: `${from.name} (copy)`, rows: from.rows.map((r) => ({ ...r })) } : newMachineProfile(id, msg.kind === "tube" ? "Tube laser" : "My laser");
@@ -1957,6 +2104,9 @@ const plugin: PluginModule = {
         job = parseNestJob(jf.job);
         files.clear();
         for (const f of jf.files) files.set(f.key, loadDxfFile(f.key, f.name, f.text, f.unit, job.joinTolerance));
+        lastSheetKerf = [];
+        lastSheetTag = [];
+        lastGap = null;
         lastNest = null;
         manual = null;
         lastManual = null;
