@@ -85,17 +85,58 @@ export function partRank(p: Pick<JobPart, "priority" | "due">): number {
 export interface JobGroupItem {
   num: string;
   qty: number;
+  /** From a CSV rotation column; absent = the group's rotation. */
+  rotation?: RotationCode;
+  /** N-55 priority / due date from a CSV; absent = normal / undated. */
+  priority?: "high" | "low";
+  due?: string;
 }
 
 /** Groups mode: parts of one material + thickness, nested together. */
 export interface JobGroup {
   id: string;
   material: MaterialId;
-  /** Inches as typed ("1/8"). */
+  /** As typed ("1/8", "3"), in `thicknessUnit`. */
   thickness: string;
+  /** Unit of `thickness`; absent = inches (every group made before metric CSVs). */
+  thicknessUnit?: "mm";
+  /**
+   * The group's own kerf; absent = the machine file's kerf for this material
+   * and thickness, else the job's kerf. Kerf grows with thickness, so a list
+   * of several thicknesses needs one per group.
+   */
+  kerf?: LengthField;
   sheet: SheetSize;
   rotation: RotationCode;
   items: JobGroupItem[];
+}
+
+/** A group's thickness as a length field. */
+export function groupThickness(g: Pick<JobGroup, "thickness" | "thicknessUnit">): LengthField {
+  return { v: g.thickness, u: g.thicknessUnit ?? "in" };
+}
+
+/**
+ * The job one group runs as: the group's material, thickness, sheet and parts,
+ * the job's other settings, and the kerf in this order - the group's own, the
+ * machine file's for the group (`profileKerf`), the job's.
+ */
+export function groupRunJob(job: NestJob, g: JobGroup, parts: JobPart[], profileKerf?: LengthField | null): NestJob {
+  const typed = g.kerf && g.kerf.v.trim() !== "" ? parseLen(g.kerf.v, g.kerf.u) : NaN;
+  const own = g.kerf && Number.isFinite(typed) && typed >= 0 ? g.kerf : null;
+  const kerf = own ?? profileKerf ?? job.params.kerf;
+  return {
+    ...job,
+    mode: "manual",
+    material: g.material,
+    thickness: groupThickness(g),
+    sheet: g.sheet,
+    sheetSource: "standard",
+    stock: [],
+    buyExtra: false,
+    params: { ...job.params, kerf: { ...kerf } },
+    parts,
+  };
 }
 
 export interface NestJob {
@@ -259,13 +300,25 @@ function readGroup(v: unknown): JobGroup | null {
   const material = oneOf(v.material, MATERIALS.map((m) => m.id), "al5052");
   const items = Array.isArray(v.items)
     ? v.items
-        .map((it): JobGroupItem | null => (isObj(it) && str(it.num) ? { num: str(it.num), qty: Math.max(1, Math.min(MAX_QTY, Math.floor(num(it.qty, 1)))) } : null))
+        .map((it): JobGroupItem | null =>
+          isObj(it) && str(it.num)
+            ? {
+                num: str(it.num),
+                qty: Math.max(1, Math.min(MAX_QTY, Math.floor(num(it.qty, 1)))),
+                ...(ROTATION_CODES.includes(it.rotation as RotationCode) ? { rotation: it.rotation as RotationCode } : {}),
+                ...(it.priority === "high" || it.priority === "low" ? { priority: it.priority } : {}),
+                ...(validDue(it.due) ? { due: validDue(it.due)! } : {}),
+              }
+            : null,
+        )
         .filter((x): x is JobGroupItem => x !== null)
     : [];
   return {
     id: str(v.id) || material,
     material,
     thickness: str(v.thickness),
+    ...(v.thicknessUnit === "mm" ? { thicknessUnit: "mm" as const } : {}),
+    ...(isObj(v.kerf) && str(v.kerf.v).trim() !== "" ? { kerf: readLength(v.kerf, { v: "", u: "mm" }) } : {}),
     sheet: readSheet(v.sheet, defaultSheets().sizes[material][0]!),
     rotation: oneOf(v.rotation, ROTATION_CODES, defaultRotationFor(material)),
     items,
