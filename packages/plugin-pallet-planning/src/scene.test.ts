@@ -26,6 +26,38 @@ function editGeometry(
     ? { ...entity, points: points(entity.points) } : entity) };
 }
 
+it("draws padding before forming a pallet and preserves positions when padded outlines touch", () => {
+  const IN = 25.4;
+  const product = { ...row, quantity: 2, lengthMm: 26 * IN, widthMm: 6.5 * IN };
+  const rules = DEFAULT_PALLET_RULES;
+  const version = { id: "padding", revisionId: "stage", parentRevisionId: null };
+  const plan = stagePalletProducts({ products: [product], rules }, null, version);
+  const model = draw(plan);
+  const guide = model.entities.find(entity => entity.name === "Product padding unit/1");
+  expect(guide?.type).toBe("polyline");
+  if (guide?.type !== "polyline") throw new Error("Missing padding outline");
+  expect(guide.points[0]).toEqual({ x: -IN, y: -IN });
+  expect(guide.points[2].x - guide.points[0].x).toBeCloseTo(28 * IN);
+  expect(guide.points[2].y - guide.points[0].y).toBeCloseTo(8.5 * IN);
+  expect(plan.products[0]).toMatchObject({ lengthMm: 26 * IN, widthMm: 6.5 * IN });
+
+  const vertices = model.entities.filter(e => e.type === "polyline" && /^Product unit\//.test(e.name ?? ""));
+  const moved = editGeometry(model, "unit/2", points => points.map(p =>
+    ({ ...p, x: p.x - plan.looseStacks![1].origin.x + 28 * IN })));
+  const formed = planFromPalletScene(plan, moved, vertices.map(e => e.id), { type: "group-selection" }, "formed");
+  const [first, second] = formed.pallets[0].placements;
+  expect(second.xMm - first.xMm).toBeCloseTo(28 * IN);
+  expect(formed.pallets[0].base.lengthMm).toBeCloseTo(57 * IN);
+
+  const touching = editGeometry(moved, "unit/2", points => points.map(p => ({ ...p, x: p.x - 2 * IN })));
+  const regrouped = planFromPalletScene(plan, touching, [], { type: "group" }, "regrouped");
+  expect(regrouped.pallets).toHaveLength(1);
+  expect(regrouped.pallets[0].placements[1].xMm - regrouped.pallets[0].placements[0].xMm).toBeCloseTo(28 * IN);
+
+  const noPadding = stagePalletProducts({ products: [product], rules: { ...rules, productMarginMm: 0 } }, plan, version);
+  expect(draw(noPadding).entities.some(e => e.name?.startsWith("Product padding "))).toBe(false);
+});
+
 it("adopts three separated groups at their drawn locations and preserves the combined stack", () => {
   const source = generatePalletPlan({
     products: [row, { ...row, id: "wide", quantity: 1, stack: undefined }],
@@ -143,6 +175,11 @@ it("starts 17 separate products, stacks by drop, and forms only the selected pal
   plan = planFromPalletScene(plan, model, [select(model, "D/1")], { type: "group-selection" }, "second-pallet");
   const twoPallets = plan.pallets;
   model = draw(plan);
+  const missing = new Set([
+    ...twoPallets.map(pallet => `Pallet ${pallet.id}`),
+    `Clearance ${twoPallets[1].id}`,
+  ]);
+  model.entities = model.entities.filter(entity => !missing.has(entity.name ?? ""));
   for (const [i, id] of ["C/1", "C/3"].entries()) {
     const y = 200 * IN + i * products[2].widthMm;
     const x = 200 * IN;
@@ -151,6 +188,10 @@ it("starts 17 separate products, stacks by drop, and forms only the selected pal
       { x, y }, { x: x + lengthMm, y }, { x: x + lengthMm, y: y + widthMm }, { x, y: y + widthMm },
     ]);
   }
+  const recovered = planFromPalletScene(plan, model, [], { type: "sync" }, "save-draft");
+  expect(recovered.pallets).toEqual(twoPallets);
+  expect(recovered.looseStacks?.map(stack => stack.origin.y)).toEqual([expect.closeTo(200 * IN), expect.closeTo(224 * IN)]);
+  expect(readPalletReport(buildPalletReportHtml(recovered, "in"))).toEqual(recovered);
   plan = planFromPalletScene(plan, model, ["C/1", "C/3"].map(id => select(model, id)), { type: "group-selection" }, "third-pallet");
   expect(plan.pallets.slice(0, 2)).toEqual(twoPallets);
   expect(plan.pallets[2].base).toEqual({ lengthMm: 75 * IN, widthMm: 53 * IN });

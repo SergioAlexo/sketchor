@@ -2,15 +2,17 @@ import type { DisplayUnitInfo, PluginModule } from "@sketchor/plugin-sdk";
 import {
   buildPalletDrawing, buildPalletReportHtml, clearPalletDrawing, editPalletPlan, stagePalletProducts,
   hasPalletScene, palletSceneMatchesPlan, planFromPalletScene,
-  DEFAULT_PALLET_RULES, palletReportFileName, parsePalletPlan, placementStacks, PRODUCT_COLORS, readPalletReport,
+  DEFAULT_PALLET_RULES, palletReportFileName, parsePalletPlan, readPalletReport,
   type PalletPlan,
 } from "@sketchor/plugin-pallet-planning";
 import PANEL_HTML from "./palletPlanningPanel.html?raw";
+import { buildPalletReportPdf } from "./palletPlanningPdf";
 
 const STORAGE_KEY = "current-plan-v1";
 const HISTORY_LIMIT = 20;
 const MAX_IMPORT_LENGTH = 12_000_000;
 const MM: DisplayUnitInfo = { unit: "mm", perMm: 1, label: "mm" };
+const REPORT_DIRECTORY = "K:\\01 PROD FILES\\Pallet Configurations";
 
 function pushHistory(history: PalletPlan[], plan: PalletPlan) {
   history.push(plan);
@@ -23,6 +25,7 @@ const plugin: PluginModule = {
     let savedPlan: PalletPlan | null = null;
     let openingRules = DEFAULT_PALLET_RULES;
     let panelId = "";
+    let pendingPdf: { htmlName: string; name: string; bytes: Uint8Array } | undefined;
     const undo: PalletPlan[] = [];
     const redo: PalletPlan[] = [];
     let unit = await sketchor.app.displayUnit().catch(() => MM);
@@ -40,9 +43,31 @@ const plugin: PluginModule = {
     const sync = (type: "init" | "plan", replaceInputs: boolean, message: string, canResumeDrawing = false, inputUnit?: "in") => send({
       type, plan, replaceInputs, message, canUndo: undo.length > 0, canRedo: redo.length > 0,
       inputUnit,
-      stacks: plan?.pallets.map(pallet => [pallet.id, placementStacks(pallet.placements)]) ?? [],
-      ...(type === "init" ? { rules: DEFAULT_PALLET_RULES, openingRules, colors: PRODUCT_COLORS, reportFolder, canResumeDrawing } : {}),
+      ...(type === "init" ? { rules: DEFAULT_PALLET_RULES, openingRules, reportFolder, canResumeDrawing, pdfPending: Boolean(pendingPdf) } : {}),
     });
+
+    async function savePendingPdf() {
+      if (!pendingPdf) {
+        send({ type: "status", message: "", pdfPending: false });
+        return;
+      }
+      const pdf = pendingPdf;
+      const htmlStatus = "HTML saved as " + pdf.htmlName + ".";
+      try {
+        const result = await sketchor.ui.saveFile(pdf.name, pdf.bytes, [
+          { description: "PDF report", accept: { "application/pdf": [".pdf"] } },
+        ]);
+        if (result.saved) pendingPdf = undefined;
+        const message = result.saved
+          ? htmlStatus + " PDF saved as " + result.name + "."
+          : htmlStatus + " PDF save cancelled.";
+        send({ type: "status", message, pdfPending: Boolean(pendingPdf) });
+      } catch (error) {
+        // A network write or renewed folder permission can use up the click's activation.
+        const detail = error instanceof Error ? error.message : String(error);
+        send({ type: "error", message: htmlStatus + " Click Save PDF to try again. " + detail, pdfPending: true });
+      }
+    }
 
     const persist = async (message: string) => {
       if (plan) {
@@ -83,12 +108,20 @@ const plugin: PluginModule = {
       const [model, selection] = await Promise.all([sketchor.document.read(), selected ?? sketchor.selection.read()]);
       const source = plan ?? savedPlan;
       if (!source) throw new Error("Enter job products or open a pallet plan first.");
-      const before = source.looseStacks && !palletSceneMatchesPlan(source, model)
-        ? planFromPalletScene(source, model, [], { type: "sync" }, source.revisionId) : source;
       const next = planFromPalletScene(source, model, selection, action, crypto.randomUUID());
       const message = next === source ? "The top unit is already on that layer." : `2D layout applied. ${next.pallets.length} pallets.`;
       if (next === source) send({ type: "status", message });
-      else await commit(next, message, !plan, before);
+      else {
+        let before = source;
+        if (source.looseStacks && !palletSceneMatchesPlan(source, model)) {
+          try {
+            before = planFromPalletScene(source, model, [], { type: "sync" }, source.revisionId);
+          } catch {
+            // The corrected layout can be valid even when the prior CAD moves were not.
+          }
+        }
+        await commit(next, message, !plan, before);
+      }
       sketchor.ui.notify(message);
     }
 
@@ -158,8 +191,9 @@ const plugin: PluginModule = {
           });
           const before = previous?.products.reduce((sum, row) => sum + row.quantity, 0) ?? 0;
           const after = next.products.reduce((sum, row) => sum + row.quantity, 0);
-          const unchanged = previous === plan && plan && JSON.stringify([plan.products, plan.rules]) === JSON.stringify([next.products, next.rules]);
-          if (unchanged) {
+          if (plan && previous === plan
+            && JSON.stringify([plan.products, plan.rules]) === JSON.stringify([next.products, next.rules])) {
+            if (msg.refreshDrawing === true) await draw(plan);
             send({ type: "status", message: "Products are ready on the 2D drawing." });
           } else {
             await commit(next, "Products are ready on the 2D drawing.");
@@ -170,6 +204,9 @@ const plugin: PluginModule = {
         case "pick-report-folder":
           reportFolder = await sketchor.ui.pickReportFolder();
           send({ type: "report-folder", reportFolder });
+          return;
+        case "save-pdf":
+          await savePendingPdf();
           return;
         case "open-report": {
           if (typeof msg.data !== "string" || msg.data.length > MAX_IMPORT_LENGTH) {
@@ -221,18 +258,33 @@ const plugin: PluginModule = {
           await applyScene({ type: "group" });
           return;
         case "edit": {
-          const next = editPalletPlan(plan, msg.action, crypto.randomUUID());
+          const resizing = (msg.action as { type?: unknown } | null)?.type === "resize";
+          let before = plan;
+          if (resizing) {
+            const model = await sketchor.document.read();
+            const matches = palletSceneMatchesPlan(plan, model);
+            if (hasPalletScene(plan, model)) {
+              if (!matches || plan.pallets.some(pallet => !pallet.sceneOrigin)) {
+                before = planFromPalletScene(plan, model, [], { type: "sync" }, plan.revisionId);
+              }
+            } else if (!matches) {
+              throw new Error("Open the matching 2D drawing before resizing this pallet.");
+            }
+          }
+          const next = editPalletPlan(before, msg.action, crypto.randomUUID());
           if (next.review === "confirmed" && !palletSceneMatchesPlan(plan, await sketchor.document.read())) {
             throw new Error("The drawing has manual changes. Use Make pallets from 2D before confirming the plan.");
           }
-          if (next === plan) {
-            send({ type: "status", message: "Custom pallets already fit the current layout." });
+          if (next === before) {
+            send({ type: "status", message: resizing ? "The pallet already has those dimensions." : "Custom pallets already fit the current layout." });
           } else {
-            await commit(next, "Plan updated.");
+            await commit(next, resizing ? "Pallet dimensions updated." : "Plan updated.", false, before);
           }
           return;
         }
         case "save-report": {
+          if (!reportFolder.supported) throw new Error("Use Chrome or Edge to save reports to the shared folder.");
+          if (!reportFolder.folder) throw new Error("Choose " + REPORT_DIRECTORY + " with Report folder… first.");
           let reportPlan = plan;
           const model = await sketchor.document.read();
           if (!palletSceneMatchesPlan(reportPlan, model)) {
@@ -242,11 +294,16 @@ const plugin: PluginModule = {
             reportPlan = planFromPalletScene(reportPlan, model, [], { type: "sync" }, crypto.randomUUID());
             await commit(reportPlan, "2D layout applied.");
           }
+          const reportUnit = msg.unit === "in" ? "in" : "mm";
+          const bytes = buildPalletReportPdf(reportPlan, reportUnit);
           const result = await sketchor.ui.saveReportFile(
             palletReportFileName(reportPlan, new Date()),
-            buildPalletReportHtml(reportPlan, msg.unit === "in" ? "in" : "mm"),
+            buildPalletReportHtml(reportPlan, reportUnit),
+            { requireFolder: true },
           );
-          send({ type: "status", message: result.saved ? `Saved ${result.name}.` : "" });
+          if (!result.saved || !result.name) throw new Error("The HTML report could not be saved.");
+          pendingPdf = { htmlName: result.name, name: result.name.replace(/\.html$/i, ".pdf"), bytes };
+          await savePendingPdf();
           return;
         }
       }

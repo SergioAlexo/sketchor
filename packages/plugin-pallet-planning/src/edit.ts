@@ -166,6 +166,7 @@ export function editPalletPlan(plan: PalletPlan, raw: unknown, revisionId: strin
     case "resize": {
       const pallet = findPallet(next, action.palletId);
       const size = footprint(action.base, "Pallet base");
+      if (Math.abs(size.lengthMm - pallet.base.lengthMm) <= EPS && Math.abs(size.widthMm - pallet.base.widthMm) <= EPS) return plan;
       Object.assign(pallet, { base: size, loadedFootprint: { ...size }, baseSource: "manual", baseName: undefined });
       break;
     }

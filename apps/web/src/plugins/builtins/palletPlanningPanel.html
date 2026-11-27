@@ -64,8 +64,7 @@
     .alert { color: var(--danger); }
     .metrics { display: flex; flex-wrap: wrap; gap: 6px 14px; font-variant-numeric: tabular-nums; }
     .metrics strong { color: var(--accent); }
-    #preview { display: block; width: 100%; height: 234px; touch-action: none; border: 1px solid var(--border); border-radius: 7px; }
-    #preview.ready { cursor: crosshair; }
+    .pallet-size-fields { grid-template-columns: repeat(2, minmax(0, 1fr)) auto; align-items: end; }
     #unplaced-list { margin: 6px 0 0; padding-left: 20px; max-height: 110px; overflow: auto; }
     #status { position: sticky; top: 0; z-index: 1; background: var(--bg); padding: 5px; overflow-wrap: anywhere; }
     #status:empty { display: none; }
@@ -93,11 +92,14 @@
               <label>Max layers <select id="max-layers"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
             </div>
             <div class="grid">
-              <label>Pallet edge inset <input id="edge" type="number" step="any" min="0" data-length required></label>
-              <label>Product padding per side <input id="product-padding" type="number" step="any" min="0" data-length required></label>
+              <label>Pallet edge inset <input id="edge" type="number" step="any" min="0" data-length required
+                title="Distance from the pallet edge to the padded product outline"></label>
+              <label>Product padding per side <input id="product-padding" type="number" step="any" min="0" data-length required
+                title="Space on each side of a product. Two neighbouring products each contribute their padding to the gap."></label>
             </div>
             <div class="grid">
-              <label>Max stack height <input id="max-loaded-height" type="number" step="any" data-length></label>
+              <label>Max stack height <input id="max-loaded-height" type="number" step="any" data-length
+                title="Maximum height of the tallest stack above the pallet. Leave blank for no height limit."></label>
               <label>Custom size increment <input id="increment" type="number" step="any" data-length required
                 title="Round each custom size up to this step"></label>
             </div>
@@ -134,19 +136,17 @@
         </div>
         <div class="fields">
           <div><button type="button" id="group-scene">Regroup all from 2D</button></div>
-          <p class="note">Drag onto a highlighted product to stack. Select a group and right-click to form a pallet with the required spacing.</p>
+          <p class="note">Drag products beside each other to snap with the required gap. Drag onto a highlighted product to stack. Select a group and right-click to form a pallet.</p>
           <div id="correct-units" hidden>
             <button type="button" id="interpret-inches">Treat entered mm values as inches</button>
             <p class="note">Use if 72 mm was meant as 72 in. Keeps product groups and recalculates pallet bases.</p>
           </div>
         </div>
-        <div id="pallet-view" class="fields" hidden>
-          <label>Pallet preview <select id="pallet"></select></label>
-          <canvas id="preview" aria-label="Top-down pallet layout"></canvas>
-          <p class="note" id="dimensions"></p>
+        <section id="formed-pallets" class="fields" aria-label="Formed pallets" hidden>
+          <strong>Formed pallets</strong>
+          <div id="pallet-list" class="fields"></div>
           <div><button type="button" id="fit-custom-pallets" hidden>Fit custom pallets to layout</button></div>
-          <div id="empty-pallet-actions" hidden><button type="button" id="remove-pallet">Remove empty pallet</button></div>
-        </div>
+        </section>
         <details>
           <summary>Add a pallet</summary>
           <form id="add-pallet-form">
@@ -162,6 +162,7 @@
           <button type="button" id="undo">Undo</button>
           <button type="button" id="redo">Redo</button>
           <button type="button" id="save-report">Save report</button>
+          <button type="button" id="save-pdf" hidden>Save PDF</button>
           <button type="button" id="confirm" class="primary">Confirm plan</button>
         </div>
       </section>
@@ -219,6 +220,18 @@
       <div><button type="button" data-remove>Remove base</button></div>
     </div>
   </template>
+  <template id="pallet-template">
+    <form class="record">
+      <strong data-pallet-label></strong>
+      <div class="grid pallet-size-fields">
+        <label><span data-length-label>Length</span><input name="lengthMm" type="number" step="any" min="0" data-length required></label>
+        <label><span data-width-label>Width</span><input name="widthMm" type="number" step="any" min="0" data-length required></label>
+        <button type="button" data-apply>Apply</button>
+      </div>
+      <p class="note" data-pallet-info></p>
+      <div data-empty-actions hidden><button type="button" data-remove>Remove empty pallet</button></div>
+    </form>
+  </template>
   <script>
     const $ = id => document.getElementById(id);
     const panelId = crypto.randomUUID();
@@ -229,21 +242,13 @@
       "product-padding": "productMarginMm", increment: "incrementMm",
       "max-loaded-height": "maxLoadedHeightMm"
     };
-    const canvas = $("preview");
-    const ctx = canvas.getContext("2d");
     let mmPerUnit = 1;
     let plan = null;
     let rows = new Map();
-    let palletId = "";
-    let selectedUnit = "";
-    let palletStacks = new Map();
     let defaultRules;
-    let colors = [];
     let busy = true;
     let folderSupported = false;
     let initialized = false;
-    let drag = null;
-    let view = null;
     let rowCounter = 0;
     let stageTimer;
     let stagedInput = "";
@@ -252,9 +257,6 @@
     const mm = element => number(element) * mmPerUnit;
     const asInput = value => String(Number((value / mmPerUnit).toFixed(12)));
     const asText = value => String(Number((value / mmPerUnit).toFixed(3)));
-    const currentPallet = () => plan?.pallets.find(pallet => pallet.id === palletId);
-    const unitName = unit => rows.get(unit.rowId).productId + " #" + unit.id.split("/").at(-1);
-    const packingEdge = rules => rules.edgeMm + (rules.productMarginMm ?? 0);
 
     function setBusy(value) {
       busy = value;
@@ -278,7 +280,8 @@
     function request(type, data = {}) {
       if (busy) return;
       setBusy(true);
-      status(type === "stage" ? "Updating the 2D drawing…" : "");
+      status(type === "stage" ? "Updating the 2D drawing…"
+        : type === "save-report" ? "Saving report…" : "");
       send({ type, revisionId: plan?.revisionId, ...data });
     }
 
@@ -410,10 +413,6 @@
       mmPerUnit = next;
     }
 
-    function sizeText(size) {
-      return asText(size.lengthMm) + " × " + asText(size.widthMm) + " " + $("units").value;
-    }
-
     function physicalSize(unit) {
       const row = rows.get(unit.rowId);
       const lengthMm = Math.max(row.lengthMm, row.measuredLengthMm ?? 0);
@@ -421,97 +420,48 @@
       return unit.rotation === 90 ? { lengthMm: widthMm, widthMm: lengthMm } : { lengthMm, widthMm };
     }
 
-    function draw() {
-      const pallet = currentPallet();
-      if (!pallet || !ctx || canvas.clientWidth < 50 || canvas.clientHeight < 50) return;
-      const style = getComputedStyle(document.documentElement);
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-      const dpr = window.devicePixelRatio || 1;
-      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-        canvas.width = Math.round(w * dpr);
-        canvas.height = Math.round(h * dpr);
-      }
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, w, h);
-      const { lengthMm, widthMm } = pallet.base;
-      const scale = Math.min((w - 40) / lengthMm, (h - 40) / widthMm);
-      const left = (w - lengthMm * scale) / 2;
-      const bottom = (h + widthMm * scale) / 2;
-      view = { scale, left, bottom };
-      const edge = plan.rules.edgeMm * scale;
-      const padding = (plan.rules.productMarginMm ?? 0) * scale;
-      const bg = style.getPropertyValue("--sk-panel").trim() || "#282c34";
-      const ink = style.getPropertyValue("--sk-text").trim() || "#edf1f5";
-      ctx.fillStyle = bg;
-      ctx.fillRect(left, bottom - widthMm * scale, lengthMm * scale, widthMm * scale);
-      ctx.strokeStyle = ink;
-      ctx.strokeRect(left, bottom - widthMm * scale, lengthMm * scale, widthMm * scale);
-      if (edge > 0 && lengthMm * scale > 2 * edge && widthMm * scale > 2 * edge) {
-        ctx.setLineDash([3, 4]);
-        ctx.globalAlpha = .55;
-        ctx.strokeRect(left + edge, bottom - widthMm * scale + edge, lengthMm * scale - 2 * edge, widthMm * scale - 2 * edge);
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
-      }
-      for (const stack of palletStacks.get(palletId) || []) {
-        const selected = stack.some(unit => unit.id === selectedUnit);
-        const item = selected && drag?.moved ? drag.unit : stack[0];
-        const size = physicalSize(item);
-        const x = left + item.xMm * scale;
-        const iw = size.lengthMm * scale;
-        const ih = size.widthMm * scale;
-        const y = bottom - item.yMm * scale - ih;
-        const row = rows.get(item.rowId);
-        if (padding > 0) {
-          ctx.save();
-          ctx.setLineDash([4, 3]);
-          ctx.strokeStyle = style.getPropertyValue("--sk-accent").trim() || "#2980a9";
-          ctx.strokeRect(x - padding, y - padding, iw + 2 * padding, ih + 2 * padding);
-          ctx.restore();
+    function renderPallets() {
+      const list = $("pallet-list");
+      $("formed-pallets").hidden = !plan.pallets.length;
+      const existing = new Map(Array.from(list.children, form => [form.dataset.palletId, form]));
+      const units = $("units").value;
+      list.replaceChildren(...plan.pallets.map((pallet, index) => {
+        const label = "P" + (index + 1) + " · " + pallet.jobId;
+        const form = existing.get(pallet.id) || $("pallet-template").content.firstElementChild.cloneNode(true);
+        const length = input(form, "lengthMm");
+        const width = input(form, "widthMm");
+        if (!existing.has(pallet.id)) {
+          form.dataset.palletId = pallet.id;
+          bindForm(form, () => edit("resize", { palletId: pallet.id, base: { lengthMm: mm(length), widthMm: mm(width) } }));
+          form.querySelector("[data-remove]").onclick = () => edit("remove-pallet", { palletId: pallet.id });
         }
-        ctx.fillStyle = row.color;
-        ctx.globalAlpha = selected ? 1 : .8;
-        ctx.fillRect(x, y, iw, ih);
-        ctx.globalAlpha = 1;
-        if (selected) {
-          ctx.strokeStyle = drag?.invalid ? "#ff6666" : ink;
-          ctx.lineWidth = 2;
-          ctx.strokeRect(x, y, iw, ih);
-          ctx.lineWidth = 1;
-        }
-        if (iw >= 28 && ih >= 14) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(x + 2, y + 1, iw - 4, ih - 2);
-          ctx.clip();
-          ctx.font = "600 12px system-ui";
-          ctx.fillStyle = "#101820";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(stack.map(unitName).join(" / "), x + iw / 2, y + ih / 2, iw - 6);
-          ctx.restore();
-        }
-      }
-    }
+        form.setAttribute("aria-label", label);
+        form.querySelector("[data-pallet-label]").textContent = label;
+        form.querySelector("[data-length-label]").textContent = "Length (" + units + ")";
+        form.querySelector("[data-width-label]").textContent = "Width (" + units + ")";
+        length.max = asInput(plan.rules.maxLengthMm);
+        width.max = asInput(plan.rules.maxWidthMm);
+        if (form.dataset.lengthMm !== String(pallet.base.lengthMm)) length.value = asInput(pallet.base.lengthMm);
+        if (form.dataset.widthMm !== String(pallet.base.widthMm)) width.value = asInput(pallet.base.widthMm);
+        form.dataset.lengthMm = pallet.base.lengthMm;
+        form.dataset.widthMm = pallet.base.widthMm;
 
-    function renderPallet() {
-      const pallet = currentPallet();
-      $("pallet-view").hidden = !pallet;
-      if (!pallet) return;
-      const used = pallet.placements.reduce((sum, unit) => {
-        if (unit.layer !== 1) return sum;
-        const size = physicalSize(unit);
-        return sum + size.lengthMm * size.widthMm;
-      }, 0);
-      const utilization = Math.round(100 * used / (pallet.base.lengthMm * pallet.base.widthMm));
-      $("dimensions").textContent = sizeText(pallet.base) + " · " + utilization + "% deck used · "
-        + (pallet.baseName || (pallet.baseSource === "manual" ? "Edited base" : "Custom base"))
-        + (pallet.packedHeightMm === undefined ? "" : " · " + asText(pallet.packedHeightMm) + " " + $("units").value
-          + (plan.rules.deckHeightMm ? " loaded height" : " stack height"));
-      $("empty-pallet-actions").hidden = pallet.placements.length > 0;
-      canvas.classList.toggle("ready", pallet.placements.length > 0);
-      draw();
+        let deckUsed = 0;
+        for (const unit of pallet.placements) {
+          if (unit.layer !== 1) continue;
+          const size = physicalSize(unit);
+          deckUsed += size.lengthMm * size.widthMm;
+        }
+        const utilization = Math.round(100 * deckUsed / (pallet.base.lengthMm * pallet.base.widthMm));
+        const info = [pallet.placements.length + (pallet.placements.length === 1 ? " product" : " products"),
+          utilization + "% deck used", pallet.baseName || (pallet.baseSource === "manual" ? "Edited base" : "Custom base")];
+        if (pallet.packedHeightMm !== undefined) {
+          info.push(asText(pallet.packedHeightMm) + " " + units + (plan.rules.deckHeightMm ? " loaded height" : " stack height"));
+        }
+        form.querySelector("[data-pallet-info]").textContent = info.join(" · ");
+        form.querySelector("[data-empty-actions]").hidden = pallet.placements.length > 0;
+        return form;
+      }));
     }
 
     function renderPlan() {
@@ -542,23 +492,18 @@
         return li;
       }));
 
-      options($("pallet"), plan.pallets.map((pallet, index) =>
-        [pallet.id, "Pallet " + (index + 1) + " · " + pallet.jobId + " · " + sizeText(pallet.base)]
-      ), palletId);
-      palletId = $("pallet").value;
       const jobs = [...new Set(plan.products.map(row => row.jobId))];
-      options($("new-pallet-job"), jobs.map(job => [job, job]), currentPallet()?.jobId);
+      options($("new-pallet-job"), jobs.map(job => [job, job]), $("new-pallet-job").value);
       if (!$("new-length").value) $("new-length").value = asInput(plan.rules.maxLengthMm);
       if (!$("new-width").value) $("new-width").value = asInput(plan.rules.maxWidthMm);
-      renderPallet();
+      renderPallets();
     }
 
     const edit = (type, data = {}) => request("edit", { action: { type, ...data } });
     const readBase = (length, width) => ({ lengthMm: mm($(length)), widthMm: mm($(width)) });
-    function bindForm(id, action) {
+    function bindForm(form, action) {
       // The plugin iframe has scripts enabled. Panel actions use messages to
       // the worker, so the browser never has to submit or navigate a form.
-      const form = $(id);
       const run = () => {
         if (busy) return;
         const invalid = form.querySelector("input:invalid, select:invalid");
@@ -588,15 +533,16 @@
     $("reset-margins").onclick = () => {
       $("edge").value = asInput(defaultRules.edgeMm);
       $("product-padding").value = asInput(defaultRules.productMarginMm);
+      scheduleStage();
     };
     $("units").onchange = () => { setUnits($("units").value); renderPlan(); };
     $("interpret-inches").onclick = () => request("interpret-inches");
     $("generate-form").addEventListener("input", scheduleStage);
-    bindForm("generate-form", () => {
+    bindForm($("generate-form"), () => {
       clearTimeout(stageTimer);
       const inputs = capture();
       stagedInput = JSON.stringify(inputs);
-      request("stage", { input: inputs });
+      request("stage", { input: inputs, refreshDrawing: true });
     });
     $("open-report").onclick = () => $("plan-file").click();
     $("report-folder").onclick = () => request("pick-report-folder");
@@ -611,99 +557,24 @@
         status("Could not read the selected file.", true);
       }
     };
-    $("pallet").onchange = () => {
-      palletId = $("pallet").value;
-      selectedUnit = "";
-      $("new-pallet-job").value = currentPallet().jobId;
-      renderPallet();
-    };
-    $("remove-pallet").onclick = () => edit("remove-pallet", { palletId });
     $("fit-custom-pallets").onclick = () => edit("fit-custom-pallets");
     $("group-scene").onclick = () => request("group-scene");
     $("resume-drawing-button").onclick = () => request("resume-drawing");
-    bindForm("add-pallet-form", () => edit("add-pallet", {
+    bindForm($("add-pallet-form"), () => edit("add-pallet", {
       jobId: $("new-pallet-job").value, base: readBase("new-length", "new-width")
     }));
     $("confirm").onclick = () => edit("confirm");
     $("save-report").onclick = () => request("save-report", { unit: $("units").value });
+    $("save-pdf").onclick = () => request("save-pdf");
     $("undo").onclick = () => request("undo");
     $("redo").onclick = () => request("redo");
 
-    function cursor(event) {
-      const bounds = canvas.getBoundingClientRect();
-      return {
-        xMm: (event.clientX - bounds.left - canvas.clientLeft - view.left) / view.scale,
-        yMm: (view.bottom - event.clientY + bounds.top + canvas.clientTop) / view.scale
-      };
-    }
-
-    function validPreview(item) {
-      const pallet = currentPallet();
-      const edgeMm = packingEdge(plan.rules);
-      const { gapMm } = plan.rules;
-      const dx = item.xMm - drag.original.xMm;
-      const dy = item.yMm - drag.original.yMm;
-      const gap = gapMm - 1e-6;
-      return drag.stack.every(unit => {
-        const size = physicalSize(unit);
-        const x = unit.xMm + dx;
-        const y = unit.yMm + dy;
-        const xEnd = x + size.lengthMm;
-        const yEnd = y + size.widthMm;
-        if (x < edgeMm - 1e-6 || y < edgeMm - 1e-6
-          || xEnd > pallet.base.lengthMm - edgeMm + 1e-6 || yEnd > pallet.base.widthMm - edgeMm + 1e-6) return false;
-        return pallet.placements.every(other => {
-          if (other.layer !== unit.layer || other.id === unit.id) return true;
-          const box = physicalSize(other);
-          return xEnd + gap <= other.xMm || yEnd + gap <= other.yMm
-            || other.xMm + box.lengthMm + gap <= x || other.yMm + box.widthMm + gap <= y;
-        });
-      });
-    }
-
-    canvas.onpointerdown = event => {
-      if (busy || drag || !view || event.button !== 0) return;
-      const point = cursor(event);
-      const stack = palletStacks.get(palletId)?.find(([unit]) => {
-        const size = physicalSize(unit);
-        return point.xMm >= unit.xMm && point.xMm <= unit.xMm + size.lengthMm
-          && point.yMm >= unit.yMm && point.yMm <= unit.yMm + size.widthMm;
-      });
-      if (!stack) return;
-      const [base] = stack;
-      if (!stack.some(unit => unit.id === selectedUnit)) selectedUnit = base.id;
-      drag = { pointerId: event.pointerId, unit: { ...base }, start: point, original: base, stack, moved: false, invalid: false };
-      canvas.setPointerCapture(event.pointerId);
-      draw();
-    };
-    canvas.onpointermove = event => {
-      if (drag?.pointerId !== event.pointerId) return;
-      const point = cursor(event);
-      const dx = point.xMm - drag.start.xMm;
-      const dy = point.yMm - drag.start.yMm;
-      if (!drag.moved && Math.hypot(dx, dy) * view.scale < 3) return;
-      drag.moved = true;
-      drag.unit.xMm = drag.original.xMm + dx;
-      drag.unit.yMm = drag.original.yMm + dy;
-      drag.invalid = !validPreview(drag.unit);
-      draw();
-    };
-    canvas.onpointerup = event => {
-      if (drag?.pointerId !== event.pointerId) return;
-      const { unit, moved } = drag;
-      drag = null;
-      draw();
-      if (moved) edit("move-stack", { palletId, unitId: unit.id, xMm: unit.xMm, yMm: unit.yMm });
-    };
-    canvas.onlostpointercapture = () => { drag = null; draw(); };
-    new ResizeObserver(draw).observe(canvas);
-
     window.addEventListener("message", event => {
       if (event.source !== parent) return;
-      if (event.data?.sketchorTheme) { draw(); return; }
       const message = event.data?.pluginMessage;
       if (message?.panelId !== panelId) return;
       if (message.reportFolder) showReportFolder(message.reportFolder);
+      if (typeof message.pdfPending === "boolean") $("save-pdf").hidden = !message.pdfPending;
       if (message.type === "init" || message.type === "plan") {
         if (message.type === "init") {
           if (initialized) return;
@@ -711,7 +582,6 @@
           clearInterval(readyTimer);
           defaultRules = message.rules;
           $("resume-drawing").hidden = !message.canResumeDrawing;
-          colors = message.colors;
           setUnits($("units").value);
         }
         if (message.inputUnit) {
@@ -720,17 +590,17 @@
         }
         plan = message.plan;
         if (plan) $("resume-drawing").hidden = true;
-        palletStacks = new Map(message.stacks);
         if (message.replaceInputs) {
           clearTimeout(stageTimer);
           hydrate(plan?.products || [], plan?.rules || message.openingRules);
           stagedInput = plan ? JSON.stringify(capture()) : "";
+          $("pallet-list").replaceChildren();
         }
         if (plan && message.replaceInputs) {
           $("inputs").open = false;
           $("pallet-rules").open = false;
         }
-        rows = new Map(plan?.products.map((row, index) => [row.id, { ...row, color: colors[index % colors.length] }]));
+        rows = new Map(plan?.products.map(row => [row.id, row]));
         $("undo").disabled = !message.canUndo;
         $("redo").disabled = !message.canRedo;
         renderPlan();

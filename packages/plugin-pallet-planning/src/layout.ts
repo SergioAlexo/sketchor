@@ -28,7 +28,8 @@ export function buildPalletDrawing(plan: PalletPlan, unit: DisplayUnitInfo): Com
   const commands: Command[] = [];
   const rows = new Map(plan.products.map((row, index) => [row.id, { row, color: PRODUCT_COLORS[index % PRODUCT_COLORS.length] }]));
   const layer = PALLET_PLAN_LAYER;
-  const drawStack = (stack: Placement[], origin: { x: number; y: number }, labelAll: boolean, padding: number) => {
+  const padding = plan.rules.gapMm / 2;
+  const drawStack = (stack: Placement[], origin: { x: number; y: number }, labelAll: boolean) => {
     const [placement] = stack;
     const entry = rows.get(placement.rowId);
     if (!entry) throw new Error("A product is missing from the plan.");
@@ -88,7 +89,7 @@ export function buildPalletDrawing(plan: PalletPlan, unit: DisplayUnitInfo): Com
     const stacks = placementStacks(pallet.placements);
     const labelAll = Boolean(plan.looseStacks) || stacks.some(stack => stack.length > 1);
     for (const stack of stacks) {
-      drawStack(stack, origin, labelAll, plan.rules.productMarginMm ?? 0);
+      drawStack(stack, origin, labelAll);
     }
     x += Math.max(base.lengthMm, caption.length * labelHeight * 0.56) + 150;
     rowHeight = Math.max(rowHeight, base.widthMm + labelHeight * 2);
@@ -98,6 +99,6 @@ export function buildPalletDrawing(plan: PalletPlan, unit: DisplayUnitInfo): Com
       rowHeight = 0;
     }
   }
-  for (const stack of plan.looseStacks ?? []) drawStack(stack.placements, stack.origin, true, 0);
+  for (const stack of plan.looseStacks ?? []) drawStack(stack.placements, stack.origin, true);
   return commands;
 }

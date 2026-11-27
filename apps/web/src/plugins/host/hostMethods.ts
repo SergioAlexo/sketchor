@@ -245,10 +245,12 @@ export async function dispatchCall(ctx: HostContext, method: string, args: unkno
     case "ui.saveReportFile": {
       const name = safeFileName(String(args[0]).replace(/\.html$/i, ""));
       const html = String(args[1]);
-      if (reportFolderLabel(ctx.pluginId)) {
+      const requireFolder = (args[2] as { requireFolder?: boolean } | undefined)?.requireFolder === true;
+      if (requireFolder || reportFolderLabel(ctx.pluginId)) {
         const outcome = await saveToReportFolder(ctx.pluginId, name, html);
         if (outcome.ok) return { saved: true, name: outcome.file };
         if (outcome.reason !== "no-folder") throw new Error(outcome.message);
+        if (requireFolder) throw new Error("Choose the HTML destination with Report folder… and try again.");
       }
       return hostSaveFile(name, html, [{ description: "HTML report", accept: { "text/html": [".html"] } }]);
     }

@@ -13,6 +13,62 @@ export function isPalletDeck(entity: Entity | undefined): entity is PolylineEnti
   return isPalletOutline(entity) && Boolean(entity.name?.startsWith("Pallet "));
 }
 
+export function palletProductGap(product: PolylineEntity, entities: readonly Entity[]): number {
+  const name = `Product padding ${product.name?.slice("Product ".length)}`;
+  const outline = entities.find(entity => entity.type === "polyline" && entity.layer === "Pallet Plan — clearances"
+    && entity.id.startsWith("pallet-plan-entity:") && entity.name === name);
+  const reserved = outline && boundsOf([outline]);
+  const actual = boundsOf([product]);
+  if (!reserved || !actual) return 0;
+  return Math.max(0, (reserved.maxX - reserved.minX) - (actual.maxX - actual.minX));
+}
+
+type Offset = { dx: number; dy: number };
+
+/** Prefer facing product edges at the configured gap over ordinary vertex snaps. */
+export function snapPalletGap(
+  source: PolylineEntity, entities: readonly Entity[], raw: Offset, snapped: Offset, clearance: number, tolerance: number,
+): Offset {
+  const box = boundsOf([source]);
+  if (!box || clearance <= 0) return snapped;
+  const axes = {
+    dx: { lower: -Infinity, upper: Infinity, nearest: 0, distance: Infinity },
+    dy: { lower: -Infinity, upper: Infinity, nearest: 0, distance: Infinity },
+  };
+  for (const entity of entities) {
+    if (entity.id === source.id || !isPalletProduct(entity)) continue;
+    const target = boundsOf([entity]);
+    if (!target) continue;
+    const left = target.minX - (box.maxX + raw.dx);
+    const right = box.minX + raw.dx - target.maxX;
+    const below = target.minY - (box.maxY + raw.dy);
+    const above = box.minY + raw.dy - target.maxY;
+    const gapX = Math.max(left, right);
+    const gapY = Math.max(below, above);
+    const useX = gapX >= gapY;
+    const gap = useX ? gapX : gapY;
+    if (gap < -Math.min(tolerance, clearance / 4) || gap > clearance + tolerance) continue;
+
+    const key = useX ? "dx" : "dy";
+    const positive = useX ? right >= left : above >= below;
+    const limit = raw[key] + (positive ? 1 : -1) * (clearance - gap);
+    const axis = axes[key];
+    if (positive) axis.lower = Math.max(axis.lower, limit);
+    else axis.upper = Math.min(axis.upper, limit);
+    const distance = Math.abs(limit - raw[key]);
+    if (distance < axis.distance) {
+      axis.nearest = limit;
+      axis.distance = distance;
+    }
+  }
+  const fit = (key: keyof Offset) => {
+    const { lower, upper, nearest, distance } = axes[key];
+    if (lower > upper || distance === Infinity) return snapped[key];
+    return Math.max(lower, Math.min(nearest, upper));
+  };
+  return { dx: fit("dx"), dy: fit("dy") };
+}
+
 /** Use the moved rectangle's centre so merely touching edges stays a move. */
 export function palletSupportAt(
   source: PolylineEntity, entities: readonly Entity[], dx: number, dy: number,

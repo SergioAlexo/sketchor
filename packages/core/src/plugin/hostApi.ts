@@ -175,8 +175,8 @@ export interface UiApi {
   reportFolder(): Promise<ReportFolderInfo>;
   /** Choose a writable report folder from a user click. Cancel keeps the current folder. */
   pickReportFolder(): Promise<ReportFolderInfo>;
-  /** Save an HTML report to the chosen folder, or open Save As if one has yet to be picked. */
-  saveReportFile(name: string, html: string): Promise<SaveFileResult>;
+  /** Save an HTML report to the chosen folder. By default a missing folder opens Save As. */
+  saveReportFile(name: string, html: string, options?: { requireFolder?: boolean }): Promise<SaveFileResult>;
   /**
    * Opens an OS folder picker and lists every file under the chosen folder,
    * subfolders included (capped - see {@link PickedFolder.truncated}). Like

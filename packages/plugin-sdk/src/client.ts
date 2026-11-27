@@ -82,8 +82,8 @@ export function createClient(transport: RpcTransport): PluginHostApi {
         transport.call("ui.saveFile", [name, data, filters]) as Promise<SaveFileResult>,
       reportFolder: () => transport.call("ui.reportFolder", []) as Promise<ReportFolderInfo>,
       pickReportFolder: () => transport.call("ui.pickReportFolder", []) as Promise<ReportFolderInfo>,
-      saveReportFile: (name: string, html: string) =>
-        transport.call("ui.saveReportFile", [name, html]) as Promise<SaveFileResult>,
+      saveReportFile: (name, html, options) =>
+        transport.call("ui.saveReportFile", [name, html, options]) as Promise<SaveFileResult>,
       pickFolder: () => transport.call("ui.pickFolder", []) as Promise<PickedFolder | null>,
       readPickedFile: (relPath: string, as?: "text" | "bytes") =>
         transport.call("ui.readPickedFile", [relPath, as]) as Promise<string | Uint8Array>,

@@ -5,7 +5,7 @@ import {
   type LooseStack, type PalletPlan, type Placement, type PlannedPallet, type ProductRow, type UnplacedProduct,
 } from "./types";
 import { parsePalletPlan } from "./validate";
-import { PALLET_PLAN_LAYER } from "./layout";
+import { PALLET_GUIDE_LAYER, PALLET_PLAN_LAYER } from "./layout";
 
 interface Box extends Footprint {
   x: number;
@@ -85,10 +85,27 @@ export function palletSceneMatchesPlan(plan: PalletPlan, model: DocumentReadMode
   }
 }
 
+function outlineBounds(model: DocumentReadModel, name: string, layer: string): Box | undefined {
+  const outline = model.entities.find(entity => entity.type === "polyline" && entity.layer === layer
+    && entity.name === name && entity.id.startsWith("pallet-plan-entity:"));
+  if (outline?.type === "polyline" && outline.points.length === 4) return bounds(outline.points);
+}
+
 function deckBounds(model: DocumentReadModel, id: string): Box | undefined {
-  const deck = model.entities.find(entity => entity.type === "polyline" && entity.layer === PALLET_PLAN_LAYER
-    && entity.name === `Pallet ${id}` && entity.id.startsWith("pallet-plan-entity:"));
-  if (deck?.type === "polyline" && deck.points.length === 4) return bounds(deck.points);
+  return outlineBounds(model, `Pallet ${id}`, PALLET_PLAN_LAYER);
+}
+
+function recoverDeckOrigin(model: DocumentReadModel, pallet: PlannedPallet, inset: number, members: SceneStack[]): Point | undefined {
+  const guide = outlineBounds(model, `Clearance ${pallet.id}`, PALLET_GUIDE_LAYER);
+  if (guide && Math.abs(guide.lengthMm + 2 * inset - pallet.base.lengthMm) <= EPS
+    && Math.abs(guide.widthMm + 2 * inset - pallet.base.widthMm) <= EPS) {
+    return { x: guide.x - inset, y: guide.y - inset };
+  }
+  if (pallet.sceneOrigin) return pallet.sceneOrigin;
+  // Older reports can omit an origin. Anchor the base to a surviving stack's recorded offset.
+  const actual = members[0]?.units[0];
+  const recorded = actual && pallet.placements.find(unit => unit.id === actual.id);
+  if (actual && recorded) return { x: actual.xMm - recorded.xMm, y: actual.yMm - recorded.yMm };
 }
 
 function readStack(
@@ -126,7 +143,12 @@ function readStack(
     return { ...unit, xMm: transformed.x, yMm: transformed.y, rotation };
   }) satisfies Placement[];
   const group = model.groups.find(group => group.members.includes(outline.id));
-  return { box, units, jobId: pallet.jobId, palletId: pallet.id, selection: [outline.id, ...(group?.members ?? [])] };
+  const bottom = units[0];
+  const footprint = oriented(packingFootprint(rows.get(bottom.rowId)!), bottom.rotation);
+  return {
+    box: { ...footprint, x: bottom.xMm, y: bottom.yMm },
+    units, jobId: pallet.jobId, palletId: pallet.id, selection: [outline.id, ...(group?.members ?? [])],
+  };
 }
 
 function gap(a: Box, b: Box): number {
@@ -163,7 +185,7 @@ function addGroupClearance(plan: PalletPlan, group: SceneStack[]): SceneStack[] 
     for (const index of order) {
       const end = positions[index] + group[index].box[size] + clearance;
       for (const next of constraints[axis].get(index) ?? []) {
-        if (positions[next] < end - EPS) positions[next] = end;
+        positions[next] = Math.max(positions[next], end);
       }
     }
     return positions;
@@ -320,9 +342,12 @@ function reconcileManualScene(
       members.forEach(toLoose);
       continue;
     }
-    const deck = deckBounds(model, pallet.id);
-    if (!deck) throw new Error("A pallet outline is missing. Restore the outline before editing this plan.");
-    const { x, y } = deck;
+    const origin = deckBounds(model, pallet.id) ?? recoverDeckOrigin(model, pallet, plan.rules.edgeMm, members);
+    if (!origin) {
+      if (!pallet.placements.length) pallets.push(pallet);
+      continue;
+    }
+    const { x, y } = origin;
     const placements = members.flatMap(stack => {
       const { box } = stack;
       const outside = box.x < x + edge - EPS || box.y < y + edge - EPS
@@ -420,6 +445,10 @@ export function planFromPalletScene(
     ? plan.pallets.map(pallet => retained.filter(stack => stack.palletId === pallet.id)).filter(group => group.length)
     : clusters(retained, distance);
   groups.sort((a, b) => Math.min(...a.map(s => s.box.x)) - Math.min(...b.map(s => s.box.x)));
-  const pallets = groups.map((group, i) => scenePallet(plan, group, `${plan.id}/scene/${revisionId}/p${i + 1}`));
-  return parsePalletPlan({ ...plan, pallets, review: "draft", parentRevisionId: plan.revisionId, revisionId });
+  const pallets = groups.map((group, i) => scenePallet(plan, group, `${plan.id}/scene/${revisionId}/p${i + 1}`, action.type === "group"));
+  const assigned = new Set(pallets.flatMap(pallet => pallet.placements.map(unit => unit.id)));
+  return parsePalletPlan({
+    ...plan, pallets, unplaced: plan.unplaced.filter(unit => !assigned.has(unit.id)),
+    looseStacks: plan.looseStacks ? [] : undefined, review: "draft", parentRevisionId: plan.revisionId, revisionId,
+  });
 }
