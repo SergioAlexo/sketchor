@@ -127,8 +127,10 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         fillIn: "Fill in the orange fields", ready: "Ready to calculate", gone: "Drawing no longer found", bedWarn: "The sheet is larger than the machine bed.",
         results: "Results", kpi: { sheets: "Sheets", sheetsUsed: "Sheets used", toBuy: "To purchase", util: "Utilisation", placed: "Parts placed", cut: "Cut length", pierce: "Pierces", time: "Cut time (est.)" },
         stockUsage: "Stock usage", offcuts: "Usable offcuts", saveOffcuts: "Save offcuts as stock", notPlaced: "Not placed", dxf: "DXF", allZip: "All as ZIP", gcode: "G-code", toolpath: "Toolpath", toolpathTip: "Open the cut order, pierces and rapids for this sheet in a new tab",
-        manual: "Manual", groupsMode: "Groups from a list", bomHint: "Paste the parts list here (part number, quantity, material)...", loadCsv: "Load CSV", chooseFolder: "Choose folder", makeGroups: "Groups from the list",
-        noFolder: "No drawing folder chosen - part numbers are looked up as DXF files in it.", noGroups: "No groups yet - paste a parts list and click Groups from the list.", group: "Group", of: "of",
+        manual: "Manual", groupsMode: "Multi-material (list / CSV)", bomHint: "Load a CSV or paste the parts list here: Part, Qty, Material, Thickness (optional: Rotation, Priority, Due, Sheet)...", loadCsv: "Load CSV...", addDrawings: "Add drawings...", chooseFolder: "Choose folder", makeGroups: "Groups from the list",
+        csvHint: "One group per material + thickness, each nested on its own sheets with its own kerf - one Calculate covers every thickness. Part names are looked up as DXF files in the folder, then in the added drawings.",
+        noFolder: "No drawing folder chosen and no drawings added - part numbers are looked up as DXF files.", added: "added drawing(s)", noGroups: "No groups yet - load a CSV (or paste a parts list) and click Groups from the list.", group: "Group", of: "of",
+        kerfGroup: "Kerf", kerfFrom: { group: "this group's own", machine: "from the machine file", job: "the job's kerf" },
         credit: "Nesting engine based on the Sheet Nesting Calculator by Oleksandr Borenko",
         tabs: { sheets: "Sheets", tubes: "Tubes", bars: "Bars", offcuts: "Offcuts", machines: "Machines" },
         useOffcuts: "Cut from matching offcuts first", useOffcutsHint: "Offcuts in the library of this material and thickness are used before a fresh sheet - largest first. Manage them on the Offcuts tab.", offcutsAvail: "in the library", offcutsUsed: "Offcuts used from the library", newOffcuts: "New usable offcuts", updateLib: "Update offcut library", updateLibHint: "Takes the offcuts this nest used out of the library, adds its new offcuts, and takes the stock-on-hand sheets it used off the stock list. Do this once the sheets are cut.", libUpdated: "Offcut library updated.",
@@ -143,7 +145,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         tube: "Tube / profile", shape: "Shape", shapes: { round: "Round tube / pipe", square: "Square tube", rect: "Rectangular tube", angle: "Angle", channel: "Channel", flat: "Flat bar" }, a: { round: "Outside diameter", other: "Width" }, b: "Height", wall: "Wall", material: "Material",
         machine: "Tube laser", feed: "Feed (per min)", pierce: "Pierce (s)", index: "Index / rotate per cut (s)", load: "Bar load (s)", unload: "Part unload (s)", ppc: "Pierces per cut", fromFile: "from machine file", none: "None - enter values",
         mHint: "One file per machine in the shop. The cut table gives feed, pierce and kerf per material and thickness; the motion values make the time match the machine (acceleration, corner stops, small holes, head lift, sheet loading).",
-        mNew: "+ Laser / waterjet", mNewTube: "+ Tube laser", mCopy: "Duplicate", mDelete: "Delete", mImport: "Import...", mExport: "Export file", mNone: "No machine files yet.",
+        mNew: "+ Laser / waterjet", mNewTube: "+ Tube laser", mPreset: "+ Add Amada",
+        mPresetHint: "Amada fiber lasers: bed travel, motion and a cut table (feed, pierce, kerf, assist gas) for mild steel, stainless and aluminium, 1-25 mm. Typical starting values, not Amada's data - added as an editable copy, so check it against your machine's cutting conditions. Select it as the Machine file on the Sheets tab: each group's kerf and cut time then come from its thickness.", mCopy: "Duplicate", mDelete: "Delete", mImport: "Import...", mExport: "Export file", mNone: "No machine files yet.",
         mName: "Name", mType: "Type", mTypes: { laser: "Laser", waterjet: "Waterjet", router: "CNC router", other: "Other", tube: "Tube laser" }, mUnits: "Units", mBedW: "Bed width", mBedH: "Bed length",
         mRapid: "Rapid (per min)", mCutAcc: "Cut accel. (per s²)", mRapAcc: "Rapid accel. (per s²)", mLift: "Head up+down / pierce (s)", mCorner: "Corner stop above (°)", mSmall: "Small hole below", mSmallPct: "Small hole feed %", mLoad: "Load + unload / sheet (min)",
         mRows: "Cut table", mRowsHdr: ["Material", "Thick.", "Feed/min", "Pierce s", "Kerf", "Note"], mAddRow: "+ row",
@@ -323,11 +326,14 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         return h + "</div>";
       }
 
-      const ITEM_TEXT = { nofolder: "choose the folder", missing: "no file found", failed: "file unusable", loading: "reading...", ok: "ok" };
+      const ITEM_TEXT = { nofolder: "choose a folder or add drawings", missing: "no file found", failed: "file unusable", loading: "reading...", ok: "ok" };
       function bomCard() {
-        let h = "<div class='card'><h4>Parts list</h4><textarea data-id='bom' data-bom='1' rows='5' placeholder='" + esc(T.bomHint) + "' style='width:100%;resize:vertical;background:var(--sk-bg,#1e1f22);color:inherit;border:1px solid var(--sk-border,#3a3d42);border-radius:4px;font:11px monospace;padding:4px'>" + esc(V.bomText) + "</textarea>";
-        h += "<div class='row' style='margin:6px 0'><button class='ghost sm' data-act='load-csv'>" + T.loadCsv + "</button><button class='ghost sm' data-act='pick-folder'>" + T.chooseFolder + "</button><button data-act='make-groups'>" + T.makeGroups + "</button></div>";
-        h += "<div class='pdim'>" + (V.folder ? esc(V.folder.name) + " - " + V.folder.count + " files" + (V.folder.truncated ? " (list truncated)" : "") : T.noFolder) + "</div></div>";
+        let h = "<div class='card'><h4>Parts list</h4><div class='muted' style='font-size:10px;margin-bottom:4px'>" + esc(T.csvHint) + "</div><textarea data-id='bom' data-bom='1' rows='5' placeholder='" + esc(T.bomHint) + "' style='width:100%;resize:vertical;background:var(--sk-bg,#1e1f22);color:inherit;border:1px solid var(--sk-border,#3a3d42);border-radius:4px;font:11px monospace;padding:4px'>" + esc(V.bomText) + "</textarea>";
+        h += "<div class='row' style='margin:6px 0;flex-wrap:wrap'><button class='ghost sm' data-act='load-csv'>" + T.loadCsv + "</button><button class='ghost sm' data-act='add-drawings'>" + T.addDrawings + "</button><button class='ghost sm' data-act='pick-folder'>" + T.chooseFolder + "</button><button data-act='make-groups'>" + T.makeGroups + "</button></div>";
+        const src = [];
+        if (V.folder) src.push(esc(V.folder.name) + " - " + V.folder.count + " files" + (V.folder.truncated ? " (list truncated)" : ""));
+        if (V.addedDrawings) src.push(V.addedDrawings + " " + T.added);
+        h += "<div class='pdim'>" + (src.length ? src.join(" &middot; ") : T.noFolder) + "</div></div>";
         return h;
       }
       function groupsCard() {
@@ -337,13 +343,16 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
           const gid = esc(g.id);
           let h = "<div class='card'><h4>" + T.group + " " + (gi + 1) + " " + T.of + " " + V.groups.length + "</h4><div class='grid2'>";
           h += "<label class='fld'><span class='t'>" + T.material + "</span><select data-gid='" + gid + "' data-gset='material'>" + optionsHtml(T.materials, g.material, V.materials) + "</select></label>";
-          h += "<label class='fld'><span class='t'>" + T.thickness + " (in)</span><input data-id='gt" + gi + "' data-gid='" + gid + "' data-gthk='1' value='" + esc(g.thickness) + "'></label>";
+          h += "<label class='fld'><span class='t'>" + T.thickness + "</span><span class='lf'><input data-id='gt" + gi + "' data-gid='" + gid + "' data-gthk='1' value='" + esc(g.thickness) + "' style='flex:1;min-width:0'><select data-gid='" + gid + "' data-gset='thicknessUnit' style='width:52px'><option value='in'" + (g.thicknessUnit === "in" ? " selected" : "") + ">in</option><option value='mm'" + (g.thicknessUnit === "mm" ? " selected" : "") + ">mm</option></select></span></label>";
           h += "<label class='fld'><span class='t'>" + T.sheet + "</span><select data-gid='" + gid + "' data-gsheet='1'>" + sheetSel + "</select></label>";
-          h += "<label class='fld'><span class='t'>Rotation</span><select data-gid='" + gid + "' data-gset='rotation'>" + optionsHtml(T.rot, g.rotation, ROT_KEYS) + "</select></label></div>";
+          h += "<label class='fld'><span class='t'>Rotation</span><select data-gid='" + gid + "' data-gset='rotation'>" + optionsHtml(T.rot, g.rotation, ROT_KEYS) + "</select></label>";
+          h += "<label class='fld'><span class='t'>" + T.kerfGroup + " (" + esc(g.kerfUnit) + ")</span><input data-id='gk" + gi + "' data-gid='" + gid + "' data-gkerf='1' value='" + esc(g.kerf) + "' placeholder='" + esc(g.kerfAuto) + "' title='Blank = " + esc(T.kerfFrom[g.kerfFrom === "group" ? "job" : g.kerfFrom]) + "'></label>";
+          h += "<div class='pdim' style='grid-column:1/-1'>" + esc(g.label) + " &middot; kerf " + esc(g.kerfAuto) + " (" + esc(T.kerfFrom[g.kerfFrom]) + ")" + (g.machineHint ? "<br>" + esc(g.machineHint) : "") + "</div></div>";
           h += g.items.map((it) => {
             const bad = it.state === "missing" || it.state === "failed" || it.state === "nofolder";
             return "<div class='scard' style='" + (bad ? "color:var(--sk-danger,#f0616d)" : "") + "'><div style='min-width:0'><div class='pname' title='" + esc(it.file || it.num) + "'>" + esc(it.num) + "</div><div class='pdim' style='" + (bad ? "color:inherit" : "") + "'>" +
-              esc(ITEM_TEXT[it.state] || it.state) + (it.state === "ok" && it.file ? " - " + esc(it.file) + (it.per > 1 ? " (" + it.per + " per file, " + it.need + " files)" : "") : "") + (it.error ? ": " + esc(it.error) : "") + "</div></div>" +
+              esc(ITEM_TEXT[it.state] || it.state) + (it.state === "ok" && it.file ? " - " + esc(it.file) + (it.per > 1 ? " (" + it.per + " per file, " + it.need + " files)" : "") : "") + (it.error ? ": " + esc(it.error) : "") +
+              (it.rotation || it.priority || it.due ? " &middot; " + [it.rotation ? esc(T.rot[it.rotation] || it.rotation) : "", it.priority ? esc(it.priority) + " priority" : "", it.due ? "due " + esc(it.due) : ""].filter(Boolean).join(", ") : "") + "</div></div>" +
               "<div class='row tight'><input type='number' min='1' step='1' value='" + it.qty + "' data-id='iq" + gi + esc(it.num) + "' data-gid='" + gid + "' data-inum='" + esc(it.num) + "' style='width:54px;margin:0' title='" + T.qty + "'><button class='icon' data-act='item-remove' data-g='" + gid + "' data-n='" + esc(it.num) + "'>&#10005;</button></div></div>";
           }).join("");
           return h + "</div>";
@@ -641,6 +650,11 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         const list = V.profiles || [];
         let h = "<div class='card'><h4>" + T.tabs.machines + "</h4><div class='muted' style='font-size:10px;margin-bottom:6px'>" + TT.mHint + "</div>";
         h += "<div class='row' style='margin-bottom:6px'><button class='sm' data-act='m-new'>" + TT.mNew + "</button><button class='sm' data-act='m-new' data-kind='tube'>" + TT.mNewTube + "</button><button class='ghost sm' data-act='m-import'>" + TT.mImport + "</button></div>";
+        const presets = V.amadaPresets || [];
+        if (presets.length) {
+          h += "<div class='row' style='margin-bottom:4px'><select data-id='amada-preset' style='flex:1;min-width:0'>" + presets.map((p) => "<option value='" + esc(p.id) + "'>Amada " + esc(p.model) + " - " + esc(p.sheet) + "</option>").join("") + "</select><button class='sm' data-act='m-preset'>" + TT.mPreset + "</button></div>";
+          h += "<div class='muted' style='font-size:10px;margin-bottom:6px'>" + TT.mPresetHint + "</div>";
+        }
         if (!list.length) h += "<div class='muted'>" + TT.mNone + "</div>";
         h += list.map((p) => "<div class='scard'><div><b>" + esc(p.name) + "</b> <span class='muted'>" + esc(TT.mTypes[p.type] || p.type) + " &middot; " + p.rows.length + " cut rows</span></div><button class='ghost sm' data-act='m-edit' data-mid='" + esc(p.id) + "'>" + (editId === p.id ? "Editing" : "Edit") + "</button></div>").join("");
         h += "</div>";
@@ -746,6 +760,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         else if (t.dataset.pset === "qty") later("q" + t.dataset.part, () => post({ type: "part-set", key: t.dataset.part, patch: { qty: t.value }, refresh: false }));
         else if (t.dataset.bom) later("bom", () => post({ type: "bom-text", text: t.value, refresh: false }), 400);
         else if (t.dataset.gthk) later("gt" + t.dataset.gid, () => post({ type: "group-set", id: t.dataset.gid, patch: { thickness: t.value }, refresh: false }));
+        else if (t.dataset.gkerf) later("gk" + t.dataset.gid, () => post({ type: "group-set", id: t.dataset.gid, patch: { kerf: t.value }, refresh: false }));
         else if (t.dataset.inum) later("iq" + t.dataset.gid + t.dataset.inum, () => post({ type: "item-set", gid: t.dataset.gid, num: t.dataset.inum, qty: t.value, refresh: false }));
         else if (t.dataset.tabs) later(t.dataset.tabs, () => setJob({ [t.dataset.tabs]: t.value === "" ? 0 : Number(t.value) || 0 }));
         else if (t.dataset.libq) later("libq" + t.dataset.libq, () => post({ type: "lib-set", id: t.dataset.libq, qty: t.value }), 500);
@@ -813,6 +828,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         if (a === "source") setJob({ sheetSource: b.dataset.v });
         else if (a === "mode") setJob({ mode: b.dataset.v });
         else if (a === "load-csv") $("file-csv").click();
+        else if (a === "add-drawings") { partsForGroups = true; $("file-parts").click(); }
+        else if (a === "m-preset") { const sel = document.querySelector("[data-id=amada-preset]"); if (sel && sel.value) { if (mSaveTimer) saveMachine(false); post({ type: "profile-new", preset: sel.value }); } }
         else if (a === "pick-folder") post({ type: "pick-folder" });
         else if (a === "make-groups") { const ta = document.querySelector("[data-bom]"); post({ type: "make-groups", text: ta ? ta.value : undefined }); }
         else if (a === "item-remove") post({ type: "item-remove", gid: b.dataset.g, num: b.dataset.n });
@@ -822,7 +839,7 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         else if (a === "stock-add") post({ type: "stock-set", rows: stockRows().concat([{ name: "Sheet", w: V.stockRows.length ? V.stockRows[V.stockRows.length - 1].w : "48", h: V.stockRows.length ? V.stockRows[V.stockRows.length - 1].h : "96", qty: "1" }]) });
         else if (a === "stock-del") post({ type: "stock-set", rows: stockRows().filter((_, i) => i !== Number(b.dataset.i)) });
         else if (a === "add-selection") post({ type: "add-selection" });
-        else if (a === "add-files") $("file-parts").click();
+        else if (a === "add-files") { partsForGroups = false; $("file-parts").click(); }
         else if (a === "remove") post({ type: "remove-part", key: b.dataset.k });
         else if (a === "nest") { message = null; progress = null; R = null; post({ type: "nest" }); }
         else if (a === "stop") post({ type: "cancel-nest" });
@@ -848,10 +865,12 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
         else if (a === "tray-add") post({ type: "tray-add", key: b.dataset.k, count: Number(b.dataset.n) || 1 });
       });
 
+      // Multi-material mode: "Add drawings" files are looked up by the list's part names, not added as parts.
+      let partsForGroups = false;
       $("file-parts").addEventListener("change", async (e) => {
         const out = await readFiles(e.target.files);
         e.target.value = "";
-        if (out.length) post({ type: "add-files", files: out });
+        if (out.length) post({ type: "add-files", files: out, forGroups: partsForGroups });
       });
       $("file-machine").addEventListener("change", async (e) => {
         const f = (e.target.files || [])[0];
@@ -881,7 +900,8 @@ export const SHEET_NESTING_PANEL_HTML = String.raw`<!doctype html>
       $("file-csv").addEventListener("change", async (e) => {
         const f = (e.target.files || [])[0];
         e.target.value = "";
-        if (f) post({ type: "bom-text", text: await f.text() });
+        // Load and group in one step: the CSV lands in the text box and its groups appear.
+        if (f) post({ type: "make-groups", text: await f.text() });
       });
       $("file-job").addEventListener("change", async (e) => {
         const f = (e.target.files || [])[0];

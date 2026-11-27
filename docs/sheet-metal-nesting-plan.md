@@ -79,6 +79,20 @@ algorithmic change (spatial indexing), not just a bigger number.
 
 N-54 (save/reopen job file) is already done in the Sheet Nesting plugin (RN-42, ticked 2026-11-04).
 
+**NT-06 — multi-material from a CSV, Amada machine files** (2026-11-27). The groups mode is now "Multi-material (list / CSV)":
+`partsCsv.ts` (`parsePartsCsv`, `groupsFromCsvRows`) reads a CSV parts list - header in any order (Part/File, Qty, Material,
+Thickness, optional Rotation/Priority/Due/Sheet), units from the header or the cell (`3 mm`, `1/8"`, `16 ga`), bare numbers in the
+job's unit system - and groups it by material + thickness. "Load CSV..." groups the file in one step; a CAD BOM whose material
+cells say `SHEET ...` still goes through the old `parseSheetText`. List items resolve to DXFs in the picked folder, then to drawings
+added with "Add drawings..." (no folder needed). Each group runs as `groupRunJob`: its own thickness (`JobGroup.thicknessUnit`,
+absent = inches) and kerf - the group's own `kerf`, else the selected machine file's row for that material/thickness, else the job's.
+The result keeps the kerf per sheet (G-code offsets each sheet by its group's kerf), DXF ZIPs get one folder per group and single
+DXF / G-code files a group prefix. `amadaPresets.ts`: Amada fiber laser machine files (LCG/ENSIS/REGIUS, 3015/4020 beds, 3/6/9 kW
+cut tables for mild steel, stainless, 5052/6061, 1-25 mm, with assist gas) added from the Machines tab as editable copies -
+typical starting values, labelled estimates, not Amada's cutting-condition data. No Amada NC post-processor: the control's own
+codes vary by model, so G-code stays on the editable N-42 posts. Tests: `partsCsv.test.ts`, `amadaPresets.test.ts`, and
+`sheetNestingMulti.test.ts` (the plugin through its messages with a fake host: CSV with three groups -> nest -> ZIP/G-code).
+
 **N-52** lives in the Sheet Nesting plugin (it owns the Stock on hand model): `packages/plugin-nest/src/remnants.ts` finds the largest rectangle clear of every placed part bounding box per sheet (min side 100 mm, min area 25000 mm2), and "Save offcuts as stock" adds them as qty-1 `Remnant W x H` rows (material/thickness carried, identical ones merged) and takes the inventory sheets the job used out of the list.
 
 **N-42** (`packages/plugin-gcode/src/posts.ts`, commit `58f7720`): post profiles are data (`PostProfileSpec`) with built-ins for generic laser (the old output), generic plasma, LinuxCNC, Mach3/4 and GRBL laser, each round-tripped through `gcodeToEntities`; the Sheet Nesting panel has a Post-processor picker carried on the job. Custom profiles (this pass): **Edit…** beside the picker opens an inline editor prefilled from the selected profile (name, beam on/off, pierce dwell unit, comment style, header lines, program end); saving a built-in makes the user's own copy (`custom-` id, never shadowing a built-in), saving their own replaces it, Delete removes it, up to 20 kept in plugin storage (`Custom.posts`). Every save goes through `validatePostSpec` and stored profiles are re-validated on load (`parseCustomPosts`), so only plain G-code words reach a machine; export resolves built-in, then custom, then the default (`resolvePost`). Open: the older Sheet Metal Nest panel still always uses the default (new functionality ships in Sheet Nesting, raster plan decision 5).
