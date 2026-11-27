@@ -99,10 +99,10 @@ export function listImporters(): IoContribution[] {
 // --- invocation ---
 
 /** Runs a contributed command. Its own API calls are capability-gated inside the sandbox. */
-export async function runCommand(id: string): Promise<void> {
+export async function runCommand(id: string, input?: unknown): Promise<void> {
   const reg = commands.get(id);
   if (!reg) throw new Error(`No such command "${id}"`);
-  await reg.host.invoke("command", id);
+  await reg.host.invoke("command", id, input);
 }
 
 /**

@@ -32,6 +32,9 @@ const REQUIRED: Record<string, Permission | null> = {
   // Like ui.print, the plugin only hands the host bytes to write — it never
   // gets a path or read access, so this needs no filesystem-style grant.
   "ui.saveFile": null,
+  "ui.reportFolder": null,
+  "ui.pickReportFolder": null,
+  "ui.saveReportFile": null,
   // The user picks the folder in an OS dialog; the plugin sees only its name
   // and relative paths and can read just inside that grant (no path escape).
   "ui.pickFolder": null,
@@ -40,6 +43,7 @@ const REQUIRED: Record<string, Permission | null> = {
   // it, nothing saved - and the host sanitises and caps what it is handed.
   "ui.highlight": null,
   "app.displayUnit": null,
+  "app.fitDrawing": null,
   "app.onDisplayUnitChange": null,
   // Creates a tab and writes a drawing into it - same power as document.apply.
   "app.openDocumentTab": "write-document",

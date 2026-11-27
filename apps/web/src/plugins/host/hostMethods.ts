@@ -14,7 +14,10 @@ import { factorFromMm, type DisplayUnit } from "../../units";
 import { hidePanel, isPanelOpen, onPanelsChange, postToPanel, showPanel, subscribeToPanel } from "./uiManager";
 import { printHtml } from "../../print/printHtml";
 import { listDirectory, readPickedFile, type DirHandleLike } from "./pickedFolder";
-import { autosaveEnabled, autosaveFolderLabel, pickAutosaveFolder, setAutosaveEnabled, supportsAutosave } from "../../io/autosaveFolder";
+import {
+  autosaveEnabled, autosaveFolderLabel, pickAutosaveFolder, pickReportFolder, reportFolderLabel,
+  safeFileName, saveToReportFolder, setAutosaveEnabled, supportsAutosave,
+} from "../../io/autosaveFolder";
 
 /** The autosave folder, as the plugin-facing {@link PrintFolderInfo}. */
 function printFolderInfo(): PrintFolderInfo {
@@ -175,6 +178,7 @@ export async function dispatchCall(ctx: HostContext, method: string, args: unkno
       assertCommands(commands);
       // Collapse the plugin's whole action into one undo step.
       if (commands.length > 0) {
+        if (bus.locked) throw new Error("Unlock editing in the toolbar to change the drawing.");
         bus.execute({ type: "batch", commands });
         // A plugin can introduce a new layer (e.g. the load planner's "Load
         // Plan"); surface it in the layer panel like any first-party edit would.
@@ -231,6 +235,26 @@ export async function dispatchCall(ctx: HostContext, method: string, args: unkno
       return hostSaveFile(String(args[0]), data, args[2] as SaveFileFilter[] | undefined);
     }
 
+    case "ui.reportFolder":
+      return { supported: supportsAutosave(), folder: reportFolderLabel(ctx.pluginId) };
+
+    case "ui.pickReportFolder":
+      await pickReportFolder(ctx.pluginId);
+      return { supported: supportsAutosave(), folder: reportFolderLabel(ctx.pluginId) };
+
+    case "ui.saveReportFile": {
+      const name = safeFileName(String(args[0]).replace(/\.html$/i, ""));
+      const html = String(args[1]);
+      const requireFolder = (args[2] as { requireFolder?: boolean } | undefined)?.requireFolder === true;
+      if (requireFolder || reportFolderLabel(ctx.pluginId)) {
+        const outcome = await saveToReportFolder(ctx.pluginId, name, html);
+        if (outcome.ok) return { saved: true, name: outcome.file };
+        if (outcome.reason !== "no-folder") throw new Error(outcome.message);
+        if (requireFolder) throw new Error("Choose the HTML destination with Report folder… and try again.");
+      }
+      return hostSaveFile(name, html, [{ description: "HTML report", accept: { "text/html": [".html"] } }]);
+    }
+
     case "ui.pickFolder":
       // Inside the click from the panel iframe, like ui.saveFile.
       return hostPickFolder(ctx.pluginId);
@@ -247,6 +271,9 @@ export async function dispatchCall(ctx: HostContext, method: string, args: unkno
 
     case "app.displayUnit":
       return currentDisplayUnit();
+    case "app.fitDrawing":
+      useApp.getState().requestFit();
+      return undefined;
 
     case "app.openDocumentTab": {
       const commands = args[1] ?? [];

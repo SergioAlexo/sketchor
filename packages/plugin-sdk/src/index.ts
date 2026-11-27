@@ -72,6 +72,7 @@ export type {
   NotifyOptions,
   SaveFileFilter,
   SaveFileResult,
+  ReportFolderInfo,
   HighlightMark,
   PickedFile,
   PickedFolder,

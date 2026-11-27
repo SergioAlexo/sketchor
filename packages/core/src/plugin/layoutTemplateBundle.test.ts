@@ -146,6 +146,6 @@ describe("it is data only, and hostile input does not throw", () => {
     expect(isLayoutTemplateBundle({ manifest: "{}", templates: {} })).toBe(true);
     expect(isLayoutTemplateBundle({ manifest: "{}", templates: {}, code: "x" })).toBe(false);
     expect(isLayoutTemplateBundle(null)).toBe(false);
-    expect(HOST_API_VERSION).toBe("0.13.0");
+    expect(HOST_API_VERSION).toBe("0.13.1");
   });
 });

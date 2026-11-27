@@ -58,6 +58,8 @@ export interface AppApi {
   displayUnit(): Promise<DisplayUnitInfo>;
   /** Fires whenever the user changes the display unit. Returns an unsubscribe function. */
   onDisplayUnitChange(listener: (info: DisplayUnitInfo) => void): Promise<Unsubscribe>;
+  /** Frames the geometry in the current drawing. */
+  fitDrawing(): Promise<void>;
   /**
    * Requires `write-document`. Opens a NEW document tab named `name`, switches
    * to it, applies `commands` there as a single undo step and fits the view.
@@ -169,6 +171,12 @@ export interface UiApi {
    * so a plugin can tell "nothing happened" from a real failure.
    */
   saveFile(name: string, data: Uint8Array | string, filters?: SaveFileFilter[]): Promise<SaveFileResult>;
+  /** Reports use a folder remembered for this plugin, with no path exposed. */
+  reportFolder(): Promise<ReportFolderInfo>;
+  /** Choose a writable report folder from a user click. Cancel keeps the current folder. */
+  pickReportFolder(): Promise<ReportFolderInfo>;
+  /** Save an HTML report to the chosen folder. By default a missing folder opens Save As. */
+  saveReportFile(name: string, html: string, options?: { requireFolder?: boolean }): Promise<SaveFileResult>;
   /**
    * Opens an OS folder picker and lists every file under the chosen folder,
    * subfolders included (capped - see {@link PickedFolder.truncated}). Like
@@ -249,6 +257,8 @@ export interface PrintFolderInfo {
   /** Whether a copy is actually filed on each print. */
   enabled: boolean;
 }
+
+export type ReportFolderInfo = Pick<PrintFolderInfo, "supported" | "folder">;
 
 export interface UiShowOptions {
   title?: string;
@@ -357,5 +367,6 @@ export interface ImporterContext {
  * `.dxf` / `.sketchor` sheet templates offered by "Layout from model") — additive.
  * 0.13.0 added `ui.highlight(marks)`, ephemeral labelled markers a plugin puts
  * on the open drawing (NF-03b: the nest panels mark open contour ends) — additive.
+ * 0.13.1 added the permission-free, picker-scoped report-folder methods.
  */
-export const HOST_API_VERSION = "0.13.0";
+export const HOST_API_VERSION = "0.13.1";

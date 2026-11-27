@@ -25,6 +25,8 @@ const DB_NAME = "sketchor-autosave";
 const STORE = "folders";
 const LABEL_KEY = "sketchor.autosave.label";
 const ENABLED_KEY = "sketchor.autosave.enabled";
+const reportFolderKey = (pluginId: string) => `reportFolder:${pluginId}`;
+const reportLabelKey = (pluginId: string) => `sketchor.autosave.report.${pluginId}`;
 
 type DirectoryHandle = FileSystemDirectoryHandle & {
   queryPermission?: (d: { mode: "read" | "readwrite" }) => Promise<PermissionState>;
@@ -72,8 +74,16 @@ async function get<T>(key: string): Promise<T | null> {
 
 /** The remembered folder's display name, or null — readable without touching IndexedDB, for first paint. */
 export function autosaveFolderLabel(): string | null {
+  return folderLabel(LABEL_KEY);
+}
+
+export function reportFolderLabel(pluginId: string): string | null {
+  return folderLabel(reportLabelKey(pluginId));
+}
+
+function folderLabel(key: string): string | null {
   try {
-    return localStorage.getItem(LABEL_KEY);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
@@ -98,20 +108,29 @@ export function setAutosaveEnabled(on: boolean): void {
 
 /** Asks for a folder and remembers it. Returns its name, or null if the user cancelled. */
 export async function pickAutosaveFolder(): Promise<string | null> {
+  return pickRememberedFolder("printFolder", LABEL_KEY).catch(() => null);
+}
+
+export async function pickReportFolder(pluginId: string): Promise<string | null> {
+  return pickRememberedFolder(reportFolderKey(pluginId), reportLabelKey(pluginId));
+}
+
+async function pickRememberedFolder(key: string, labelKey: string): Promise<string | null> {
   if (!supportsAutosave()) return null;
   try {
     const dir = await (window as unknown as { showDirectoryPicker: (o?: { mode?: string }) => Promise<DirectoryHandle> }).showDirectoryPicker({
       mode: "readwrite",
     });
-    await put("printFolder", dir);
+    await put(key, dir);
     try {
-      localStorage.setItem(LABEL_KEY, dir.name);
+      localStorage.setItem(labelKey, dir.name);
     } catch {
       /* storage unavailable */
     }
     return dir.name;
-  } catch {
-    return null; // cancelled, or the picker is unavailable in this context
+  } catch (error) {
+    if ((error as DOMException)?.name === "AbortError") return null;
+    throw error;
   }
 }
 
@@ -145,24 +164,46 @@ export function safeFileName(name: string, extension = "html"): string {
  * `requestPermission`, and browsers only grant that to a real click.
  */
 export async function saveToAutosaveFolder(fileName: string, data: string | Uint8Array): Promise<SaveOutcome> {
-  const dir = await get<DirectoryHandle>("printFolder");
-  if (!dir) return { ok: false, reason: "no-folder", message: "No folder chosen yet" };
+  return saveToFolder("printFolder", fileName, data, false);
+}
 
+export async function saveToReportFolder(pluginId: string, fileName: string, html: string): Promise<SaveOutcome> {
+  return saveToFolder(reportFolderKey(pluginId), fileName, html, true);
+}
+
+async function availableReportName(dir: DirectoryHandle, fileName: string): Promise<string> {
+  const stem = fileName.replace(/\.html$/i, "");
+  for (let n = 1; ; n += 1) {
+    const candidate = n === 1 ? fileName : `${stem}-${n}.html`;
+    try {
+      await dir.getFileHandle(candidate);
+    } catch (error) {
+      const name = (error as DOMException)?.name;
+      if (name === "NotFoundError") return candidate;
+      if (name !== "TypeMismatchError") throw error;
+    }
+  }
+}
+
+async function saveToFolder(key: string, fileName: string, data: string | Uint8Array, unique: boolean): Promise<SaveOutcome> {
   try {
+    const dir = await get<DirectoryHandle>(key);
+    if (!dir) return { ok: false, reason: "no-folder", message: "No folder chosen yet" };
     const mode = { mode: "readwrite" as const };
     let state: PermissionState = (await dir.queryPermission?.(mode)) ?? "granted";
     if (state === "prompt") state = (await dir.requestPermission?.(mode)) ?? "denied";
     if (state !== "granted") {
       return { ok: false, reason: "denied", message: `Access to “${dir.name}” was declined` };
     }
-    const file = await dir.getFileHandle(fileName, { create: true });
+    const name = unique ? await availableReportName(dir, fileName) : fileName;
+    const file = await dir.getFileHandle(name, { create: true });
     const writable = await file.createWritable();
     // A Uint8Array from the plugin sandbox arrives structured-cloned; write
     // it through a fresh copy so a detached or subclassed buffer can't
     // surprise the writer.
     await writable.write(typeof data === "string" ? data : new Uint8Array(data));
     await writable.close();
-    return { ok: true, folder: dir.name, file: fileName };
+    return { ok: true, folder: dir.name, file: name };
   } catch (err) {
     // A folder that has been renamed, unmounted or revoked lands here.
     return { ok: false, reason: "failed", message: err instanceof Error ? err.message : "Could not write the file" };

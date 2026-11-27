@@ -3,6 +3,8 @@ import { settingsFromHatch } from "../tools/hatchTool";
 import { runDimEdit } from "../tools/dimEditCommands";
 import { hatchesTinted } from "./hatchRender";
 import { useEffect, useRef, useState } from "react";
+import { runCommand as runPluginCommand } from "../plugins/host/registries";
+import { isPalletDeck, isPalletProduct } from "../plugins/builtins/palletSceneInteraction";
 import { autoConstrainSuppressed, withAutoConstraints } from "../tools/autoConstrain";
 import type { BoxSelectMode, ClosedRegion, Command, Entity, EntityId, LayoutRecord, Point, TextEntity, ViewportEntity } from "@sketchor/core";
 import {
@@ -99,7 +101,7 @@ import { CONSTRAINT_GLYPHS } from "../constraints/ConstraintPanel";
 import { setImageDecodeCallback } from "./imageCache";
 import { findSnap, snapMovingSelection, snapRotation, SNAP_PX, type Snap } from "./snapping";
 import { acquireLine, acquirePoint, parallelTrack, trackAlignment, trackingAngles, type TrackLine } from "./objectTracking";
-import { fitToBounds, gridStep, screenToWorld, worldToScreen, zoomAt, type View } from "./view";
+import { fitToBounds, gridStep, screenToWorld, wheelZoomFactor, worldToScreen, zoomAt, type View } from "./view";
 import { getTool, type Pick, type PointerGesture, type ToolContext } from "../tools";
 import { copySelectionToClipboard, pasteFromClipboard } from "../io/clipboard";
 import { applyTracking, trackingIncrement, useTracking } from "../tools/tracking";
@@ -357,6 +359,8 @@ export function Viewport() {
   const [commandEcho, setCommandEcho] = useState<CommandEcho[]>([]);
   /** The selection-cycling list, open after a repeat click found more than one entity under the cursor. */
   const [cycle, setCycle] = useState<{ screen: Point; ids: EntityId[]; index: number } | null>(null);
+  const [palletMenu, setPalletMenu] = useState<Point | null>(null);
+  const rightPressRef = useRef<Point | null>(null);
   const cycleRef = useRef<{ screen: Point; at: number; index: number; ids: EntityId[] } | null>(null);
   const closedRegionsRef = useRef<ClosedRegion[]>([]);
   const tool = useApp((s) => s.tool);
@@ -515,6 +519,19 @@ export function Viewport() {
           : null),
       boxSelect: overlay?.boxSelect ?? null,
     });
+    const support = overlay?.palletSupportId ? doc.get(overlay.palletSupportId) : undefined;
+    const supportBounds = support && boundsOf([support]);
+    if (supportBounds) {
+      const a = worldToScreen(viewRef.current, { x: supportBounds.minX, y: supportBounds.maxY });
+      const b = worldToScreen(viewRef.current, { x: supportBounds.maxX, y: supportBounds.minY });
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.strokeStyle = "#19a989";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(a.x - 3, a.y - 3, b.x - a.x + 6, b.y - a.y + 6);
+      ctx.restore();
+    }
     useApp.getState().setHatchTinted(hatchesTinted());
   };
 
@@ -1160,6 +1177,7 @@ export function Viewport() {
         setTyped(null);
         setQuickEdit(null);
         setCycle(null);
+        setPalletMenu(null);
         acquiredRef.current = [];
     acquiredLinesRef.current = [];
         interactionRef.current = { kind: "idle" };
@@ -1298,9 +1316,10 @@ export function Viewport() {
 
   useEffect(() => {
     setCycle(null);
+    setPalletMenu(null);
   }, [tool]);
 
-  const screenPos = (e: React.PointerEvent): Point => {
+  const screenPos = (e: { clientX: number; clientY: number }): Point => {
     const rect = canvasRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
@@ -1338,6 +1357,8 @@ export function Viewport() {
   });
 
   const onPointerDown = (e: React.PointerEvent) => {
+    setPalletMenu(null);
+    rightPressRef.current = e.button === 2 ? screenPos(e) : null;
     try {
       canvasRef.current!.setPointerCapture(e.pointerId);
     } catch {
@@ -1800,8 +1821,10 @@ export function Viewport() {
   };
 
   const onWheel = (e: React.WheelEvent) => {
+    const mode = e.deltaMode;
+    const factor = wheelZoomFactor(e.deltaY, mode, e.currentTarget.clientHeight);
+    if (factor === 1) return;
     const screen = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
     viewRef.current = zoomAt(viewRef.current, screen, factor);
     requestRedraw();
   };
@@ -1908,6 +1931,39 @@ export function Viewport() {
     fitView(hit ? [hit] : undefined);
   };
 
+  const selectedPalletProducts = selection.filter(id => isPalletProduct(doc.get(id)));
+  const selectedPalletDeck = selection.some(id => isPalletDeck(doc.get(id)));
+
+  const onPalletContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const app = useApp.getState();
+    const screen = screenPos(e);
+    if (app.tool !== "select" || app.editLocked || (rightPressRef.current && dist(rightPressRef.current, screen) > 5)) return;
+    const world = screenToWorld(viewRef.current, screen);
+    const hit = hitCandidates(viewRef.current, world).find(id => {
+      const entity = doc.get(id);
+      return isPalletProduct(entity) || isPalletDeck(entity);
+    });
+    let ids = app.selection;
+    if (hit && !ids.includes(hit)) {
+      const productSelection = ids.some(id => isPalletProduct(doc.get(id)));
+      if (!productSelection || isPalletDeck(doc.get(hit))) {
+        ids = resolveSelection(doc, hit, app.enteredGroupId);
+        app.setSelection(ids);
+      }
+    }
+    if (!ids.some(id => isPalletProduct(doc.get(id)) || isPalletDeck(doc.get(id)))) return;
+    setPalletMenu({
+      x: Math.max(4, Math.min(screen.x, e.currentTarget.clientWidth - 210)),
+      y: Math.max(4, Math.min(screen.y, e.currentTarget.clientHeight - 145)),
+    });
+  };
+
+  const palletAction = (command: string, input?: unknown) => {
+    setPalletMenu(null);
+    void runPluginCommand(command, input).catch(error => console.warn(error));
+  };
+
   return (
     <>
       <canvas
@@ -1920,8 +1976,40 @@ export function Viewport() {
         onPointerCancel={onPointerUp}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}
-        onContextMenu={(e) => e.preventDefault()}
+        onContextMenu={onPalletContextMenu}
       />
+      {selectedPalletProducts.length > 0 && !palletMenu && (
+        <div className="pallet-scene-tools" aria-label="Pallet selection tools" data-testid="pallet-scene-tools">
+          <button className="btn" onClick={() => palletAction("pallet-planning.group-selection")}>
+            Form pallet
+          </button>
+        </div>
+      )}
+      {palletMenu && (
+        <div className="select-cycle pallet-context-menu" role="group" aria-label="Pallet actions"
+          style={{ left: palletMenu.x, top: palletMenu.y }} data-testid="pallet-context-menu">
+          {selectedPalletProducts.length > 0 && (
+            <button className="select-cycle-row" autoFocus onClick={() => palletAction("pallet-planning.group-selection")}>
+              Form pallet
+            </button>
+          )}
+          {selectedPalletProducts.length === 2 && (
+            <button className="select-cycle-row" onClick={() => palletAction("pallet-planning.drop-product", selectedPalletProducts)}>
+              Stack on selected support
+            </button>
+          )}
+          {selectedPalletProducts.length === 1 && (
+            <button className="select-cycle-row" onClick={() => palletAction("pallet-planning.layer-1")}>
+              Separate top unit
+            </button>
+          )}
+          {selectedPalletDeck && (
+            <button className="select-cycle-row" onClick={() => palletAction("pallet-planning.release")}>
+              Release pallet contents
+            </button>
+          )}
+        </div>
+      )}
       {commandLine && (
         <CommandBar
           echo={commandEcho}
