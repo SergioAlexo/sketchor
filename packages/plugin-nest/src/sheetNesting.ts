@@ -87,7 +87,7 @@ export interface CutSpeeds {
   pierceTimeSec: number;
   rapidMmPerMin: number;
   /** "machine": the user entered a feed rate; "table": the built-in laser estimate for the material and thickness. */
-  source: "machine" | "table";
+  source: "machine" | "table" | "profile";
 }
 
 /** Pierce and rapid used when the user gave a feed rate but no pierce / rapid and the table has no row for the material. */

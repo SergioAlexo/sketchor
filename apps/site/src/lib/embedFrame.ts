@@ -41,7 +41,7 @@ export function safeUrl(v: string): string | null {
 const COLOR = /^(#[0-9a-f]{3,8}|[a-z]{3,20}|(rgb|hsl)a?\(\s*[-\d.]+(deg)?%?(\s*[,\s/]\s*[-\d.]+%?){2,3}\s*\))$/i;
 
 const CHECKS: Record<string, Check> = {
-  motion: oneOf("turntable", "none"),
+  motion: oneOf("turntable", "float", "draw", "none"),
   controls: oneOf("minimal", "none"),
   logo: oneOf("on", "off"),
   up: oneOf("auto", "y", "z"),
@@ -58,6 +58,12 @@ const CHECKS: Record<string, Check> = {
     const t = v.trim();
     if (/^[a-z0-9][a-z0-9-]{0,40}$/i.test(t)) return t.toLowerCase(); // auto/dark/light or a built-in id
     return safeUrl(t);
+  },
+  "fit-padding": (v) => (/^\s*\d*\.?\d+\s*%?\s*$/.test(v) ? v.trim() : null),
+  // Layer names from the file: printable text only, comma-separated, kept short.
+  layers: (v) => {
+    const t = v.replace(/[\u0000-\u001f<>"]/g, "").trim();
+    return t ? t.slice(0, 300) : null;
   },
   "full-url": (v) => {
     const t = v.trim().toLowerCase();

@@ -12,7 +12,9 @@ import type { OcctMesh, OcctResult } from "./types";
  *   rhino3dm has no mesher - and is counted in the warnings.
  * - **Meshes** and **extrusions** go through `segmentMesh` (dihedral faces).
  * - Units are scaled to millimetres from the file's model unit system.
- * - Curves, points, SubD, blocks and annotations are not shown (counted).
+ * - Curves and points are drawn as wireframe (`OcctResult.wires`): a curve
+ *   sampled along its domain (straight spans exactly), a point as a small
+ *   3D cross. SubD, blocks and annotations are not shown (counted).
  *
  * The rhino3dm module is passed in so this stays testable under Node and the
  * 2.5 MB wasm is only fetched when a .3dm is opened.
@@ -89,6 +91,37 @@ function appendMesh(acc: Acc, mesh: any, k: number, reversed: boolean): number {
   return tris;
 }
 
+/** Samples per span of a curved curve (a straight one needs only its ends). */
+const SAMPLES_PER_SPAN = 16;
+const MAX_CURVE_SAMPLES = 2048;
+
+/** A curve as line segments (xyz pairs, scaled by `k`) appended to `out`; returns false when it can't be read. */
+function appendCurve(out: number[], g: any, k: number): boolean {
+  let dom: number[];
+  try {
+    dom = g.domain as number[];
+  } catch {
+    return false;
+  }
+  if (!dom || !Number.isFinite(dom[0]) || !Number.isFinite(dom[1]) || dom[1] <= dom[0]) return false;
+  let linear = false;
+  try {
+    linear = g.isLinear?.(1e-9) === true;
+  } catch {
+    /* treat as curved */
+  }
+  const spans = Math.max(1, Number(g.spanCount) || 1);
+  const n = linear ? 1 : Math.min(MAX_CURVE_SAMPLES, spans * SAMPLES_PER_SPAN);
+  let prev: number[] | null = null;
+  for (let i = 0; i <= n; i++) {
+    const p = g.pointAt(dom[0] + ((dom[1] - dom[0]) * i) / n) as number[];
+    if (!p || !p.every(Number.isFinite)) continue;
+    if (prev) out.push(prev[0] * k, prev[1] * k, prev[2] * k, p[0] * k, p[1] * k, p[2] * k);
+    prev = p;
+  }
+  return true;
+}
+
 export interface RhinoImport {
   result: OcctResult;
   warnings: string[];
@@ -102,6 +135,8 @@ export function rhinoToOcct(rh: Rhino, bytes: Uint8Array, fileName: string): Rhi
   const meshes: OcctMesh[] = [];
   const skipped = new Map<string, number>();
   let noRender = 0;
+  const wires: number[] = [];
+  const points: number[] = []; // xyz (mm); crosses are sized once the model's extent is known
   try {
     const k = mmPerUnit(rh, file);
     const objs = file.objects();
@@ -140,6 +175,15 @@ export function rhinoToOcct(rh: Rhino, bytes: Uint8Array, fileName: string): Rhi
         });
         continue;
       }
+      if (type === rh.ObjectType.Curve?.value) {
+        if (!appendCurve(wires, g, k)) skipped.set("Curve", (skipped.get("Curve") ?? 0) + 1);
+        continue;
+      }
+      if (type === rh.ObjectType.Point?.value) {
+        const p = g.location as number[];
+        if (p && p.every(Number.isFinite)) points.push(p[0] * k, p[1] * k, p[2] * k);
+        continue;
+      }
       let mesh: any = null;
       if (type === rh.ObjectType.Mesh.value) mesh = g;
       else if (type === rh.ObjectType.Extrusion.value) mesh = g.getMesh(anyType);
@@ -158,10 +202,30 @@ export function rhinoToOcct(rh: Rhino, bytes: Uint8Array, fileName: string): Rhi
     file.delete?.();
   }
   if (noRender > 0) warnings.push(`${noRender} object(s) have no render mesh saved (re-save from Rhino with render meshes) and were skipped`);
-  for (const [label, n] of skipped) warnings.push(`${n} ${label} object(s) not shown (3dm curves, points, blocks and SubD are not drawn yet)`);
+  for (const [label, n] of skipped) warnings.push(`${n} ${label} object(s) not shown (3dm SubD, blocks and annotations are not drawn yet)`);
+  if (points.length) {
+    // A point is a 3D cross 1 % of the model's extent across (curves and points only: 1 % of theirs).
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    const grow = (arr: ArrayLike<number>) => {
+      for (let i = 0; i + 2 < arr.length; i += 3)
+        for (let a = 0; a < 3; a++) {
+          lo[a] = Math.min(lo[a], arr[i + a]);
+          hi[a] = Math.max(hi[a], arr[i + a]);
+        }
+    };
+    grow(wires);
+    grow(points);
+    for (const m of meshes) grow((m.attributes?.position?.array ?? []) as ArrayLike<number>);
+    const r = Math.max(Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) * 0.005, 0.5);
+    for (let i = 0; i < points.length; i += 3) {
+      const [x, y, z] = [points[i], points[i + 1], points[i + 2]];
+      wires.push(x - r, y, z, x + r, y, z, x, y - r, z, x, y + r, z, x, y, z - r, x, y, z + r);
+    }
+  }
   const result: OcctResult = {
     success: true,
     meshes,
+    ...(wires.length ? { wires: Float32Array.from(wires) } : {}),
     root:
       meshes.length > 1
         ? { name: fileName, children: meshes.map((m, i) => ({ name: m.name, meshes: [i] })) }

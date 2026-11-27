@@ -23,12 +23,15 @@ export interface StageOptions {
   /** Selection highlight colour (E-06), the theme accent. */
   accent?: string;
   reducedMotion: boolean;
+  /** E-02 `fit-padding`: margin around the fitted model, a fraction of the view (default 0.08). */
+  fitPadding?: number;
 }
 
 /** Seconds after a drag before the turntable takes over again. */
 const RESUME_AFTER_S = 2;
 
 export class Stage {
+  readonly kind = "3d" as const;
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(32, 1, 0.1, 1000);
@@ -143,11 +146,21 @@ export class Stage {
     this.yaw = 0;
     this.pivot.rotation.set(0, 0, 0);
     const target = framePerspective(this.camera, this.model.bounds, "iso");
+    // framePerspective leaves the default 8 % margin; another `fit-padding` moves the camera along the same line.
+    const pad = Math.min(0.4, Math.max(0, this.opts.fitPadding ?? 0.08));
+    const k = (1 - 2 * 0.08) / (1 - 2 * pad);
+    if (k !== 1) this.camera.position.sub(target).multiplyScalar(k).add(target);
     this.controls.target.copy(target);
     this.controls.update();
     this.home.position.copy(this.camera.position);
     this.home.target.copy(target);
     this.wake();
+  }
+
+  /** E-02: a new `fit-padding`, applied by refitting. */
+  setFitPadding(p: number): void {
+    this.opts = { ...this.opts, fitPadding: p };
+    this.fit();
   }
 
   reset(): void {

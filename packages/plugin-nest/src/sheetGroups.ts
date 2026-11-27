@@ -95,11 +95,19 @@ export function clampHatchEntities(sheet: { width: number; height: number }, cla
 /** Gap between side-by-side sheets, mm. */
 const SIDE_GAP = 200;
 
+/** Lettering height for a sheet's title: readable on a 4x8 ft sheet zoomed to fit, never below the old 10 mm. */
+export function sheetTitleHeight(sheet: { width: number; height: number }): number {
+  return Math.max(10, Math.min(40, Math.min(sheet.width, sheet.height) * 0.025));
+}
+
 /**
  * Draws the result for a NEW tab: one titled outline per sheet *group*, left
  * to right, on the existing four layers (sheet / parts / holes / labels).
  * `placements` are the sheet-local entities of every sheet; only each
- * group's first sheet is drawn. Each drawn sheet is one entity group.
+ * group's first sheet is drawn. Each drawn sheet is one entity group - or,
+ * with `partGroups`, the sheet frame is one group and every part (outline,
+ * holes and number) is a group of its own, so a click picks up the whole
+ * part and a drag snaps it like a pallet in Truck Nesting.
  */
 export function buildSideBySideLayout(
   sheets: TrueNestSheet[],
@@ -110,9 +118,26 @@ export function buildSideBySideLayout(
     clamp?: number;
     /** Told where each drawn sheet's outline went (its id and lower-left corner), so a later read of the canvas can find a sheet's parts relative to it. */
     onSheet?: (sheetIndex: number, outlineId: string, origin: { x: number; y: number }) => void;
+    /** One group per part (plus one for the sheet frame) instead of one per sheet. */
+    partGroups?: boolean;
+    /** A large "CUT x5" over a drawing that stands for several identical sheets. */
+    qtyBadge?: boolean;
+    /** Parts still to nest, drawn below the sheets where they can be dragged onto one; their entities are already in canvas coordinates. */
+    tray?: { title: string; items: SheetPlacementEntities[]; at: { x: number; y: number } };
   } = {},
 ): Command[] {
   const commands: Command[] = [];
+  const partGroup = (p: SheetPlacementEntities, dx: number, name: string): void => {
+    const ids: string[] = [];
+    const push = (e: Entity): void => {
+      commands.push(add(e));
+      ids.push(e.id);
+    };
+    for (const e of p.outerEntities) push({ ...translated(e, dx, 0), layer: NEST_PARTS_LAYER });
+    for (const e of p.holeEntities) push({ ...translated(e, dx, 0), layer: NEST_HOLES_LAYER });
+    push(text({ x: p.label.at.x + dx, y: p.label.at.y }, String(p.number), { layer: NEST_LABELS_LAYER, height: p.label.height }));
+    commands.push({ type: "group-entities", groupId: newGroupId(), ids, name });
+  };
   let x = 0;
   for (const g of groups) {
     const first = g.indices[0];
@@ -126,15 +151,32 @@ export function buildSideBySideLayout(
     const { outline, title } = sheetOutlineEntities(sheet, label);
     push(translated(outline, x, 0));
     opts.onSheet?.(first, outline.id, { x, y: 0 });
-    push(translated(title, x, 0));
-    for (const e of clampHatchEntities(sheet, opts.clamp ?? 0)) push(translated(e, x, 0));
-    for (const p of placements.filter((p) => p.sheet === first)) {
-      for (const e of p.outerEntities) push({ ...translated(e, x, 0), layer: NEST_PARTS_LAYER });
-      for (const e of p.holeEntities) push({ ...translated(e, x, 0), layer: NEST_HOLES_LAYER });
-      push(text({ x: p.label.at.x + x, y: p.label.at.y }, String(p.number), { layer: NEST_LABELS_LAYER, height: p.label.height }));
+    if (opts.partGroups) {
+      const h = sheetTitleHeight(sheet);
+      push(text({ x, y: -h * 1.4 }, label, { layer: NEST_LABELS_LAYER, height: h }));
+      if (opts.qtyBadge && g.indices.length > 1) push(text({ x, y: -h * 4.4 }, `CUT ×${g.indices.length}`, { layer: NEST_LABELS_LAYER, height: h * 2.2 }));
+    } else {
+      push(translated(title, x, 0));
     }
-    commands.push({ type: "group-entities", groupId: newGroupId(), ids, name: label });
+    for (const e of clampHatchEntities(sheet, opts.clamp ?? 0)) push(translated(e, x, 0));
+    const onSheet = placements.filter((p) => p.sheet === first);
+    if (opts.partGroups) {
+      commands.push({ type: "group-entities", groupId: newGroupId(), ids, name: label });
+      for (const p of onSheet) partGroup(p, x, `#${p.number}${(p as { name?: string }).name ? ` ${(p as { name?: string }).name}` : ""}`);
+    } else {
+      for (const p of onSheet) {
+        for (const e of p.outerEntities) push({ ...translated(e, x, 0), layer: NEST_PARTS_LAYER });
+        for (const e of p.holeEntities) push({ ...translated(e, x, 0), layer: NEST_HOLES_LAYER });
+        push(text({ x: p.label.at.x + x, y: p.label.at.y }, String(p.number), { layer: NEST_LABELS_LAYER, height: p.label.height }));
+      }
+      commands.push({ type: "group-entities", groupId: newGroupId(), ids, name: label });
+    }
     x += sheet.width + SIDE_GAP;
+  }
+  if (opts.tray && opts.tray.items.length > 0) {
+    const h = sheets[0] ? sheetTitleHeight(sheets[0]) : 10;
+    commands.push(add(text({ x: opts.tray.at.x, y: opts.tray.at.y + h * 0.6 }, opts.tray.title, { layer: NEST_LABELS_LAYER, height: h })));
+    for (const p of opts.tray.items) partGroup(p, 0, `To nest #${p.number}${(p as { name?: string }).name ? ` ${(p as { name?: string }).name}` : ""}`);
   }
   return commands;
 }

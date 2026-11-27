@@ -189,3 +189,14 @@ describe("N-55: part priority and due date", () => {
     expect(parts[1]!.rank).toBeUndefined();
   });
 });
+
+describe("N-51 common-line option", () => {
+  it("spaces parts one kerf apart (web ignored) and survives a save / load", () => {
+    const j = { ...defaultJob(), params: { ...defaultJob().params, kerf: { v: "2", u: "mm" as const }, web: { v: "5", u: "mm" as const } } };
+    expect(jobParamsMm(j).spacing).toBeCloseTo(7, 6);
+    const c = { ...j, commonLine: true as const };
+    expect(jobParamsMm(c).spacing).toBeCloseTo(2, 6);
+    expect(parseNestJob(JSON.parse(JSON.stringify(c))).commonLine).toBe(true);
+    expect(parseNestJob({ ...c, commonLine: "yes" }).commonLine).toBeUndefined();
+  });
+});

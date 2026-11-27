@@ -5,8 +5,8 @@ import { SCRIPT_URL } from "@/lib/embedSnippet";
 
 const ATTRS: [string, string, string][] = [
   ["src", "URL of the file. Other hosts must send CORS headers.", "—"],
-  ["autoplay", "Start the turntable once loaded (not under reduced motion).", "off"],
-  ["motion", "turntable · none", "turntable"],
+  ["autoplay", "Start moving once loaded (not under reduced motion).", "off"],
+  ["motion", "3D: turntable · none. Drawings: float · draw (draws itself in, then floats) · none", "turntable / float"],
   ["theme", "auto (the page's color-scheme, else the visitor's) · dark · light · a built-in theme · a .sketchor-theme.json URL", "auto"],
   ["background", "Any CSS colour, or transparent.", "theme"],
   ["controls", "minimal (play + full view) · none", "minimal"],
@@ -17,6 +17,8 @@ const ATTRS: [string, string, string][] = [
   ["loading", "lazy (near the viewport) · eager", "lazy"],
   ["label", "Accessible name and full-view title.", "file name"],
   ["format", "Force a format (glb, stl, …) instead of sniffing.", "sniffed"],
+  ["fit-padding", "Margin around the fitted drawing or model: 0.15 or 15% (0–0.4).", "0.08"],
+  ["layers", "Drawings: Outline,Holes shows only those layers · -Notes,-Dims hides those. Names ignore case.", "all"],
 ];
 
 const ELEMENT_SNIPPET = `<script type="module" src="${SCRIPT_URL}"></script>
@@ -45,10 +47,11 @@ export default function EmbedDocs() {
       <main className="docs">
         <section className="docs-hero">
           <div className="wrap">
-            <h1>Put 3D models on any page</h1>
+            <h1>Put 3D models and drawings on any page</h1>
             <p className="sub">
-              <code>&lt;sketchor-view&gt;</code> is Sketchor&apos;s 3D viewer as one web component. Your part turns on a turntable, leans
-              toward the cursor, orbits when dragged, opens full screen — where a click measures faces, edges and the distance between them — and opens in Sketchor with one click. About 9 kB until a preview
+              <code>&lt;sketchor-view&gt;</code> is Sketchor&apos;s viewer as one web component. A 3D part turns on a turntable, leans
+              toward the cursor, orbits when dragged, opens full screen — where a click measures faces, edges and the distance between them — and opens in Sketchor with one click.
+              A DXF, SVG, EPS or PDF drawing floats, or draws itself in; in full view it pans, zooms, measures point to point with snapping and switches layers off. About 12 kB until a preview
               scrolls into view. MIT licensed.
             </p>
             <EmbedConfigurator />
@@ -106,7 +109,7 @@ export default function EmbedDocs() {
             <p>
               Set <code>--sketchor-bg</code>, <code>--sketchor-accent</code> and <code>--sketchor-radius</code> on the element; they always
               win over <code>theme</code>. Buttons are reachable with <code>::part(play-button)</code>, <code>full-button</code>,{" "}
-              <code>logo</code>, <code>open-link</code>, <code>stage</code>, <code>canvas</code>, <code>measure</code> and <code>status</code>. A theme file is
+              <code>logo</code>, <code>open-link</code>, <code>stage</code>, <code>canvas</code>, <code>measure</code>, <code>layers</code> and <code>status</code>. A theme file is
               validated (colour values only) and must be served with CORS from another host.
             </p>
 
@@ -115,8 +118,8 @@ export default function EmbedDocs() {
 
             <h2>Formats and hosting</h2>
             <p>
-              Previews draw glTF / GLB (including Draco), STL, OBJ, PLY and 3MF. STEP, IGES, DXF, SVG and other drawings show a card that
-              opens the file in Sketchor. Files on another host need <code>Access-Control-Allow-Origin</code>; files on your own site always
+              Previews draw glTF / GLB (including Draco), STL, OBJ, PLY and 3MF in 3D, and DXF, SVG, EPS, AI and PDF drawings with the
+              same renderer as the Sketchor canvas. STEP, IGES and DWG show a card that opens the file in Sketchor. Files on another host need <code>Access-Control-Allow-Origin</code>; files on your own site always
               work. To self-host, copy the package&apos;s <code>dist/</code> folder anywhere — chunks load relative to the script.
             </p>
             <p>

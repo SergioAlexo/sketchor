@@ -5,7 +5,10 @@ import { SITE } from "@/lib/embedFrame";
 import { embedSnippet, type EmbedOptions, type SnippetMode } from "@/lib/embedSnippet";
 import { ensureEmbedScript } from "./embedScript";
 
-const SAMPLES: [string, string][] = [["Sheet-metal bracket (GLB)", "/models/bracket.glb"]];
+const SAMPLES: [string, string][] = [
+  ["Sheet-metal bracket (GLB)", "/models/bracket.glb"],
+  ["Flange plate drawing (DXF)", "/models/flange-plate.dxf"],
+];
 const THEMES = ["auto", "dark", "light", "blueprint", "nord", "paper", "solarized-dark", "solarized-light", "high-contrast", "classic-cad", "monokai"];
 const MODES: [SnippetMode, string][] = [
   ["element", "Script + element"],
@@ -96,7 +99,9 @@ export default function EmbedConfigurator() {
         <label>
           Motion
           <select value={motion} onChange={(e) => setMotion(e.target.value)}>
-            <option value="turntable">turntable</option>
+            <option value="turntable">turntable (3D) / float (2D)</option>
+            <option value="float">float (2D)</option>
+            <option value="draw">draw (2D)</option>
             <option value="none">none</option>
           </select>
         </label>

@@ -1,0 +1,48 @@
+{
+  "id": "solarized-dark",
+  "name": "Solarized Dark",
+  "author": "Sketchor (Solarized palette)",
+  "base": "dark",
+  "tokens": {
+    "ui": {
+      "bg": "#002b36",
+      "panel": "#073642",
+      "border": "#124553",
+      "text": "#93a1a1",
+      "textDim": "#839496",
+      "accent": "#268bd2",
+      "accentSoft": "#0b4a63",
+      "danger": "#dc322f"
+    },
+    "canvas": {
+      "bg": "#00252f",
+      "gridMinor": "#04323d",
+      "gridMajor": "#0a4150",
+      "axis": "#586e75",
+      "entity": "#eee8d5",
+      "selected": "#268bd2",
+      "preview": "#2aa198",
+      "snap": "#b58900",
+      "handle": "#268bd2",
+      "measure": "#2aa198",
+      "hover": "#6c71c4",
+      "measureLabelBg": "#0a4a46",
+      "reference": "#dc322f",
+      "connectivityHint": "#268bd2",
+      "windowSelect": "#268bd2",
+      "crossingSelect": "#859900",
+      "duplicateMarker": "#cb4b16",
+      "crossingMarker": "#d33682",
+      "origin": "#93a1a1",
+      "originOff": "#586e75",
+      "axisX": "#dc322f",
+      "axisY": "#859900"
+    },
+    "code": {
+      "keyword": "#268bd2",
+      "number": "#d33682",
+      "comment": "#586e75",
+      "error": "#dc322f"
+    }
+  }
+}

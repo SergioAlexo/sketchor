@@ -23,6 +23,19 @@ import {
   engineFor,
   engineHintLines,
   extractPartsWithDiagnostics,
+  mergeIntoOnePart,
+  newMachineProfile,
+  parseMachineProfile,
+  serializeMachineProfile,
+  profileRowFor,
+  profileMotionMm,
+  type MachineProfile,
+  runBarCalc,
+  runTubeCalc,
+  parseBarInput,
+  parseTubeInput,
+  FALLBACK_RAPID_MM_PER_MIN,
+  type PartPiece,
   openChainMarks,
   type OpenChainInfo,
   fmtDuration,
@@ -62,9 +75,17 @@ import {
   stockUsage,
   findRemnants,
   applyRemnantsToStock,
+  matchingRemnants,
+  parseRemnantLibrary,
+  remnantStockRows,
+  updateRemnantLibrary,
+  sameThickness,
+  type LibraryRemnant,
   type Remnant,
   thicknessesFor,
   checkNestOverlaps,
+  clampStripRect,
+  sheetTitleHeight,
   type CncInfo,
   type CutTableRow,
   type DxfPreset,
@@ -84,7 +105,7 @@ import {
   type StockRow,
   type TrueNestSheet,
 } from "@sketchor/plugin-nest";
-import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, isCustomPostId, parseCustomPosts, postProfileFromSpec, removeCustomPost, resolvePost, cutTimeSec, toolpathPreview, toolpathPreviewScale, upsertCustomPost, writeGcode, type GcodePlacement, type PostProfileSpec } from "@sketchor/plugin-gcode";
+import { BUILTIN_POSTS, DEFAULT_POST_ID, buildCutPlan, builtinPost, isCustomPostId, parseCustomPosts, postProfileFromSpec, removeCustomPost, resolvePost, cutTimeSec, machineTimeSec, toolpathPreview, toolpathPreviewScale, upsertCustomPost, writeGcode, type GcodePlacement, type PostProfileSpec } from "@sketchor/plugin-gcode";
 
 /** N-53: tab width used when a job asks for tabs but never set one. */
 const DEFAULT_TAB_WIDTH_MM = 3;
@@ -93,11 +114,12 @@ import { add, type DisplayUnitInfo, type PickedFolder, type PluginModule } from 
 import { displayUnitToDxfCode, factorFromMm } from "../../units";
 import { buildNestReportHtml, buildNestReportPdf, reportFileName, reportWithJob, type LastNest, type LastNestPlacement } from "./nestReport";
 import { SHEET_NESTING_PANEL_HTML } from "./sheetNestingPanel";
-import { applyCanvasEdits, type LayoutSheetRef } from "./nestCanvasEdits";
+import { barLayoutCommands, buildBarReportHtml, buildBarReportPdf } from "./barReport";
+import { issueMarks, readManualNest, trayPositions, type ManualInstance, type ManualReadResult, type ManualSheet } from "./nestManual";
 
 /**
  * "Sheet Nesting" (RN-30/31/32): the raster-first nesting panel, a separate
- * plugin next to the older Sheet Metal Nest (which is left as it was). The
+ * plugin (it replaced the older Sheet Metal Nest panel, now removed). The
  * state is one `NestJob`; Nest runs `engineFor(job.engine)` - the raster
  * engine by default, the exact "True shape" engine on request - streams the
  * best layout so far, and lands the result in a new canvas tab, the report,
@@ -114,13 +136,18 @@ const KEY_JOB = "job";
 const KEY_CUSTOM = "custom";
 const KEY_FILES = "files";
 const KEY_BOM = "bom";
+const KEY_PROFILES = "machineProfiles";
+const KEY_BARCALC = "barCalc";
+const KEY_TUBECALC = "tubeCalc";
+const KEY_REMNANTS = "remnantLibrary";
+const MAX_PROFILES = 50;
 /** Groups mode looks up DXF drawings only (DWG needs a conversion step; add the file in Manual mode). */
 const DRAWING_EXTS = /\.dxf$/i;
 const MATERIAL_NAMES: Record<string, string> = { al5052: "AL 5052", al6061: "AL 6061", ss: "Stainless", cs: "Carbon steel", plastic: "Plastic", plywood: "Plywood", stone: "Stone", quartz: "Quartz" };
 const MM_PER_IN = 25.4;
 const MAX_FILE_BYTES = 20_000_000;
 
-/** Cutting-time seed table (same estimates as the Sheet Metal Nest plugin). */
+/** Cutting-time seed table (laser estimates; a machine file or the panel's speeds win). */
 const CUT_TABLE: CutTableRow[] = [
   { material: "Mild Steel", thickness: 1, feedRateMmPerMin: 6000, pierceTimeSec: 0.3, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 7850 },
   { material: "Mild Steel", thickness: 3, feedRateMmPerMin: 3500, pierceTimeSec: 0.6, rapidMmPerMin: 15000, estimated: true, densityKgPerM3: 7850 },
@@ -163,6 +190,8 @@ export interface PartRec {
   notes: ExtractNote[];
   cnc: CncInfo;
   file?: string;
+  /** NT-01: a file's separate outlines kept together as one part; each piece is cut as its own contour. */
+  pieces?: PartPiece[];
 }
 
 /** One imported drawing file (manual "Add files" or a BOM item in groups mode). */
@@ -199,7 +228,7 @@ export function stableKey(sourceIds: string[]): string {
 
 /** Builds a part record from an extracted part. */
 export function recFromExtracted(
-  p: { name: string; outer: Pt[]; holes: Pt[][]; outerSourceIds: string[]; holeSourceIds: string[][]; cutLength: number; pierceCount: number; holeCount: number },
+  p: { name: string; outer: Pt[]; holes: Pt[][]; outerSourceIds: string[]; holeSourceIds: string[][]; cutLength: number; pierceCount: number; holeCount: number; pieces?: PartPiece[]; netArea?: number },
   key: string,
   lookup: Map<string, Entity>,
   notes: ExtractNote[],
@@ -215,7 +244,7 @@ export function recFromExtracted(
     outerSourceIds: p.outerSourceIds,
     holeSourceIds: p.holeSourceIds,
     lookup,
-    area: Math.max(0, polygonArea(p.outer) - holesArea),
+    area: p.netArea ?? Math.max(0, polygonArea(p.outer) - holesArea),
     w: b.maxX - b.minX,
     h: b.maxY - b.minY,
     cutLength: p.cutLength,
@@ -224,6 +253,7 @@ export function recFromExtracted(
     notes,
     cnc: cncInfoForPart(p),
     ...(file ? { file } : {}),
+    ...(p.pieces && p.pieces.length > 1 ? { pieces: p.pieces } : {}),
   };
 }
 
@@ -245,7 +275,10 @@ export function loadDxfFile(key: string, name: string, text: string, unit: numbe
       base.error = openChains.length > 0 ? `${openChains.length} open shape(s) - no closed outline found` : "no closed shape found";
       return base;
     }
-    base.parts = parts.map((p, i) => recFromExtracted({ ...p, name: parts.length > 1 ? `${name} (${i + 1})` : name }, `${key}#${i}`, lookup, notes, key));
+    // NT-01: one file is one part - separate outlines stay together, positioned as drawn.
+    const merged = mergeIntoOnePart(parts, name)!;
+    base.parts = [recFromExtracted(merged, `${key}#0`, lookup, notes.filter((n) => n.kind !== "multi-outer"), key)];
+    if (parts.length > 1) base.warnings.push(`${parts.length} separate pieces - nested together as one part`);
     if (openChains.length > 0) base.warnings.push(`${openChains.length} open shape(s) ignored`);
     return base;
   } catch (err) {
@@ -270,6 +303,58 @@ export function snapshotCanvasPart(
   const ids = [...part.outerSourceIds, ...part.holeSourceIds.flat()];
   const entities = ids.map((id) => lookup.get(id)).filter((e): e is Entity => e !== undefined);
   return loadDxfFile(fileKey, part.name, entitiesToDxf(entities, 4, 1), null, joinTolerance);
+}
+
+/** Manual nesting: at most this many parts are drawn in the "To nest" tray at once (the rest can be added from the panel). */
+const MAX_TRAY = 200;
+/** Gap between parts in the tray, mm. */
+const TRAY_GAP = 40;
+
+/** Mirror, rotate (degrees) then translate - the placement transform, applied to a polygon. */
+function xformPts(pts: readonly Pt[], t: { rotationDeg: number; mirrored?: boolean; translation: Pt }): Pt[] {
+  const a = (t.rotationDeg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+  return pts.map((p) => {
+    const x = t.mirrored ? -p.x : p.x;
+    return { x: c * x - s * p.y + t.translation.x, y: s * x + c * p.y + t.translation.y };
+  });
+}
+
+function trayTitle(total: number, drawn: number): string {
+  return `To nest: ${total} part${total === 1 ? "" : "s"} - drag onto a sheet${drawn < total ? ` (${drawn} shown)` : ""}`;
+}
+
+/**
+ * One part waiting in the tray, unrotated, its box's lower-left at `at`
+ * (canvas coordinates - the tray is not on a sheet).
+ */
+export function trayItem(rec: PartRec, id: string, number: number, at: Pt, ordered?: { name: string; priority?: "high" | "low"; due?: string }): ManualInstance {
+  const t0 = placementTransform(rec.outer, { rotationDeg: 0, mirrored: false, translation: at });
+  const ents = (ids: string[]) => ids.map((x) => rec.lookup.get(x)).filter((e): e is Entity => e !== undefined);
+  const pieceSrc = (rec.pieces ?? [{ outerSourceIds: rec.outerSourceIds, holeSourceIds: rec.holeSourceIds }]).map((pc) => ({ outer: ents(pc.outerSourceIds), holes: ents(pc.holeSourceIds.flat()) }));
+  const outerSource = pieceSrc.flatMap((pc) => pc.outer);
+  const holeSource = pieceSrc.flatMap((pc) => pc.holes);
+  const outerEntities = materializeInstance(outerSource, t0).map((e) => ({ ...e, layer: NEST_PARTS_LAYER }));
+  const holeEntities = holeSource.length > 0 ? materializeInstance(holeSource, t0).map((e) => ({ ...e, layer: NEST_HOLES_LAYER })) : [];
+  const outer = xformPts(rec.outer, t0);
+  const b = bounds(outer);
+  const labelHeight = Math.max(1, Math.min(Math.min(b.maxX - b.minX, b.maxY - b.minY) * 0.3, 12));
+  const placement: LastNestPlacement = {
+    sheet: -1,
+    number,
+    id,
+    outerEntities,
+    holeEntities,
+    label: { at: { x: (b.minX + b.maxX) / 2 - textWidth(String(number), labelHeight) / 2, y: (b.minY + b.maxY) / 2 - labelHeight / 2 }, height: labelHeight },
+    partId: rec.key,
+    name: rec.name,
+    rotationDeg: 0,
+    mirrored: false,
+    area: rec.area,
+    ...(rec.pieces ? { pieces: pieceSrc.map((pc) => ({ outer: pc.outer.length, holes: pc.holes.length })) } : {}),
+    ...(ordered?.priority ? { priority: ordered.priority } : {}),
+    ...(ordered?.due ? { due: ordered.due } : {}),
+  };
+  return { id, placement, outer, holes: rec.holes.map((h) => xformPts(h, t0)), drawnAt: { x: 0, y: 0 }, home: -1 };
 }
 
 const plugin: PluginModule = {
@@ -313,15 +398,52 @@ const plugin: PluginModule = {
       }
     }
 
+    // NT-02: the shop's machine files; NT-03/04: the calculators' last input.
+    let profiles: MachineProfile[] = [];
+    const profilesRaw = await sketchor.storage.get(KEY_PROFILES).catch(() => undefined);
+    for (const raw of Array.isArray(profilesRaw) ? profilesRaw.slice(0, MAX_PROFILES) : []) {
+      const pr = parseMachineProfile(raw, `m${profiles.length + 1}`);
+      if (pr && !profiles.some((x) => x.id === pr.id)) profiles.push(pr);
+    }
+    let barInput = parseBarInput(await sketchor.storage.get(KEY_BARCALC).catch(() => undefined));
+    let tubeInput = parseTubeInput(await sketchor.storage.get(KEY_TUBECALC).catch(() => undefined));
+    const persistProfiles = () => void sketchor.storage.set(KEY_PROFILES, profiles).catch(() => undefined);
+    // N-52: the offcut library, kept across jobs.
+    let library: LibraryRemnant[] = parseRemnantLibrary(await sketchor.storage.get(KEY_REMNANTS).catch(() => undefined));
+    const persistLibrary = () => void sketchor.storage.set(KEY_REMNANTS, library).catch(() => undefined);
+    const newRemnantId = () => {
+      for (let i = library.length + 1; ; i++) if (!library.some((x) => x.id === `r${i}`)) return `r${i}`;
+    };
+    /** Offcuts used by the last result, by library id. */
+    let lastRemnantUse = new Map<string, number>();
+    const newProfileId = () => {
+      for (let i = profiles.length + 1; ; i++) if (!profiles.some((x) => x.id === `m${i}`)) return `m${i}`;
+    };
+
     let lastNest: LastNest | null = null;
-    /** NF-08: where each drawn sheet's outline went on the layout tab, and each placement's identity across identical sheets. */
-    let lastLayoutRefs: LayoutSheetRef[] = [];
-    let lastPlacementKeys = new Map<string, string>();
+    /**
+     * Manual nesting: every part drawn on the layout tab (sheets and the "To
+     * nest" tray), the drawn sheets, and what the job ordered - so a read of
+     * the canvas knows what moved, what overlaps and what is still to nest.
+     */
+    let manual: {
+      instances: ManualInstance[];
+      sheets: ManualSheet[];
+      ordered: Map<string, { name: string; qty: number }>;
+      recs: Map<string, PartRec>;
+      nextNumber: number;
+      nextTray: number;
+      trayTop: number;
+      trayWidth: number;
+      trayTitled: boolean;
+      labelHeight: number;
+    } | null = null;
+    let lastManual: ManualReadResult | null = null;
     let lastView: ResultView | null = null;
     /** Effective stock rows (with material / thickness) of the last result, for the G-code feed-rate lookup. */
     let lastStock: StockRow[] = [];
     /** N-52: offcuts of the last result and the inventory rows it consumed, until saved (or the next run). */
-    let lastRemnants: { rem: Remnant; material?: string; thickness?: number }[] = [];
+    let lastRemnants: { rem: Remnant; material?: string; materialId?: string; thickness?: number }[] = [];
     let lastUsed: number[] = [];
     let cancelRequested = false;
     let running = false;
@@ -493,10 +615,35 @@ const plugin: PluginModule = {
     const geometryMap = (recs: Map<string, PartRec>) => new Map([...recs].map(([k, r]) => [k, { id: k, name: r.name, outer: r.outer, holes: r.holes }]));
 
     /** A sheet's cutting speeds: its stock row's material / thickness against the cut table, with the machine's own values over that. */
-    const speedsForStock = (row: StockRow | undefined): CutSpeeds | null => resolveCutSpeeds(job.machine, job.params, cutTableRowFor(row, CUT_TABLE));
+    /** NT-02: the selected sheet machine file (a tube laser file is for the Tubes calculator only). */
+    const activeProfile = (): MachineProfile | null => profiles.find((x) => x.id === job.profileId && x.type !== "tube") ?? null;
+    const speedsForStock = (row: StockRow | undefined): CutSpeeds | null => {
+      const prof = activeProfile();
+      const m = prof && row?.materialId && row.thickness ? profileRowFor(prof, row.materialId, row.thickness) : null;
+      if (prof && m) return { feedRateMmPerMin: m.feedMmPerMin, pierceTimeSec: m.pierceSec, rapidMmPerMin: profileMotionMm(prof).rapidMmPerMin || FALLBACK_RAPID_MM_PER_MIN, source: "profile" };
+      return resolveCutSpeeds(job.machine, job.params, cutTableRowFor(row, CUT_TABLE));
+    };
+    /**
+     * One sheet's machine time. With a machine file: acceleration, corner
+     * stops, small-hole feed, head lift and the sheet load/unload time
+     * (`machineTimeSec`); without one, length / feed + pierces + rapids.
+     */
+    const sheetTimeSec = (placements: LastNestPlacement[], i: number, row: StockRow | undefined): number | null => {
+      const speeds = speedsForStock(row);
+      if (!speeds) return null;
+      const features = sheetCutPlan(placements, i).features;
+      const prof = speeds.source === "profile" ? activeProfile() : null;
+      if (!prof) return cutTimeSec(toolpathPreview(features).stats, speeds);
+      const mo = profileMotionMm(prof);
+      return machineTimeSec(features, { feedMmPerMin: speeds.feedRateMmPerMin, rapidMmPerMin: speeds.rapidMmPerMin, pierceSec: speeds.pierceTimeSec, cutAccel: mo.cutAccel, rapidAccel: mo.rapidAccel, headLiftSec: mo.headLiftSec, cornerAngleDeg: mo.cornerAngleDeg, smallHoleMm: mo.smallHoleMm, smallHoleFeedPct: mo.smallHoleFeedPct }).totalSec + mo.sheetLoadSec;
+    };
 
     /** The built-in estimate for the job as set up now, shown greyed in the blank speed fields so the user sees what "blank" means. */
     const speedAutoView = () => {
+      const prof = activeProfile();
+      const pm = prof ? profileRowFor(prof, job.material, lengthMm(job.thickness)) : null;
+      if (prof && pm) return { feedMm: pm.feedMmPerMin, rapidMm: profileMotionMm(prof).rapidMmPerMin, pierce: String(Math.round(pm.pierceSec * 100) / 100), profile: `${prof.name}: ${pm.exact ? "cut row" : "estimated from the nearest rows"}${pm.note ? " (" + pm.note + ")" : ""} - the machine file sets the cutting time.` };
+      if (prof) return { feedMm: 0, rapidMm: 0, pierce: "", none: `${prof.name} has no cut row for this material - add one under Machines, or enter the feed rate here.` };
       const material = CUT_MATERIAL_NAME[job.material];
       const row = material ? cutRowForThickness(material, lengthMm(job.thickness), CUT_TABLE) : undefined;
       const auto = resolveCutSpeeds(job.machine, { ...job.params, feed: undefined, rapid: undefined, pierce: undefined }, row);
@@ -511,7 +658,8 @@ const plugin: PluginModule = {
       const speeds = speedsForStock(result.stock[result.sheets[0]!.stockIndex]);
       if (!speeds) return [["Cut speeds", "not set - enter the machine's feed rate for a cutting time"]];
       const u = job.outputUnit;
-      return [["Cut speeds", `feed ${fmtSpeed(speeds.feedRateMmPerMin, u)}, pierce ${Math.round(speeds.pierceTimeSec * 100) / 100} s, rapid ${fmtSpeed(speeds.rapidMmPerMin, u)} (${speeds.source === "machine" ? "machine values" : "built-in estimate"})`]];
+      const prof = speeds.source === "profile" ? activeProfile() : null;
+      return [["Cut speeds", `feed ${fmtSpeed(speeds.feedRateMmPerMin, u)}, pierce ${Math.round(speeds.pierceTimeSec * 100) / 100} s, rapid ${fmtSpeed(speeds.rapidMmPerMin, u)} (${prof ? `machine file "${prof.name}" - acceleration, head lift and sheet loading included` : speeds.source === "machine" ? "machine values" : "built-in estimate"})`]];
     };
 
     const buildView = async (): Promise<Record<string, unknown>> => {
@@ -575,8 +723,20 @@ const plugin: PluginModule = {
         speedAuto: speedAutoView(),
         postSpec: resolvePost(job.postId, custom.posts),
         stockRows: job.stock.map((s) => ({ name: s.size.name, w: num3(s.size.width), h: num3(s.size.height), qty: s.qty === null ? "" : String(s.qty), thickness: s.thickness })),
+        // N-52: the offcut library, matching ones (this job's material and thickness) first.
+        library: (() => {
+          const t = lengthMm(job.thickness);
+          const match = (r: LibraryRemnant) => r.materialId === job.material && t > 0 && sameThickness(r.thickness, t);
+          return [...library]
+            .sort((a, b) => Number(match(b)) - Number(match(a)) || a.materialId.localeCompare(b.materialId) || a.thickness - b.thickness || b.width * b.height - a.width * a.height)
+            .map((r) => ({ id: r.id, size: `${fmt(r.width)} × ${fmt(r.height)}`, material: MATERIAL_NAMES[r.materialId] ?? r.materialId, thickness: fmt(r.thickness), qty: r.qty, from: r.from ?? "", date: r.date ?? "", match: match(r) }));
+        })(),
         bareUnit: bareUnitFor(job.outputUnit),
         credit: NEST_CREDIT,
+        profiles,
+        profileId: activeProfile()?.id ?? "",
+        barInput,
+        tubeInput,
       };
     };
 
@@ -624,14 +784,50 @@ const plugin: PluginModule = {
       if (patch.tabCount !== undefined) { const n = Math.max(0, Math.min(99, Math.floor(num(patch.tabCount)))); if (n >= 1) next.tabCount = n; else delete next.tabCount; }
       if (patch.tabWidth !== undefined) { const w = Math.max(0, Math.min(1000, num(patch.tabWidth))); if (w > 0) next.tabWidth = w; else delete next.tabWidth; }
       if (patch.searchLevel === "quick" || patch.searchLevel === "normal" || patch.searchLevel === "thorough") next.searchLevel = patch.searchLevel;
+      if (patch.useRemnants === true) next.useRemnants = true;
+      else if (patch.useRemnants === false) delete next.useRemnants;
+      if (patch.commonLine === true) next.commonLine = true;
+      else if (patch.commonLine === false) delete next.commonLine;
       if (patch.leadIn === "arc") next.leadIn = "arc";
       else if (patch.leadIn === "line") delete next.leadIn;
       if (typeof patch.postId === "string" && (builtinPost(patch.postId) || custom.posts.some((p) => p.id === patch.postId))) {
         if (patch.postId === DEFAULT_POST_ID) delete next.postId;
         else next.postId = patch.postId;
       }
+      if (typeof patch.profileId === "string") {
+        if (patch.profileId === "") delete next.profileId;
+        else if (profiles.some((x) => x.id === patch.profileId && x.type !== "tube")) next.profileId = patch.profileId;
+      }
+      // NT-02: a machine file fills the machine, bed and kerf (for the material and thickness) so the nest spaces parts the way that machine cuts.
+      if (next.profileId && (patch.profileId !== undefined || patch.material !== undefined || patch.thickness !== undefined)) applyProfile(next);
       job = next;
       persistJob();
+    };
+
+    /** Copies the machine file's type, bed and the matching row's kerf onto the job's cutting parameters (the user can still edit them after). */
+    const applyProfile = (next: NestJob) => {
+      const prof = profiles.find((x) => x.id === next.profileId);
+      if (!prof || prof.type === "tube") return;
+      if (prof.type !== next.machine) {
+        custom.machines[next.machine] = next.params;
+        next.machine = prof.type;
+        next.params = custom.machines[next.machine] ?? defaultMachines().machines[next.machine];
+      }
+      const u = prof.units;
+      const p = { ...next.params };
+      if (prof.bedW > 0 && prof.bedH > 0) {
+        p.bedW = { v: String(prof.bedW), u };
+        p.bedH = { v: String(prof.bedH), u };
+      }
+      const row = profileRowFor(prof, next.material, lengthMm(next.thickness));
+      if (row?.kerfMm) p.kerf = u === "in" ? { v: String(Math.round((row.kerfMm / MM_PER_IN) * 10000) / 10000), u: "in" } : { v: String(Math.round(row.kerfMm * 1000) / 1000), u: "mm" };
+      // The machine file owns the speeds now; blank fields show its values in grey.
+      delete p.feed;
+      delete p.rapid;
+      delete p.pierce;
+      next.params = p;
+      custom.machines[next.machine] = p;
+      persistCustom();
     };
 
     // ---------- init ----------
@@ -646,7 +842,11 @@ const plugin: PluginModule = {
       unit = info;
     });
     // NF-03b: mark where a selected outline fails to close (the host only shows them while this panel is open).
-    const markOpenEnds = (openChains: OpenChainInfo[]) => void sketchor.ui.highlight(openChainMarks(openChains, (mm) => fmtMm(mm, job.outputUnit))).catch(() => undefined);
+    const markOpenEnds = (openChains: OpenChainInfo[]) => {
+      // The host keeps one set of marks per plugin: on the nest layout tab those are the manual-nesting flags.
+      if (openChains.length === 0 && manualShown) return;
+      void sketchor.ui.highlight(openChainMarks(openChains, (mm) => fmtMm(mm, job.outputUnit))).catch(() => undefined);
+    };
     void sketchor.selection.onChange(async () => {
       const selection = await sketchor.selection.read();
       if (selection.length === 0) {
@@ -670,12 +870,14 @@ const plugin: PluginModule = {
       label: string;
       job: NestJob;
       recs: Map<string, PartRec>;
+      /** N-52: library offcuts put ahead of the job's stock (stock rows 0..n-1), by id. */
+      remnantIds?: string[];
     }
 
     const tagStock = (r: RasterNestResult, run: Run): RasterNestResult => {
       const material = CUT_MATERIAL_NAME[run.job.material];
       const thickness = lengthMm(run.job.thickness);
-      return { ...r, stock: r.stock.map((s) => ({ ...s, ...(material ? { material } : {}), ...(thickness > 0 ? { thickness } : {}) })) };
+      return { ...r, stock: r.stock.map((s) => ({ ...s, materialId: run.job.material, ...(material ? { material } : {}), ...(thickness > 0 ? { thickness } : {}) })) };
     };
 
     const runNest = async (runs: Run[]) => {
@@ -760,9 +962,12 @@ const plugin: PluginModule = {
         const pl = result.placed[i]!;
         const p = recByKey.get(pl.partId);
         if (!p) continue;
-        const outerSource = p.outerSourceIds.map((id) => p.lookup.get(id)).filter((e): e is Entity => e !== undefined);
+        const ents = (ids: string[]) => ids.map((id) => p.lookup.get(id)).filter((e): e is Entity => e !== undefined);
+        // NT-01: a compound part lists its pieces in order, so the cut plan can cut each one as its own contour.
+        const pieceSrc = (p.pieces ?? [{ outerSourceIds: p.outerSourceIds, holeSourceIds: p.holeSourceIds }]).map((pc) => ({ outer: ents(pc.outerSourceIds), holes: ents(pc.holeSourceIds.flat()) }));
+        const outerSource = pieceSrc.flatMap((pc) => pc.outer);
         if (outerSource.length === 0) continue;
-        const holeSource = p.holeSourceIds.flat().map((id) => p.lookup.get(id)).filter((e): e is Entity => e !== undefined);
+        const holeSource = pieceSrc.flatMap((pc) => pc.holes);
         const transform = placementTransform(p.outer, pl);
         const outerEntities = materializeInstance(outerSource, transform).map((e) => ({ ...e, layer: NEST_PARTS_LAYER }));
         const holeEntities = holeSource.length > 0 ? materializeInstance(holeSource, transform).map((e) => ({ ...e, layer: NEST_HOLES_LAYER })) : [];
@@ -782,6 +987,7 @@ const plugin: PluginModule = {
           rotationDeg: pl.rotationDeg,
           mirrored: pl.mirrored,
           area: p.area,
+          ...(p.pieces ? { pieces: pieceSrc.map((pc) => ({ outer: pc.outer.length, holes: pc.holes.length })) } : {}),
           ...(orderedMap.get(pl.partId)?.priority ? { priority: orderedMap.get(pl.partId)!.priority } : {}),
           ...(orderedMap.get(pl.partId)?.due ? { due: orderedMap.get(pl.partId)!.due } : {}),
         });
@@ -796,25 +1002,74 @@ const plugin: PluginModule = {
       const groups = groupIdenticalSheetsPerRun(result.sheets, result.placed, sheetRun);
       const clamp = runs[0] ? lengthMm(effectiveClamp(runs[0].job)) : 0;
       const outlineAt = new Map<number, { id: string; origin: { x: number; y: number } }>();
-      const layout = buildSideBySideLayout(result.sheets, placements, groups, sheetLabel, { clamp, onSheet: (i, id, origin) => outlineAt.set(i, { id, origin }) });
-      lastLayoutRefs = groups.flatMap((g) => {
-        const o = outlineAt.get(g.indices[0]!);
-        return o ? [{ sheet: g.indices[0]!, indices: g.indices, outlineId: o.id, origin: o.origin }] : [];
+      // Manual nesting: parts the nester could not fit wait in a tray below the sheets, ready to drag onto one.
+      const titleH = result.sheets[0] ? sheetTitleHeight(result.sheets[0]) : 10;
+      const layoutWidth = groups.reduce((w, g) => w + result.sheets[g.indices[0]!]!.width, 0) + Math.max(0, groups.length - 1) * 200;
+      const trayTop = -(titleH * 8 + 80);
+      const trayWidth = Math.max(1500, layoutWidth);
+      let nextNumber = placements.reduce((n, p) => Math.max(n, p.number), 0) + 1;
+      const trayWanted: { rec: PartRec; key: string }[] = [];
+      for (const u of result.unplaced) {
+        const rec = recByKey.get(u.partId);
+        for (let k = 0; rec && k < u.count && trayWanted.length < MAX_TRAY; k++) trayWanted.push({ rec, key: u.partId });
+      }
+      const trayCount = result.unplaced.reduce((n, u) => n + u.count, 0);
+      const trayPlan = trayPositions(trayWanted.map((t) => ({ w: t.rec.w, h: t.rec.h })), trayTop, trayWidth, TRAY_GAP);
+      const tray = trayWanted.map((t, k) => trayItem(t.rec, String(`t${k + 1}`), nextNumber + k, trayPlan.offsets[k]!, orderedMap.get(t.key)));
+      nextNumber += tray.length;
+      const layout = buildSideBySideLayout(result.sheets, placements, groups, sheetLabel, {
+        clamp,
+        onSheet: (i, id, origin) => outlineAt.set(i, { id, origin }),
+        partGroups: true,
+        qtyBadge: true,
+        ...(tray.length > 0 ? { tray: { title: trayTitle(trayCount, tray.length), items: tray.map((t) => t.placement), at: trayPlan.at } } : {}),
       });
-      const r3 = (v: number) => Math.round(v * 1000) / 1000;
-      lastPlacementKeys = new Map(placements.map((p) => {
-        const pl = result.placed[Number(p.id)]!;
-        return [p.id, `${pl.partId}|${pl.rotationDeg}|${pl.mirrored ? 1 : 0}|${r3(pl.translation.x)}|${r3(pl.translation.y)}`];
-      }));
+      const margin = runs[0] ? jobParamsMm(runs[0].job).margin : 0;
+      const drawnSheets: ManualSheet[] = groups.flatMap((g) => {
+        const o = outlineAt.get(g.indices[0]!);
+        const sh = result.sheets[g.indices[0]!]!;
+        return o ? [{ sheet: g.indices[0]!, indices: g.indices, outlineId: o.id, width: sh.width, height: sh.height, margin, clampRect: clampStripRect(sh, clamp) }] : [];
+      });
+      const instances: ManualInstance[] = [];
+      for (const ms of drawnSheets) {
+        const origin = outlineAt.get(ms.sheet)!.origin;
+        for (const p of placements) {
+          if (p.sheet !== ms.sheet) continue;
+          const pl = result.placed[Number(p.id)]!;
+          const rec = recByKey.get(p.partId)!;
+          const t = placementTransform(rec.outer, pl);
+          instances.push({ id: p.id, placement: p, outer: xformPts(rec.outer, t), holes: rec.holes.map((h) => xformPts(h, t)), drawnAt: origin, home: ms.sheet });
+        }
+      }
+      for (const t of tray) instances.push(t);
+      manual = {
+        instances,
+        sheets: drawnSheets,
+        ordered: new Map([...orderedMap].map(([k, o]) => [k, { name: o.name, qty: o.quantity }])),
+        recs: recByKey,
+        nextNumber,
+        nextTray: tray.length + 1,
+        trayTop: trayPlan.bottom - TRAY_GAP,
+        trayWidth,
+        trayTitled: tray.length > 0,
+        labelHeight: titleH,
+      };
+      lastManual = null;
       await sketchor.app.openDocumentTab(`Nest – ${result.placed.length} part${result.placed.length === 1 ? "" : "s"}, ${result.sheets.length} sheet${result.sheets.length === 1 ? "" : "s"}`, layout);
 
-      const geoMap = new Map([...recByKey].map(([k, r]) => [k, { outer: r.outer, holes: r.holes }]));
+      const geoMap = new Map([...recByKey].map(([k, r]) => [k, { outer: r.outer, holes: r.holes, ...(r.pieces ? { netArea: r.area } : {}) }]));
       const cutMap = new Map([...recByKey].map(([k, r]) => [k, { cutLength: r.cutLength, pierceCount: r.pierceCount }]));
       const metrics: JobMetrics = computeJobMetrics(result, geoMap, result.stock, CUT_TABLE, { gravity: job.gravity, cut: cutMap });
       // Cutting time from the real cut plan (lead-ins, tab restarts, the actual rapids) at the machine's speeds - the same walk the G-code makes.
+      let commonSaved = 0;
       result.sheets.forEach((sh, i) => {
-        const speeds = speedsForStock(result.stock[sh.stockIndex]);
-        metrics.sheets[i]!.cuttingTimeSec = speeds ? cutTimeSec(toolpathPreview(sheetCutPlan(placements, i).features).stats, speeds) : null;
+        metrics.sheets[i]!.cuttingTimeSec = sheetTimeSec(placements, i, result.stock[sh.stockIndex]);
+        // N-51: a shared edge is cut once - the cut length counts it once too.
+        if (job.commonLine) {
+          const saved = sheetCutPlan(placements, i).commonLineMm ?? 0;
+          commonSaved += saved;
+          metrics.sheets[i]!.cutLengthMm = Math.max(0, metrics.sheets[i]!.cutLengthMm - saved);
+        }
       });
       metrics.totalCuttingTimeSec = metrics.sheets.length > 0 && metrics.sheets.every((m) => m.cuttingTimeSec !== null) ? metrics.sheets.reduce((n, m) => n + (m.cuttingTimeSec ?? 0), 0) : null;
       const required = [...orderedMap.values()].reduce((n, o) => n + o.quantity, 0);
@@ -827,12 +1082,21 @@ const plugin: PluginModule = {
       lastStock = result.stock;
       lastRemnants = findRemnants(result, (id) => recByKey.get(id)?.outer, { clearance: 2 }).map((rem) => {
         const row = result.stock[result.sheets[rem.sheet]!.stockIndex];
-        return { rem, material: row?.material, thickness: row?.thickness };
+        return { rem, material: row?.material, materialId: row?.materialId, thickness: row?.thickness };
       });
+      // N-52: offcuts the nest cut from (stock rows ahead of the job's own), and the job's own inventory sheets it used.
+      const offcutIds = runs.length === 1 ? (runs[0]!.remnantIds ?? []) : [];
+      lastRemnantUse = new Map();
       lastUsed = [];
       if (source === "stock" && runs.length === 1) {
         result.sheets.forEach((sh, i) => {
-          if (!result.purchased[i]) lastUsed[sh.stockIndex] = (lastUsed[sh.stockIndex] ?? 0) + 1;
+          if (sh.stockIndex < offcutIds.length) {
+            const id = offcutIds[sh.stockIndex]!;
+            lastRemnantUse.set(id, (lastRemnantUse.get(id) ?? 0) + 1);
+          } else if (!result.purchased[i] && job.sheetSource === "stock") {
+            const k = sh.stockIndex - offcutIds.length;
+            lastUsed[k] = (lastUsed[k] ?? 0) + 1;
+          }
         });
       }
 
@@ -848,7 +1112,8 @@ const plugin: PluginModule = {
         title: "Sheet Nesting Report",
         format: { len: fmt, area: (mm2) => fmtMm2(mm2, job.outputUnit) },
         fitPage: true,
-        details: [...reportDetails(grouped), ...speedDetails(result, grouped)],
+        sheetGroups: groups.map((g) => g.indices),
+        details: [...reportDetails(grouped), ...speedDetails(result, grouped), ...(job.commonLine ? ([["Common-line cutting", `on - ${fmt(commonSaved)} of edges shared by neighbouring parts are cut once (parts spaced one kerf apart)`]] as [string, string][]) : [])],
         groupSections: grouped
           ? runs.map((run, ri) => ({
               title: `${run.label} - sheet ${fmt(run.job.sheet.w * MM_PER_IN)} × ${fmt(run.job.sheet.h * MM_PER_IN)}`,
@@ -876,6 +1141,10 @@ const plugin: PluginModule = {
         stock: usage.map((u) => ({ name: u.name, size: `${fmt(u.width)} × ${fmt(u.height)}`, used: u.used, purchased: u.purchased, available: u.available })),
         unplaced,
         remnants: lastRemnants.map((r) => ({ sheet: r.rem.sheet + 1, size: `${fmt(r.rem.width)} × ${fmt(r.rem.height)}` })),
+        offcutsUsed: [...lastRemnantUse].map(([id, n]) => {
+          const r = library.find((x) => x.id === id);
+          return { n, size: r ? `${fmt(r.width)} × ${fmt(r.height)}` : id };
+        }),
         notes: result.notes,
         unsupported,
         stopped,
@@ -884,7 +1153,7 @@ const plugin: PluginModule = {
           const first = g.indices[0]!;
           const m = metrics.sheets[first]!;
           return {
-            title: g.indices.length > 1 ? describeGroup(g.indices) : `Sheet ${first + 1}`,
+            title: g.indices.length > 1 ? describeGroup(g.indices).replace(/ ×\d+$/, "") : `Sheet ${first + 1}`,
             size: `${fmt(g.sheet.width)} × ${fmt(g.sheet.height)}`,
             group: grouped ? (runs[sheetRun[first] ?? 0]?.label ?? "") : "",
             count: g.indices.length,
@@ -896,6 +1165,7 @@ const plugin: PluginModule = {
         sheetLabels,
       };
       post({ type: "result", ...lastView });
+      void checkManual();
       notify(
         kpis.unplaced > 0
           ? `Nested ${kpis.placed} on ${kpis.sheets} sheet(s) - ${kpis.unplaced} did not fit.`
@@ -916,6 +1186,13 @@ const plugin: PluginModule = {
         }
         notify(`${missing.length} part(s) no longer exist and were dropped from the list.`, true);
       }
+      // N-52: matching offcuts go first in the stock; the job's own sheets (or the standard size, unlimited) after them.
+      const offcuts = job.useRemnants ? matchingRemnants(library, job.material, lengthMm(job.thickness)) : [];
+      if (offcuts.length > 0) {
+        const rows = remnantStockRows(offcuts, fmt);
+        const runJob: NestJob = job.sheetSource === "stock" && job.stock.length > 0 ? { ...job, mode: "manual", stock: [...rows, ...job.stock] } : { ...job, mode: "manual", sheetSource: "stock", stock: rows, buyExtra: true };
+        return [{ label: "", job: runJob, recs, remnantIds: offcuts.map((o) => o.id) }];
+      }
       return [{ label: "", job: { ...job, mode: "manual" }, recs }];
     };
 
@@ -930,27 +1207,147 @@ const plugin: PluginModule = {
      */
     const currentNest = async (): Promise<LastNest | null> => {
       const ln = lastNest;
-      if (!ln || lastLayoutRefs.length === 0) return ln;
+      if (!ln || !manual) return ln;
       const model = await sketchor.document.read();
-      const doc = new Map(model.entities.map((e) => [e.id, e] as const));
-      const { placements, moved, found } = applyCanvasEdits(ln.placements, lastLayoutRefs, doc, (p) => lastPlacementKeys.get(p.id) ?? p.id);
-      if (!found) {
+      const r = readNow(model.entities);
+      if (!r.found) {
         notify("The nest layout tab isn't the active tab - using the nest as calculated. Switch to it to include parts you moved there.");
         return ln;
       }
-      if (moved === 0) return ln;
-      notify(`Using ${moved} part${moved === 1 ? "" : "s"} as moved on the canvas.`);
+      const red = r.issues.filter((i) => i.tone === "error").length;
+      if (red > 0) notify(`${red} part${red === 1 ? " is" : "s are"} flagged red on the layout (overlapping or off the sheet) - fix ${red === 1 ? "it" : "them"} before cutting.`, true);
+      if (!r.changed) return ln;
+      notify(`Using the layout as edited on the canvas (${r.moved} moved${r.deleted ? `, ${r.deleted} removed` : ""}).`);
+      const placements = r.placements;
+      const cutOf = (p: LastNestPlacement) => manual?.recs.get(p.partId);
       const sheets = ln.metrics.sheets.map((m, i) => {
-        const speeds = speedsForStock(lastStock[ln.sheets[i]!.stockIndex] as StockRow | undefined);
-        return { ...m, cuttingTimeSec: speeds ? cutTimeSec(toolpathPreview(sheetCutPlan(placements, i).features).stats, speeds) : null };
+        const on = placements.filter((p) => p.sheet === i);
+        const net = on.reduce((n, p) => n + p.area, 0);
+        return {
+          ...m,
+          netPartArea: net,
+          utilisation: m.sheetArea > 0 ? net / m.sheetArea : 0,
+          cutLengthMm: Math.max(0, on.reduce((n, p) => n + (cutOf(p)?.cutLength ?? 0), 0) - (job.commonLine ? (sheetCutPlan(placements, i).commonLineMm ?? 0) : 0)),
+          pierceCount: on.reduce((n, p) => n + (cutOf(p)?.pierceCount ?? 0), 0),
+          cuttingTimeSec: sheetTimeSec(placements, i, lastStock[ln.sheets[i]!.stockIndex] as StockRow | undefined),
+        };
       });
       const total = sheets.length > 0 && sheets.every((m) => m.cuttingTimeSec !== null) ? sheets.reduce((n, m) => n + (m.cuttingTimeSec ?? 0), 0) : null;
+      const area = sheets.reduce((n, m) => n + m.sheetArea, 0);
+      const util = area > 0 ? sheets.reduce((n, m) => n + m.netPartArea, 0) / area : 0;
+      const required = r.counts.reduce((n, c) => n + c.ordered, 0);
+      const placed = placements.length;
       return {
         ...ln,
         placements,
-        metrics: { ...ln.metrics, sheets, totalCuttingTimeSec: total },
-        summary: ln.summary ? { ...ln.summary, kpis: { ...ln.summary.kpis, cuttingTimeSec: total } } : ln.summary,
+        countFromPlacements: true,
+        metrics: { ...ln.metrics, sheets, totalUtilisation: util, totalCuttingTimeSec: total },
+        summary: ln.summary
+          ? {
+              ...ln.summary,
+              kpis: {
+                ...ln.summary.kpis,
+                cuttingTimeSec: total,
+                utilisation: util,
+                placed,
+                unplaced: Math.max(0, required - placed),
+                cutLengthMm: sheets.reduce((n, m) => n + m.cutLengthMm, 0),
+                pierces: sheets.reduce((n, m) => n + m.pierceCount, 0),
+              },
+            }
+          : ln.summary,
       };
+    };
+
+    /** Reads the layout tab back (see nestManual.ts). */
+    const readNow = (entities: readonly Entity[]): ManualReadResult => {
+      const m = manual!;
+      const doc = new Map(entities.map((e) => [e.id, e] as const));
+      return readManualNest(m.instances, m.sheets, doc, { gap: jobParamsMm(job).spacing, ordered: m.ordered });
+    };
+
+    /**
+     * Manual nesting, live: after every edit on the layout tab, flag parts
+     * that overlap or stick off the sheet (red) or sit in the margin, on the
+     * clamp strip or closer than the web gap (orange), and tell the panel what
+     * is still to nest. The flags are host highlights - never undo steps.
+     */
+    let manualTimer: ReturnType<typeof setTimeout> | null = null;
+    let manualShown = false;
+    const checkManual = async (entities?: readonly Entity[]) => {
+      if (!manual) return;
+      const ents = entities ?? (await sketchor.document.read()).entities;
+      if (!manual) return;
+      const r = readNow(ents);
+      if (!r.found) return; // another tab: leave the marks with the layout tab
+      lastManual = r;
+      manualShown = r.issues.length > 0;
+      void sketchor.ui.highlight(issueMarks(r.issues)).catch(() => undefined);
+      post({ type: "manual", ...manualView(r) });
+    };
+    const manualView = (r: ManualReadResult) => ({
+      moved: r.moved,
+      deleted: r.deleted,
+      red: r.issues.filter((i) => i.tone === "error").length,
+      orange: r.issues.filter((i) => i.tone === "warn").length,
+      issues: r.issues.slice(0, 8).map((i) => ({ label: i.label, tone: i.tone })),
+      more: Math.max(0, r.issues.length - 8),
+      tray: r.inTray.length,
+      placed: r.counts.reduce((n, c) => n + Math.min(c.placed, c.ordered), 0),
+      required: r.counts.reduce((n, c) => n + c.ordered, 0),
+      toNest: r.counts.filter((c) => c.placed < c.ordered).map((c) => ({ key: c.partId, name: c.name, n: c.ordered - c.placed, waiting: r.inTray.filter((id) => manual?.instances.find((x) => x.id === id)?.placement.partId === c.partId).length })),
+      extra: r.counts.filter((c) => c.placed > c.ordered).map((c) => ({ name: c.name, n: c.placed - c.ordered })),
+      sheets: r.perSheet.map((p) => ({ sheet: p.sheet + 1, parts: p.parts, qty: manual?.sheets.find((x) => x.sheet === p.sheet)?.indices.length ?? 1 })),
+    });
+    void sketchor.document.onChange((model) => {
+      if (!manual) return;
+      if (manualTimer) clearTimeout(manualTimer);
+      manualTimer = setTimeout(() => {
+        manualTimer = null;
+        void checkManual(model.entities);
+      }, 120);
+    });
+
+    /** The selected parts on the layout tab (whole part groups), turned by `deg` about each part's own centre. */
+    const rotateSelected = async (deg: number) => {
+      if (!manual) return fail("Nest first - the rotate buttons turn parts on the nest layout tab.");
+      const model = await sketchor.document.read();
+      const sel = new Set(await sketchor.selection.read());
+      const known = new Set(manual.instances.flatMap((i) => [...i.placement.outerEntities, ...i.placement.holeEntities].map((e) => e.id)));
+      const byId = new Map(model.entities.map((e) => [e.id, e] as const));
+      const picked = model.groups.filter((g) => g.members.some((m) => sel.has(m)) && g.members.some((m) => known.has(m)));
+      if (picked.length === 0) return fail("Select a part on the nest layout first (click it - the whole part is picked up), then rotate.");
+      const commands = picked.map((g) => {
+        const pts = g.members.flatMap((m) => {
+          const e = byId.get(m);
+          return e && known.has(m) ? entityPoints(e) : [];
+        });
+        const b = bounds(pts);
+        return { type: "transform-entities" as const, ids: [...g.members], pivot: { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 }, rotation: (deg * Math.PI) / 180 };
+      });
+      await sketchor.document.apply(commands);
+    };
+
+    /** Draws `count` more of a part in the tray, below what is there, so it can be dragged onto a sheet. */
+    const addToTray = async (key: string, count: number) => {
+      const m = manual;
+      if (!m) return fail("Nest first - the tray is on the nest layout tab.");
+      const rec = m.recs.get(key);
+      if (!rec) return fail("That part is not in this nest.");
+      const model = await sketchor.document.read();
+      if (!readNow(model.entities).found) return fail("Switch to the nest layout tab first - the parts are added to its tray.");
+      const n = Math.max(1, Math.min(MAX_TRAY, Math.floor(count)));
+      const plan = trayPositions(Array.from({ length: n }, () => ({ w: rec.w, h: rec.h })), m.trayTop, m.trayWidth, TRAY_GAP);
+      const ordered = m.ordered.get(key);
+      const items = plan.offsets.map((o) => trayItem(rec, `t${m.nextTray++}`, m.nextNumber++, o, ordered ? { name: ordered.name } : undefined));
+      const cmds = buildSideBySideLayout([], [], [], () => "", { tray: { title: m.trayTitled ? "" : "To nest - drag onto a sheet", items: items.map((t) => t.placement), at: plan.at } });
+      // buildSideBySideLayout puts the tray title first; leave it out once the tray already has one.
+      const commands = m.trayTitled ? cmds.slice(1) : cmds;
+      m.trayTitled = true;
+      m.trayTop = plan.bottom - TRAY_GAP;
+      m.instances.push(...items);
+      await sketchor.document.apply(commands);
+      notify(`${n} × ${rec.name} added to the tray below the sheets - drag ${n === 1 ? "it" : "them"} onto a sheet.`);
     };
 
     const exportDxf = async (msg: Record<string, unknown>) => {
@@ -985,8 +1382,18 @@ const plugin: PluginModule = {
     const sheetCutPlan = (placements: LastNestPlacement[], sheetIndex: number) => {
       const gp: GcodePlacement[] = placements
         .filter((p) => p.sheet === sheetIndex)
-        .map((p) => ({ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }));
-      return buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined, leadIn: job.leadIn ?? "line" });
+        .flatMap((p): GcodePlacement[] => {
+          if (!p.pieces || p.pieces.length < 2) return [{ id: p.id, number: p.number, outerEntities: p.outerEntities, holeEntities: p.holeEntities, insideOfId: p.insideOfId }];
+          // NT-01: each piece of a compound part is its own closed outer contour.
+          let o = 0, h = 0;
+          return p.pieces.map((pc, k) => {
+            const out = { id: k === 0 ? p.id : `${p.id}.${k}`, number: p.number, outerEntities: p.outerEntities.slice(o, o + pc.outer), holeEntities: p.holeEntities.slice(h, h + pc.holes), insideOfId: p.insideOfId };
+            o += pc.outer;
+            h += pc.holes;
+            return out;
+          });
+        });
+      return buildCutPlan(gp, { kerf: jobParamsMm(job).kerf, tabs: job.tabCount ? { count: job.tabCount, width: job.tabWidth ?? DEFAULT_TAB_WIDTH_MM } : undefined, leadIn: job.leadIn ?? "line", ...(job.commonLine ? { commonLine: true } : {}) });
     };
 
     /** N-43: one sheet's cut order, pierces and dashed rapids, in a tab of its own so the result drawing is never touched. */
@@ -1229,7 +1636,8 @@ const plugin: PluginModule = {
         job = { ...job, parts: [], groups: [] };
         files.clear();
         lastNest = null;
-        lastLayoutRefs = [];
+        manual = null;
+        lastManual = null;
         lastView = null;
         persistJob();
         persistFiles();
@@ -1339,18 +1747,50 @@ const plugin: PluginModule = {
         return;
       }
 
+      // N-52: after cutting - the offcuts used come out of the library, the new ones go in, and the job's own inventory sheets used are taken off its stock.
       if (type === "save-remnants") {
-        if (lastRemnants.length === 0) return fail("No usable offcuts in the last result.");
-        const n = lastRemnants.length;
-        job = { ...job, stock: applyRemnantsToStock(job.stock, lastRemnants.map((r) => ({ width: r.rem.width, height: r.rem.height, material: r.material, thickness: r.thickness })), lastUsed) };
+        if (lastRemnants.length === 0 && lastRemnantUse.size === 0 && !lastUsed.some((n) => n > 0)) return fail("Nothing to update - the last result made no usable offcuts and used none.");
+        const added = lastRemnants.map((r) => ({ width: r.rem.width, height: r.rem.height, materialId: r.materialId ?? job.material, thickness: r.thickness ?? lengthMm(job.thickness) }));
+        const usedN = [...lastRemnantUse.values()].reduce((n, k) => n + k, 0);
+        library = updateRemnantLibrary(library, lastRemnantUse, added, { from: (typeof msg.jobName === "string" && msg.jobName.trim()) || "Nest", date: new Date().toISOString().slice(0, 10) }, newRemnantId);
+        persistLibrary();
+        if (lastUsed.some((n) => n > 0)) {
+          job = { ...job, stock: applyRemnantsToStock(job.stock, [], lastUsed) };
+          persistJob();
+        }
+        const n = added.length;
         lastRemnants = [];
         lastUsed = [];
-        if (lastView) lastView = { ...lastView, remnants: [] };
-        persistJob();
+        lastRemnantUse = new Map();
+        if (lastView) lastView = { ...lastView, remnants: [], offcutsUsed: [], libraryUpdated: true };
         await pushView();
         if (lastView) post({ type: "result", ...lastView });
-        notify(job.sheetSource === "stock" ? `Saved ${n} offcut(s) to Stock on hand.` : `Saved ${n} offcut(s) to the stock list - switch Sheet to "Stock on hand" to cut from them.`);
+        notify(`Offcut library updated: ${n} new offcut${n === 1 ? "" : "s"} added${usedN ? `, ${usedN} used taken out` : ""}.${job.useRemnants ? "" : ' Tick "Cut from matching offcuts first" to use them in the next job.'}`);
         return;
+      }
+      if (type === "lib-set" || type === "lib-delete") {
+        const r = library.find((x) => x.id === str(msg.id));
+        if (!r) return;
+        if (type === "lib-delete") library = library.filter((x) => x !== r);
+        else {
+          const q = Math.floor(num(msg.qty, r.qty));
+          if (q <= 0) library = library.filter((x) => x !== r);
+          else r.qty = Math.min(9999, q);
+        }
+        persistLibrary();
+        return void (await pushView());
+      }
+      if (type === "lib-add") {
+        const bu = bareUnitFor(job.outputUnit);
+        const toMm = (v: unknown) => parseLen(str(v), bu) * MM_PER_IN;
+        const w = toMm(msg.w), h = toMm(msg.h), t = toMm(msg.thickness);
+        const q = Math.max(1, Math.floor(num(msg.qty, 1)));
+        const materialId = MATERIALS.some((m) => m.id === msg.material) ? (msg.material as string) : job.material;
+        if (!(w > 0 && h > 0)) return fail("Enter the offcut's width and height.");
+        if (!(t > 0)) return fail("Enter the offcut's thickness.");
+        library = [...parseRemnantLibrary([...library, { id: newRemnantId(), width: w, height: h, materialId, thickness: t, qty: q, from: "by hand", date: new Date().toISOString().slice(0, 10) }])];
+        persistLibrary();
+        return void (await pushView());
       }
 
       if (type === "export-dxf") return void (await exportDxf(msg));
@@ -1382,6 +1822,119 @@ const plugin: PluginModule = {
         return notify("Post-processor deleted.");
       }
 
+      // ---------- NT-02: machine files ----------
+      if (type === "profile-new") {
+        if (profiles.length >= MAX_PROFILES) return fail(`Up to ${MAX_PROFILES} machine files.`);
+        const from = profiles.find((x) => x.id === str(msg.copyOf));
+        const id = newProfileId();
+        const pr: MachineProfile = from ? { ...from, id, name: `${from.name} (copy)`, rows: from.rows.map((r) => ({ ...r })) } : newMachineProfile(id, msg.kind === "tube" ? "Tube laser" : "My laser");
+        if (!from && msg.kind === "tube") {
+          pr.type = "tube";
+          pr.bedW = 0;
+          pr.bedH = 0;
+          pr.sheetLoadMin = 0.75;
+        }
+        profiles = [...profiles, pr];
+        persistProfiles();
+        await pushView();
+        return void post({ type: "profile-created", id });
+      }
+      if (type === "profile-save") {
+        const id = isObj(msg.profile) ? str(msg.profile.id) : "";
+        const pr = parseMachineProfile(msg.profile, id || newProfileId());
+        if (!pr) return fail("That machine file could not be read.");
+        const i = profiles.findIndex((x) => x.id === pr.id);
+        profiles = i >= 0 ? profiles.map((x, k) => (k === i ? pr : x)) : [...profiles, pr].slice(0, MAX_PROFILES);
+        persistProfiles();
+        if (job.profileId === pr.id) {
+          const next = { ...job };
+          if (pr.type === "tube") delete next.profileId;
+          else applyProfile(next);
+          job = next;
+          persistJob();
+        }
+        if (msg.refresh === false) return;
+        return void (await pushView());
+      }
+      if (type === "profile-delete") {
+        const id = str(msg.id);
+        profiles = profiles.filter((x) => x.id !== id);
+        persistProfiles();
+        if (job.profileId === id) {
+          const { profileId: _drop, ...rest } = job;
+          job = rest;
+          persistJob();
+        }
+        if (tubeInput.profileId === id) tubeInput = { ...tubeInput, profileId: "" };
+        return void (await pushView());
+      }
+      if (type === "profile-import") {
+        let raw: unknown = null;
+        try {
+          raw = JSON.parse(str(msg.text));
+        } catch {
+          return fail("That is not a machine file (.sketchor-machine).");
+        }
+        const list = Array.isArray(raw) ? raw : [raw];
+        let added = 0;
+        for (const r of list) {
+          if (profiles.length >= MAX_PROFILES) break;
+          const pr = parseMachineProfile(r, newProfileId());
+          if (!pr) continue;
+          if (profiles.some((x) => x.id === pr.id)) pr.id = newProfileId();
+          profiles = [...profiles, pr];
+          added++;
+        }
+        if (added === 0) return fail("No machine could be read from that file.");
+        persistProfiles();
+        await pushView();
+        return notify(`Imported ${added} machine file${added === 1 ? "" : "s"}.`);
+      }
+      if (type === "profile-export") {
+        const pr = profiles.find((x) => x.id === str(msg.id));
+        if (!pr) return;
+        const name = `${pr.name.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "machine"}.sketchor-machine`;
+        const res = await sketchor.ui.saveFile(name, serializeMachineProfile(pr), [{ description: "Sketchor machine file", accept: { "application/json": [".sketchor-machine"] } }]);
+        if (res.saved) notify(`Saved ${res.name ?? name}.`);
+        return;
+      }
+
+      // ---------- NT-03 / NT-04: calculators ----------
+      // NT-05: the Bars / Tubes plan drawn to scale on a canvas tab, or printed with its time estimate.
+      if (type === "calc-draw" || type === "calc-print") {
+        const tube = msg.kind === "tube";
+        if (tube) tubeInput = parseTubeInput(msg.input);
+        else barInput = parseBarInput(msg.input);
+        const res = tube ? runTubeCalc(tubeInput, profiles) : runBarCalc(barInput);
+        if (res.error) return fail(res.error);
+        if (res.bars.length === 0) return fail("Nothing to draw - no bar holds any of the pieces.");
+        const noun = tube ? "Tube" : "Bar";
+        if (type === "calc-draw") {
+          const n = res.bars.reduce((k, b) => k + b.count, 0);
+          await sketchor.app.openDocumentTab(`${tube ? "Tubes" : "Bars"} – ${n} bar${n === 1 ? "" : "s"}, ${res.bars.length} pattern${res.bars.length === 1 ? "" : "s"}`, barLayoutCommands(res, { noun }));
+          return;
+        }
+        const jobName = typeof msg.jobName === "string" ? msg.jobName.slice(0, 120) : "";
+        const meta = { title: tube ? "Tube Cutting Report" : "Bar Cutting Report", noun, jobName, notes: typeof msg.notes === "string" ? msg.notes.slice(0, 2000) : "", date: new Date().toLocaleString() };
+        sketchor.ui.print(buildBarReportHtml(res, meta), { fileName: `${tube ? "tube" : "bar"}-cutting${jobName ? `-${jobName.replace(/[^\w-]+/g, "_").slice(0, 40)}` : ""}`, pdf: buildBarReportPdf(res, meta) });
+        return;
+      }
+
+      if (type === "bar-calc") {
+        barInput = parseBarInput(msg.input);
+        void sketchor.storage.set(KEY_BARCALC, barInput).catch(() => undefined);
+        return void post({ type: "bar-result", result: runBarCalc(barInput) });
+      }
+      if (type === "tube-calc") {
+        tubeInput = parseTubeInput(msg.input);
+        void sketchor.storage.set(KEY_TUBECALC, tubeInput).catch(() => undefined);
+        return void post({ type: "tube-result", result: runTubeCalc(tubeInput, profiles) });
+      }
+
+      if (type === "rotate-selected") return void (await rotateSelected(num(msg.deg, 0)));
+      if (type === "tray-add") return void (await addToTray(str(msg.key), num(msg.count, 1)));
+      if (type === "manual-check") return void (await checkManual());
+
       if (type === "print") {
         const ln = await currentNest();
         if (!ln) return fail("Nothing to print - nest some parts first.");
@@ -1405,7 +1958,8 @@ const plugin: PluginModule = {
         files.clear();
         for (const f of jf.files) files.set(f.key, loadDxfFile(f.key, f.name, f.text, f.unit, job.joinTolerance));
         lastNest = null;
-        lastLayoutRefs = [];
+        manual = null;
+        lastManual = null;
         lastView = null;
         persistJob();
         persistFiles();

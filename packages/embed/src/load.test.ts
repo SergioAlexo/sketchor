@@ -15,7 +15,18 @@ describe("sniffFormat", () => {
   it("sends STEP (by content or name) to the app instead of a mesh parser", () => {
     expect(sniffFormat("part.txt", bytes("ISO-10303-21;\nHEADER;"))).toEqual({ kind: "app-only", ext: "step" });
     expect(sniffFormat("part.STP", null)).toEqual({ kind: "app-only", ext: "stp" });
-    expect(sniffFormat("plate.dxf", bytes("0\nSECTION"))).toEqual({ kind: "app-only", ext: "dxf" });
+    expect(sniffFormat("plate.dwg", bytes("AC1032"))).toEqual({ kind: "app-only", ext: "dwg" });
+  });
+  it("reads 2D drawings by content first, then by name", () => {
+    expect(sniffFormat("plate.dxf", bytes("0\nSECTION"))).toEqual({ kind: "drawing", format: "dxf" });
+    expect(sniffFormat("download", bytes("%PDF-1.7\n"))).toEqual({ kind: "drawing", format: "pdf" });
+    // An Illustrator 9+ file is a PDF inside: the PDF importer draws it.
+    expect(sniffFormat("logo.ai", bytes("%PDF-1.5\n"))).toEqual({ kind: "drawing", format: "pdf" });
+    expect(sniffFormat("logo.ai", bytes("%!PS-Adobe-3.0"))).toEqual({ kind: "drawing", format: "ai" });
+    expect(sniffFormat("file", new Uint8Array([0xc5, 0xd0, 0xd3, 0xc6, 0, 0]))).toEqual({ kind: "drawing", format: "eps" });
+    expect(sniffFormat("icon", bytes('<?xml version="1.0"?>\n<!-- made by hand -->\n<svg xmlns="http://www.w3.org/2000/svg">'))).toEqual({ kind: "drawing", format: "svg" });
+    expect(sniffFormat("binary.bin", bytes("AutoCAD Binary DXF\r\n"))).toEqual({ kind: "drawing", format: "dxf" });
+    expect(sniffFormat("A.SVG", null)).toEqual({ kind: "drawing", format: "svg" });
   });
   it("reads a zip as 3MF and mesh formats by extension", () => {
     expect(sniffFormat("download", bytes("PK\u0003\u0004rest"))).toEqual({ kind: "preview", format: "3mf" });
@@ -42,5 +53,27 @@ describe("names and links", () => {
     expect(resolveFullUrl("auto", null)).toBe("https://sketchor.sergioalexo.com/app");
     expect(resolveFullUrl("none", "https://site.com/a.glb")).toBeNull();
     expect(resolveFullUrl("https://my.app/view", "https://site.com/a.glb")).toBe("https://my.app/view");
+  });
+});
+
+describe("E-02 attributes", () => {
+  it("parses fit-padding as a fraction or a percentage, clamped", async () => {
+    const { parseFitPadding } = await import("./load");
+    expect(parseFitPadding("0.15")).toBe(0.15);
+    expect(parseFitPadding("20%")).toBeCloseTo(0.2, 9);
+    expect(parseFitPadding(" 0 ")).toBe(0);
+    expect(parseFitPadding("0.9")).toBe(0.4);
+    expect(parseFitPadding("-1")).toBe(0);
+    expect(parseFitPadding("wide")).toBeNull();
+    expect(parseFitPadding(null)).toBeNull();
+  });
+  it("turns a layers list into the layers to hide", async () => {
+    const { hiddenByLayersAttr } = await import("./load");
+    const all = ["0", "OUTLINE", "HOLES", "NOTES"];
+    expect(hiddenByLayersAttr("outline, Holes", all)).toEqual(["0", "NOTES"]);
+    expect(hiddenByLayersAttr("-notes", all)).toEqual(["NOTES"]);
+    expect(hiddenByLayersAttr("OUTLINE,-OUTLINE", all)).toEqual(["0", "OUTLINE", "HOLES", "NOTES"]);
+    expect(hiddenByLayersAttr("", all)).toEqual([]);
+    expect(hiddenByLayersAttr(null, all)).toEqual([]);
   });
 });

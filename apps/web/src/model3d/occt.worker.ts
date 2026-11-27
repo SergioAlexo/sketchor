@@ -160,6 +160,7 @@ async function handleMesh(req: ParseRequest, t0: number): Promise<void> {
     return;
   }
   model.detectedUp = req.format === "gltf" || req.format === "glb" ? "y" : "z"; // glTF is Y-up by spec
+  if (parsed.warnings.length) model.importNotes = parsed.warnings.slice(0, 20);
   try {
     await putCachedModel(model);
   } catch (err) {
@@ -197,12 +198,13 @@ async function handle3dm(req: ParseRequest, t0: number): Promise<void> {
     req.buffer = EMPTY_BUFFER;
   }
   const model = buildModel(imported.result, req.name, req.hash, req.format);
-  if (model.parts.length === 0) {
+  if (model.parts.length === 0 && !model.wires) {
     const why = imported.warnings.length ? ` (${imported.warnings.join("; ")})` : "";
-    post({ id: req.id, ok: false, error: `the file contains no meshes or Breps with render meshes to show${why}` });
+    post({ id: req.id, ok: false, error: `the file contains no meshes, Breps with render meshes, curves or points to show${why}` });
     return;
   }
   model.detectedUp = "z"; // Rhino is Z-up
+  if (imported.warnings.length) model.importNotes = imported.warnings.slice(0, 20);
   try {
     await putCachedModel(model);
   } catch (err) {

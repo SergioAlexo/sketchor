@@ -130,8 +130,14 @@ export interface NestJob {
   tabWidth?: number;
   /** G-code lead-in shape; absent = straight line. */
   leadIn?: "arc";
+  /** N-51: common-line cutting - parts nested one kerf apart (web ignored) and a shared edge cut once. */
+  commonLine?: true;
+  /** N-52: cut from matching offcuts in the library before opening a fresh sheet. */
+  useRemnants?: true;
   /** N-42: G-code post-processor profile id (absent = the default, generic laser). Checked against the built-ins by the plugin. */
   postId?: string;
+  /** NT-02: the selected machine file (its speeds, motion and sheet load time drive the cutting time). */
+  profileId?: string;
 }
 
 const GRAVITIES: Gravity[] = ["bottom-left", "bottom-right", "top-left", "top-right"];
@@ -300,7 +306,10 @@ export function parseNestJob(v: unknown): NestJob {
     ...(num(v.tabCount, 0) >= 1 ? { tabCount: Math.min(99, Math.floor(num(v.tabCount, 0))) } : {}),
     ...(num(v.tabWidth, 0) > 0 ? { tabWidth: Math.min(1000, num(v.tabWidth, 0)) } : {}),
     ...(v.leadIn === "arc" ? { leadIn: "arc" as const } : {}),
+    ...(v.commonLine === true ? { commonLine: true as const } : {}),
+    ...(v.useRemnants === true ? { useRemnants: true as const } : {}),
     ...(typeof v.postId === "string" && /^[a-z0-9-]{1,40}$/.test(v.postId) ? { postId: v.postId } : {}),
+    ...(typeof v.profileId === "string" && /^[a-z0-9-]{1,40}$/.test(v.profileId) ? { profileId: v.profileId } : {}),
   };
 }
 
@@ -391,7 +400,8 @@ export function jobParamsMm(job: NestJob): JobParamsMm {
   return {
     kerf,
     web,
-    spacing: kerf + web,
+    // N-51: with common-line cutting the parts sit one kerf apart, so neighbouring cut paths fall on one line.
+    spacing: job.commonLine ? kerf : kerf + web,
     margin: lengthMm(p.margin),
     clamp: lengthMm(p.clamp),
     bed: bw > 0 && bh > 0 ? { width: bw, height: bh } : null,

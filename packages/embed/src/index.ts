@@ -1,6 +1,6 @@
 /**
  * @sketchor/embed — `<sketchor-view>`, a drop-in animated preview of CAD
- * files drawn by Sketchor's own renderer.
+ * files (3D meshes and 2D drawings) drawn by Sketchor's own renderers.
  *
  *   <script type="module" src="/sketchor-embed/sketchor-embed.js"></script>
  *   <sketchor-view src="/models/bracket.glb" autoplay></sketchor-view>
@@ -17,6 +17,6 @@ if (typeof customElements !== "undefined" && !customElements.get("sketchor-view"
 }
 
 export { SketchorView };
-export { sniffFormat, resolveFullUrl, fileNameFromSrc, PREVIEW_FORMATS } from "./load";
-export type { PreviewFormat, FormatVerdict } from "./load";
+export { sniffFormat, resolveFullUrl, fileNameFromSrc, PREVIEW_FORMATS, DRAWING_FORMATS } from "./load";
+export type { PreviewFormat, DrawingFormat, FormatVerdict } from "./load";
 export { upgrade, autoUpgrade, upgradePlan } from "./autoUpgrade";

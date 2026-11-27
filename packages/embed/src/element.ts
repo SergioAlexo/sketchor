@@ -1,6 +1,6 @@
 import { defaultPalette, needsThemeFile, paletteCss, pickMode, type EmbedPalette } from "./embedTheme";
 import { cacheKey, getCachedModel, putCachedModel, sha256Hex } from "./modelCache";
-import { parseOffThread } from "./parseClient";
+import { parseDrawingOffThread, parseOffThread } from "./parseClient";
 import { CSS } from "./styles";
 import {
   DEFAULT_MAX_MB,
@@ -9,14 +9,26 @@ import {
   fileNameFromSrc,
   resolveFullUrl,
   sniffFormat,
+  hiddenByLayersAttr,
+  parseFitPadding,
+  DEFAULT_FIT_PADDING,
 } from "./load";
 import type { Stage } from "./viewer";
+import type { Motion2D, Stage2D } from "./viewer2d";
 import type { Measurement } from "./three/measure";
+import type { LayerInfo } from "./measure2d";
 
 type ViewerModule = typeof import("./viewer");
 let viewerModule: Promise<ViewerModule> | null = null;
 /** three.js + parsers, fetched once per page, on the first element that needs them. */
 const loadViewer = (): Promise<ViewerModule> => (viewerModule ??= import("./viewer"));
+type Viewer2DModule = typeof import("./viewer2d");
+let viewer2dModule: Promise<Viewer2DModule> | null = null;
+/** E-01: the 2D renderer — its own chunk, so a page of drawings never downloads three.js. */
+const loadViewer2d = (): Promise<Viewer2DModule> => (viewer2dModule ??= import("./viewer2d"));
+
+const HINT_3D = "Drag to orbit · scroll to zoom · right-drag to pan · click to measure, Shift-click a second";
+const HINT_2D = "Drag to pan · scroll to zoom · double-click to fit · click two points to measure";
 
 const ICON_PLAY = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>`;
 const ICON_PAUSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.6v14H7zM13.4 5H17v14h-3.6z" fill="currentColor"/></svg>`;
@@ -34,8 +46,12 @@ const TEMPLATE = `
     <div class="card"><strong class="msg"></strong><span class="detail"></span><a class="btn open-err" target="_blank" rel="noopener">Open in Sketchor ↗</a></div>
   </div>
   <div class="bar" part="full-bar"><span class="name"></span><a class="btn open" part="open-link" target="_blank" rel="noopener">Open in Sketchor ↗</a></div>
-  <span class="hint">Drag to orbit · scroll to zoom · right-drag to pan · click to measure, Shift-click a second</span>
+  <span class="hint">${HINT_3D}</span>
   <div class="measure" part="measure" aria-live="polite"></div>
+  <div class="layers" part="layers">
+    <button class="layers-btn" type="button" aria-expanded="false"></button>
+    <div class="layer-list" role="group" aria-label="Layers"></div>
+  </div>
   <button class="play" part="play-button" type="button" aria-label="Play">${ICON_PLAY}</button>
   <button class="full" part="full-button" type="button" aria-label="Full view">${ICON_EXPAND}</button>
   <a class="logo" part="logo" href="${SKETCHOR_SITE}" target="_blank" rel="noopener" aria-label="Made with Sketchor">${LOGO}Sketchor</a>
@@ -44,24 +60,30 @@ const TEMPLATE = `
 type State = "empty" | "loading" | "idle" | "playing" | "paused" | "error";
 
 /**
- * `<sketchor-view src="part.glb" autoplay>` — an animated, orbitable preview
- * of a CAD file, drawn by Sketchor's own 3D renderer.
+ * `<sketchor-view src="part.glb" autoplay>` — an animated preview of a CAD
+ * file, drawn by Sketchor's own renderers: orbitable 3D for meshes, the
+ * app's Canvas 2D renderer for drawings (DXF, SVG, EPS/AI, PDF).
  *
- * Attributes: `src`, `format`, `autoplay`, `motion` (`turntable` | `none`),
+ * Attributes: `src`, `format`, `autoplay`, `motion` (`turntable` | `none`
+ * for 3D; `float` | `draw` | `none` for drawings — `turntable` floats),
  * `background` (CSS colour or `transparent`), `controls` (`minimal` | `none`),
  * `full-url` (`auto` | `none` | URL), `logo` (`on` | `off`), `theme` (`auto` |
  * `dark` | `light` | built-in theme id | theme JSON URL), `up` (`auto` |
  * `y` | `z`), `max-size` (MB), `loading` (`lazy` | `eager`), `label`,
- * `cache` (`on` | `off` — parsed models kept in IndexedDB, E-03).
+ * `cache` (`on` | `off` — parsed models kept in IndexedDB, E-03), `fit-padding`
+ * (margin, `0.15` or `15%`), `layers` (drawings: `Outline,Holes` shows only
+ * those, `-Notes` hides one).
  * Methods: `play()`, `pause()`, `reset()`, `fit()`, `load(src)`.
  * Events: `load`, `error`, `play`, `pause`.
  */
 export class SketchorView extends HTMLElement {
-  static observedAttributes = ["src", "background", "full-url", "label", "up", "format", "theme"];
+  static observedAttributes = ["src", "background", "full-url", "label", "up", "format", "theme", "fit-padding", "layers"];
 
   private root: ShadowRoot;
   private canvas: HTMLCanvasElement;
-  private stage: Stage | null = null;
+  private stage: Stage | Stage2D | null = null;
+  /** What the current stage draws: decides its colours, label and hint. */
+  private kind: "2d" | "3d" = "3d";
   private state: State = "empty";
   private loadToken = 0;
   private abort: AbortController | null = null;
@@ -71,6 +93,8 @@ export class SketchorView extends HTMLElement {
   private savedOverflow = "";
   private connected = false;
   private palette: EmbedPalette = defaultPalette("dark");
+  /** The current drawing's layer names (E-02 `layers` is matched against them). */
+  private layerNames: string[] = [];
   private themeToken = 0;
   private darkQuery = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
   private onSchemeChange = () => void this.applyTheme();
@@ -89,8 +113,15 @@ export class SketchorView extends HTMLElement {
       e.stopPropagation();
       void this.toggleFull();
     });
+    this.$(".layers-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = this.$(".layers").classList.toggle("open");
+      this.$(".layers-btn").setAttribute("aria-expanded", String(open));
+    });
+    this.$(".layer-list").addEventListener("change", () => this.applyLayerToggles());
     this.addEventListener("keydown", (e) => {
-      if (e.target !== this) return;
+      // Keys typed on the controls inside (a layer checkbox, a button) are theirs, not the preview's.
+      if (e.composedPath()[0] !== this) return;
       if (e.key === " " || e.key === "Enter") {
         e.preventDefault();
         this.toggle();
@@ -149,6 +180,8 @@ export class SketchorView extends HTMLElement {
     if (name === "label") this.updateLabel();
     if (name === "full-url") this.updateLinks();
     if (name === "theme" && this.connected) void this.applyTheme();
+    if (name === "fit-padding") this.stage?.setFitPadding(this.fitPadding());
+    if (name === "layers") this.resetLayerToggles();
     if ((name === "src" || name === "background" || name === "up" || name === "format") && this.connected && this.state !== "empty") void this.startLoad();
   }
 
@@ -203,7 +236,8 @@ export class SketchorView extends HTMLElement {
 
   private updateLabel(): void {
     const src = this.getAttribute("src");
-    const label = this.getAttribute("label") || (src ? `3D model ${fileNameFromSrc(src)}` : "3D model");
+    const what = src && sniffFormat(fileNameFromSrc(src), null, this.getAttribute("format")).kind === "drawing" ? "Drawing" : "3D model";
+    const label = this.getAttribute("label") || (src ? `${what} ${fileNameFromSrc(src)}` : what);
     this.setAttribute("aria-label", label);
     this.$(".name").textContent = this.getAttribute("label") || (src ? fileNameFromSrc(src) : "");
   }
@@ -251,7 +285,31 @@ export class SketchorView extends HTMLElement {
     this.palette = p;
     for (const [k, v] of Object.entries(paletteCss(p))) this.style.setProperty(k, v);
     this.setAttribute("data-theme", p.mode);
-    this.stage?.setColors(this.stageBackground(), p.edge, this.accentColor());
+    this.applyStageColors();
+  }
+
+  /** Pushes the theme to the live stage, and makes the host's own background match what it draws on. */
+  private applyStageColors(): void {
+    this.style.setProperty("--sk-stage", this.kind === "2d" ? this.palette.sheet : this.palette.stage);
+    if (!this.stage) return;
+    if (this.stage.kind === "2d") this.stage.setColors(this.stageBackground(), this.palette.ink, this.accentColor());
+    else this.stage.setColors(this.stageBackground(), this.palette.edge, this.accentColor());
+  }
+
+  /** `motion` for a drawing: `draw` traces it in first, `none` keeps it still; anything else floats. */
+  private motion2d(): Motion2D {
+    const m = this.getAttribute("motion");
+    return m === "draw" || m === "none" ? m : "float";
+  }
+
+  /** A fresh canvas: one that has had a WebGL context can never give a 2D one, and the other way round. */
+  private freshCanvas(): HTMLCanvasElement {
+    const c = document.createElement("canvas");
+    c.setAttribute("part", "canvas");
+    c.setAttribute("aria-hidden", "true");
+    this.canvas.replaceWith(c);
+    this.canvas = c;
+    return c;
   }
 
   /** Highlight colour: the page's `--sketchor-accent`, else the theme's. */
@@ -279,12 +337,88 @@ export class SketchorView extends HTMLElement {
     box.classList.add("on");
   }
 
-  /** The 3D clear colour: `background` attribute, then the page's `--sketchor-bg`, then the theme. null = transparent. */
+  /**
+   * E-06: the full view's layer list, for a drawing with more than one layer.
+   * Built with textContent only — layer names come from the file.
+   */
+  private buildLayerList(layers: LayerInfo[]): void {
+    const list = this.$(".layer-list");
+    list.replaceChildren();
+    this.$(".layers").classList.remove("open");
+    this.$(".layers-btn").setAttribute("aria-expanded", "false");
+    this.layerNames = layers.map((l) => l.name);
+    if (layers.length < 2) {
+      this.removeAttribute("data-layers");
+      if (this.stage?.kind === "2d") this.stage.setHiddenLayers(hiddenByLayersAttr(this.getAttribute("layers"), this.layerNames));
+      return;
+    }
+    const hiddenByAttr = new Set(hiddenByLayersAttr(this.getAttribute("layers"), this.layerNames));
+    for (const l of layers) {
+      const row = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = !hiddenByAttr.has(l.name);
+      box.value = l.name;
+      const sw = document.createElement("span");
+      sw.className = "sw";
+      if (l.color) sw.style.background = l.color;
+      const name = document.createElement("span");
+      name.className = "ln";
+      name.textContent = l.name;
+      name.title = l.name;
+      const n = document.createElement("span");
+      n.className = "lc";
+      n.textContent = l.count.toLocaleString("en-US");
+      row.append(box, sw, name, n);
+      list.append(row);
+    }
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "show-all";
+    all.textContent = "Show all";
+    all.addEventListener("click", (e) => {
+      e.stopPropagation();
+      for (const b of this.root.querySelectorAll<HTMLInputElement>(".layer-list input")) b.checked = true;
+      this.applyLayerToggles();
+    });
+    list.append(all);
+    this.setAttribute("data-layers", "");
+    this.applyLayerToggles();
+  }
+
+  /** Reads the checkboxes into the stage and the button's count. */
+  private applyLayerToggles(): void {
+    const boxes = [...this.root.querySelectorAll<HTMLInputElement>(".layer-list input")];
+    const hidden = boxes.filter((b) => !b.checked).map((b) => b.value);
+    const btn = this.$(".layers-btn");
+    btn.textContent = hidden.length ? `Layers ${boxes.length - hidden.length}/${boxes.length}` : `Layers (${boxes.length})`;
+    this.$(".layer-list").classList.toggle("some-off", hidden.length > 0);
+    if (this.stage?.kind === "2d") this.stage.setHiddenLayers(hidden);
+  }
+
+  /** Back to what the page asked for: every layer, or the `layers` attribute's choice (E-02). */
+  private resetLayerToggles(): void {
+    const hidden = new Set(hiddenByLayersAttr(this.getAttribute("layers"), this.layerNames));
+    const boxes = this.root.querySelectorAll<HTMLInputElement>(".layer-list input");
+    if (boxes.length === 0) {
+      if (this.stage?.kind === "2d") this.stage.setHiddenLayers(hidden);
+      return;
+    }
+    for (const b of boxes) b.checked = !hidden.has(b.value);
+    this.applyLayerToggles();
+  }
+
+  /** E-02 `fit-padding`, or the default margin. */
+  private fitPadding(): number {
+    return parseFitPadding(this.getAttribute("fit-padding")) ?? DEFAULT_FIT_PADDING;
+  }
+
+  /** The clear colour: `background` attribute, then the page's `--sketchor-bg`, then the theme (its drawing sheet for 2D). null = transparent. */
   private stageBackground(): string | null {
     const attr = this.getAttribute("background");
     if (attr === "transparent") return null;
     if (attr) return attr;
-    return getComputedStyle(this).getPropertyValue("--sketchor-bg").trim() || this.palette.stage;
+    return getComputedStyle(this).getPropertyValue("--sketchor-bg").trim() || (this.kind === "2d" ? this.palette.sheet : this.palette.stage);
   }
 
   private resize(): void {
@@ -318,8 +452,44 @@ export class SketchorView extends HTMLElement {
       if (token !== this.loadToken) return;
 
       const verdict = sniffFormat(name, bytes, this.getAttribute("format"));
-      if (verdict.kind === "app-only") throw new EmbedError(`.${verdict.ext.toUpperCase()} files open in Sketchor`, "This preview shows 3D meshes (glTF, GLB, STL, OBJ, PLY, 3MF) for now.");
+      if (verdict.kind === "app-only") throw new EmbedError(`.${verdict.ext.toUpperCase()} files open in Sketchor`, "This preview shows drawings (DXF, SVG, EPS, AI, PDF) and meshes (glTF, GLB, STL, OBJ, PLY, 3MF) for now.");
       if (verdict.kind === "unknown") throw new EmbedError("Unrecognised file type", `${name} isn't a format the preview can read.`);
+
+      if (verdict.kind === "drawing") {
+        const viewer2dP = loadViewer2d();
+        const drawing = await parseDrawingOffThread(bytes, name, verdict.format);
+        const viewer2d = await viewer2dP;
+        if (token !== this.loadToken || !this.connected) return;
+        this.stage?.dispose();
+        this.stage = null;
+        const kindChanged = this.kind !== "2d";
+        this.kind = "2d";
+        const canvas = kindChanged ? this.freshCanvas() : this.canvas;
+        this.setAttribute("data-kind", "2d");
+        this.$(".hint").textContent = HINT_2D;
+        this.applyStageColors();
+        const stage = new viewer2d.Stage2D(canvas, {
+          background: this.stageBackground(),
+          ink: this.palette.ink,
+          accent: this.accentColor(),
+          reducedMotion: this.reducedMotion,
+          motion: this.motion2d(),
+          fitPadding: this.fitPadding(),
+        });
+        this.stage = stage;
+        stage.onMeasure = (m) => this.showMeasure(m);
+        this.showMeasure(null);
+        this.resize();
+        stage.setDrawing(drawing);
+        this.buildLayerList(viewer2d.layerList(drawing.entities));
+        stage.setVisible(this.seen && !document.hidden);
+        stage.renderOnce();
+        this.setState("idle");
+        this.setAttribute("data-ready", "");
+        this.dispatchEvent(new CustomEvent("load", { detail: { name, kind: "2d", entities: drawing.entities.length, warnings: drawing.warnings } }));
+        if (this.hasAttribute("autoplay") && !this.reducedMotion) this.play();
+        return;
+      }
 
       const upAttr = this.getAttribute("up");
       const up = upAttr === "y" || upAttr === "z" ? upAttr : "auto";
@@ -336,11 +506,21 @@ export class SketchorView extends HTMLElement {
       if (token !== this.loadToken || !this.connected) return;
 
       this.stage?.dispose();
+      this.stage = null;
+      if (this.kind !== "3d") {
+        this.kind = "3d";
+        this.freshCanvas();
+      }
+      this.setAttribute("data-kind", "3d");
+      this.buildLayerList([]);
+      this.$(".hint").textContent = HINT_3D;
+      this.applyStageColors();
       this.stage = new viewer.Stage(this.canvas, {
         background: this.stageBackground(),
         edge: this.palette.edge,
         accent: this.accentColor(),
         reducedMotion: this.reducedMotion,
+        fitPadding: this.fitPadding(),
       });
       this.stage.onMeasure = (m) => this.showMeasure(m);
       this.showMeasure(null);
@@ -350,7 +530,7 @@ export class SketchorView extends HTMLElement {
       this.stage.renderOnce();
       this.setState("idle");
       this.setAttribute("data-ready", "");
-      this.dispatchEvent(new CustomEvent("load", { detail: { name, parts: model.parts.length, cached: !!cachedHit } }));
+      this.dispatchEvent(new CustomEvent("load", { detail: { name, kind: "3d", parts: model.parts.length, cached: !!cachedHit } }));
       if (this.hasAttribute("autoplay") && !this.reducedMotion) this.play();
     } catch (err) {
       if (token !== this.loadToken || (err as Error)?.name === "AbortError") return;
@@ -395,6 +575,10 @@ export class SketchorView extends HTMLElement {
     this.$(".full").innerHTML = ICON_EXPAND;
     this.$(".full").setAttribute("aria-label", "Full view");
     this.stage?.setInteractive(false);
+    // The inline preview is the drawing as the page asked for (all layers, or its `layers` attribute), whatever was switched off in full view.
+    this.resetLayerToggles();
+    this.$(".layers").classList.remove("open");
+    this.$(".layers-btn").setAttribute("aria-expanded", "false");
     this.stage?.fit();
     requestAnimationFrame(() => this.resize());
   }

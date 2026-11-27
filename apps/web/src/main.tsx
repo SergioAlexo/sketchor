@@ -7,6 +7,7 @@ import { initExplorerPreviews } from "./desktop/explorerPreviews";
 import { initMetrics } from "./metrics/metrics";
 import { initFirstOpenDemo } from "./demo/firstOpen";
 import { initOpenFromUrl } from "./io/openFromUrl";
+import { initThemeFromUrl } from "./theme/themeFromUrl";
 import { installPluginDevHandle, loadFirstPartyPlugins, loadInstalledPlugins } from "./plugins";
 import "./styles.css";
 
@@ -45,3 +46,5 @@ void loadInstalledPlugins();
 initFirstOpenDemo();
 // E-06: /app?open=<url> (the embed's "Open in Sketchor" link).
 void initOpenFromUrl();
+// TH-07: /app?theme=<id | theme file URL> (the theme gallery's "Open in Sketchor" link).
+void initThemeFromUrl();

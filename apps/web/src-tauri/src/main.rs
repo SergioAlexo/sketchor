@@ -77,8 +77,14 @@ fn emit_file(app: &AppHandle, path: &str) {
     }
 }
 
+/// Every 3D format the viewer reads (formats.ts `kind: "3d"`; formats.test.ts keeps the two lists equal):
+/// they open through `open-model` and list in the in-app file browser.
+const MODEL_EXTS: [&str; 13] = [
+    ".step", ".stp", ".iges", ".igs", ".brep", ".brp", ".3dm", ".stl", ".obj", ".ply", ".3mf", ".gltf", ".glb",
+];
+
 fn is_model_path(lower: &str) -> bool {
-    lower.ends_with(".step") || lower.ends_with(".stp") || lower.ends_with(".iges") || lower.ends_with(".igs")
+    MODEL_EXTS.iter().any(|e| lower.ends_with(*e))
 }
 
 fn first_drawing_arg(args: &[String]) -> Option<String> {
@@ -275,8 +281,11 @@ fn write_thumbnail_cache(hash: String, png_base64: String) -> Result<bool, Strin
 /// Off Windows both report "not applicable".
 ///
 /// `.eps`/`.ai` (F-03) usually already have another program's marker (Illustrator,
-/// Acrobat): only *missing* keys are ever written, never overwritten.
-const THUMB_MARKER_EXTS: [&str; 7] = [".step", ".stp", ".iges", ".igs", ".dxf", ".eps", ".ai"];
+/// Acrobat), and `.svg` (SV-07) may have PowerToys' or Inkscape's: only
+/// *missing* keys are ever written, never overwritten.
+const THUMB_MARKER_EXTS: [&str; 8] = [
+    ".step", ".stp", ".iges", ".igs", ".dxf", ".eps", ".ai", ".svg",
+];
 const SHELLEX_THUMB: &str = "{E357FCCD-A995-4576-B01F-234630154E96}";
 const SKETCHOR_THUMB_CLSID: &str = "{6F9E2A31-7C4B-4D8E-9A1F-2B3C4D5E6F70}";
 

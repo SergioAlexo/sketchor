@@ -1,6 +1,6 @@
 # dxf-thumbnailer
 
-A Windows Explorer **thumbnail provider** for `.dxf` drawings and
+A Windows Explorer **thumbnail provider** for `.dxf`, `.svg` and `.eps`/`.ai` drawings and
 `.step`/`.stp`/`.iges`/`.igs` 3D models — so they render as little previews
 directly on their file icons in Explorer, the same way images do.
 
@@ -12,6 +12,16 @@ opened or browsed past), and otherwise — for STEP — a wireframe read straigh
 out of the file's B-rep edges by `native/step-wire`, assembly transforms
 resolved, in milliseconds and without a geometry kernel. IGES has no text
 fallback and gets the mirrored preview or the plain icon.
+
+SVG (SV-07) is rasterised by [resvg](https://github.com/linebender/resvg)
+through `native/svg-raster`: fitted to the drawn content, on a white sheet,
+never fetching anything outside the file. A mirrored preview for the same file
+(same `<sha256>.png` cache) wins if one exists. SVG text is left out by default.
+Build with `--features svg-text` to draw it, which costs about 1.3 MB of DLL
+and a system-font scan per thumbnail. `.svg` is registered only under
+`SystemFileAssociations\.svg`, and its machine-wide marker is only created
+when missing, so an SVG previewer you already have (PowerToys, Inkscape) keeps
+handling SVG. `.eps`/`.ai` show the file's own TIFF preview (`src/eps.rs`).
 
 It's an in-process COM server (`IThumbnailProvider` + `IInitializeWithFile`)
 written in Rust with `windows-rs`. It parses the DXF and rasterises it with

@@ -54,6 +54,10 @@ export interface Model3D {
   triangleCount: number;
   /** Up axis guessed from the STEP header (upAxis.ts); the viewer starts there unless the user overrode it for this file. Absent = Z. */
   detectedUp?: "z" | "y";
+  /** F-06: free curves and points (xyz pairs) drawn as lines in the edge colour; not parts, not pickable. */
+  wires?: Float32Array;
+  /** F-11: what the reader had to say about the file (a truncated STL, support objects left out, textures not shown). Shown once in the viewer. */
+  importNotes?: string[];
 }
 
 export type ModelFormat = "step" | "iges" | "brep" | "3dm" | "stl" | "obj" | "ply" | "3mf" | "gltf" | "glb";
@@ -175,6 +179,8 @@ export interface OcctResult {
   success: boolean;
   root?: OcctNode;
   meshes?: OcctMesh[];
+  /** F-06: free curves and points as line segments (xyz pairs, mm) — e.g. Rhino curves. Drawn, not picked. */
+  wires?: Float32Array;
 }
 
 export interface OcctNode {
@@ -207,6 +213,7 @@ export function modelArrays(m: Model3D): ArrayBufferView[] {
     ...Object.values(m.faces),
     ...Object.values(m.edgeTable),
     ...Object.values(m.nodes),
+    ...(m.wires ? [m.wires] : []),
   ];
 }
 

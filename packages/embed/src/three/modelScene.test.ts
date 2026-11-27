@@ -6,7 +6,8 @@
  */
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { biasEdgesTowardEye, edgeBiasFor, EDGE_BIAS_FRACTION, fitClipPlanes } from "./modelScene";
+import { biasEdgesTowardEye, buildModelObjects, edgeBiasFor, EDGE_BIAS_FRACTION, fitClipPlanes } from "./modelScene";
+import { buildModel } from "./buildModel";
 
 describe("edge depth bias", () => {
   it("scales with the model's bounding radius", () => {
@@ -54,5 +55,23 @@ describe("clip planes", () => {
     expect(cam.near).toBeLessThan(0.01);
     expect(cam.near).toBeGreaterThan(0);
     expect(cam.far).toBeCloseTo(210, 6);
+  });
+});
+
+describe("wires (F-06)", () => {
+  it("draws free curves with the edge material, and only when there are some", () => {
+    const tri = { name: "t", attributes: { position: { array: [0, 0, 0, 1, 0, 0, 0, 1, 0] } }, index: { array: [0, 1, 2] } };
+    const wires = Float32Array.from([0, 0, 0, 50, 0, 0, 50, 0, 0, 50, 20, 0]);
+    const withWires = buildModel({ success: true, meshes: [tri], wires, root: { meshes: [0] } } as never, "w.3dm", "h", "3dm");
+    expect(withWires.bounds.max).toEqual([50, 20, 0]);
+    const o = buildModelObjects(withWires);
+    expect(o.wires).not.toBeNull();
+    expect(o.wires!.material).toBe(o.edges.material);
+    expect(o.group.children).toContain(o.wires);
+    o.dispose();
+    const plain = buildModelObjects(buildModel({ success: true, meshes: [tri], root: { meshes: [0] } } as never, "t.3dm", "h", "3dm"));
+    expect(plain.wires).toBeNull();
+    // A ragged array (not whole segments) is ignored rather than drawn wrong.
+    expect(buildModel({ success: true, meshes: [tri], wires: Float32Array.from([1, 2, 3, 4]) } as never, "r.3dm", "h", "3dm").wires).toBeUndefined();
   });
 });

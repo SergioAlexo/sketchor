@@ -8,14 +8,22 @@
 export const SKETCHOR_APP = "https://sketchor.sergioalexo.com/app";
 export const SKETCHOR_SITE = "https://sketchor.sergioalexo.com/";
 
-/** Formats the embed can preview today: triangle meshes, read by the core parsers. */
+/** 3D formats the embed can preview today: triangle meshes, read by the core parsers. */
 export const PREVIEW_FORMATS = ["stl", "obj", "ply", "3mf", "gltf", "glb"] as const;
 export type PreviewFormat = (typeof PREVIEW_FORMATS)[number];
 
-/** Formats Sketchor opens that the embed does not draw yet (STEP needs the OCCT wasm, 2D needs render2d). */
-const APP_ONLY = new Set(["step", "stp", "iges", "igs", "brep", "3dm", "dxf", "dwg", "svg", "eps", "ai", "pdf"]);
+/** E-01: 2D drawings, read by the core parsers and drawn by the shared Canvas 2D renderer (core render2d). */
+export const DRAWING_FORMATS = ["dxf", "svg", "eps", "ai", "pdf"] as const;
+export type DrawingFormat = (typeof DRAWING_FORMATS)[number];
 
-export type FormatVerdict = { kind: "preview"; format: PreviewFormat } | { kind: "app-only"; ext: string } | { kind: "unknown" };
+/** Formats Sketchor opens that the embed does not draw yet (STEP/IGES/BREP/3DM need the OCCT wasm; DWG needs LibreDWG, which is GPL and stays out of the MIT embed). */
+const APP_ONLY = new Set(["step", "stp", "iges", "igs", "brep", "brp", "3dm", "dwg"]);
+
+export type FormatVerdict =
+  | { kind: "preview"; format: PreviewFormat }
+  | { kind: "drawing"; format: DrawingFormat }
+  | { kind: "app-only"; ext: string }
+  | { kind: "unknown" };
 
 export function extensionOf(name: string): string {
   const base = name.split(/[?#]/)[0].split(/[\\/]/).pop() ?? "";
@@ -33,8 +41,15 @@ export function sniffFormat(name: string, bytes: Uint8Array | null, override?: s
   if (forced) return verdictForExt(forced);
   if (bytes && bytes.length >= 4) {
     if (bytes[0] === 0x67 && bytes[1] === 0x6c && bytes[2] === 0x54 && bytes[3] === 0x46) return { kind: "preview", format: "glb" };
-    const head = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 64)));
+    const head = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 512)));
     if (head.startsWith("ISO-10303-21")) return { kind: "app-only", ext: "step" };
+    const ext = extensionOf(name);
+    // A PDF (including an Illustrator 9+ .ai, which is a PDF inside) is read by the PDF importer.
+    if (head.startsWith("%PDF-")) return { kind: "drawing", format: "pdf" };
+    // PostScript, or a DOS EPS binary header (C5 D0 D3 C6).
+    if (head.startsWith("%!PS") || (bytes[0] === 0xc5 && bytes[1] === 0xd0 && bytes[2] === 0xd3 && bytes[3] === 0xc6)) return { kind: "drawing", format: ext === "ai" ? "ai" : "eps" };
+    if (head.startsWith("AutoCAD Binary DXF")) return { kind: "drawing", format: "dxf" };
+    if (ext !== "svg" && /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE svg[^>]*>\s*)?<svg[\s>]/i.test(head)) return { kind: "drawing", format: "svg" };
     if (bytes[0] === 0x50 && bytes[1] === 0x4b && extensionOf(name) !== "3mf") {
       // A zip that isn't named .3mf: 3MF is the only zip the embed reads.
       return { kind: "preview", format: "3mf" };
@@ -45,6 +60,7 @@ export function sniffFormat(name: string, bytes: Uint8Array | null, override?: s
 
 function verdictForExt(ext: string): FormatVerdict {
   if ((PREVIEW_FORMATS as readonly string[]).includes(ext)) return { kind: "preview", format: ext as PreviewFormat };
+  if ((DRAWING_FORMATS as readonly string[]).includes(ext)) return { kind: "drawing", format: ext as DrawingFormat };
   if (APP_ONLY.has(ext)) return { kind: "app-only", ext };
   return { kind: "unknown" };
 }
@@ -109,4 +125,40 @@ export async function fetchBytes(url: string, maxBytes: number, signal?: AbortSi
 
 function tooBig(maxBytes: number): string {
   return `the file is larger than the ${Math.round(maxBytes / 1048576)} MB preview limit`;
+}
+
+/** Default margin around the fitted drawing or model, as a fraction of the smaller side. */
+export const DEFAULT_FIT_PADDING = 0.08;
+
+/**
+ * E-02: `fit-padding` — the margin kept clear around the fitted drawing or
+ * model: a fraction ("0.15") or a percentage ("15%"), clamped to 0…0.4.
+ * Null (use the default) for anything else.
+ */
+export function parseFitPadding(attr: string | null): number | null {
+  if (attr === null) return null;
+  const m = /^\s*(-?\d*\.?\d+)\s*(%?)\s*$/.exec(attr);
+  if (!m) return null;
+  let v = parseFloat(m[1]);
+  if (m[2] === "%") v /= 100;
+  if (!Number.isFinite(v)) return null;
+  return Math.min(0.4, Math.max(0, v));
+}
+
+/**
+ * E-02: `layers` — which of a drawing's layers show. A list of names shows
+ * only those (`"Outline, Holes"`); names starting with "-" are hidden and
+ * everything else shows (`"-Notes, -Dims"`). Names match case-insensitively,
+ * as DXF layer names do. Returns the layers to hide out of `all`.
+ */
+export function hiddenByLayersAttr(attr: string | null, all: readonly string[]): string[] {
+  if (!attr || !attr.trim()) return [];
+  const items = attr.split(",").map((s) => s.trim()).filter(Boolean);
+  const hide = new Set(items.filter((s) => s.startsWith("-")).map((s) => s.slice(1).trim().toLowerCase()));
+  const only = new Set(items.filter((s) => !s.startsWith("-")).map((s) => s.toLowerCase()));
+  return all.filter((name) => {
+    const n = name.toLowerCase();
+    if (hide.has(n)) return true;
+    return only.size > 0 && !only.has(n);
+  });
 }

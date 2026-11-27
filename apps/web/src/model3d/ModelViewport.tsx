@@ -23,10 +23,13 @@ import { useTheme } from "../theme/themeStore";
 import { formatBytes } from "./importError";
 import { measureSelection, partOf, refLabel, type MeasureSegment, type SelRef } from "./measure";
 import { faceOutlineBlocker, outlineOfFace, outlineOfView } from "./faceTo2d";
+import { exportBytes, exportFileName, exportProblems, modelToMeshParts, repairParts, type MeshExportFormat, type MeshExportUnit } from "./exportMesh";
+import { saveBytesAs } from "../io/saveBytes";
 import { pickEdge, pickVertex, type Projector } from "./picking";
 import { useOpenLoads } from "./stepImport";
 import type { Model3D } from "./types";
 import { reorientModel, saveUpAxis, savedUpAxis, type UpAxis } from "./upAxis";
+import { isUnitless, MESH_UNITS, MESH_UNIT_LABEL, MM_PER_UNIT, saveMeshUnit, savedMeshUnit, scaleModel, unitHint, type MeshUnit } from "./meshUnits";
 import { useViewer } from "./viewerStore";
 
 /**
@@ -82,7 +85,13 @@ export function ModelViewport({ session }: Props) {
  */
 function OrientedViewer({ model }: { model: Model3D }) {
   const [up, setUp] = useState<UpAxis>(() => savedUpAxis(model.hash) ?? model.detectedUp ?? "z");
-  const shown = useMemo(() => reorientModel(model, up), [model, up]);
+  // F-11: unitless meshes (STL/OBJ/PLY) can be re-read in another unit; the view is scaled, the cache keeps the file as read.
+  const [unit, setUnit] = useState<MeshUnit>(() => (isUnitless(model.format) ? savedMeshUnit(model.hash) ?? "mm" : "mm"));
+  const shown = useMemo(() => scaleModel(reorientModel(model, up), MM_PER_UNIT[unit]), [model, up, unit]);
+  const changeUnit = (u: MeshUnit) => {
+    saveMeshUnit(model.hash, u);
+    setUnit(u);
+  };
   const toggleUp = () => {
     const next: UpAxis = up === "z" ? "y" : "z";
     saveUpAxis(model.hash, next);
@@ -90,7 +99,7 @@ function OrientedViewer({ model }: { model: Model3D }) {
     // The file browser's picture of this file was drawn the old way up.
     void import("./modelThumbnail").then(({ refreshThumbnail }) => refreshThumbnail(model)).catch(() => undefined);
   };
-  return <Viewer model={shown} up={up} onToggleUp={toggleUp} />;
+  return <Viewer model={shown} up={up} onToggleUp={toggleUp} unit={isUnitless(model.format) ? unit : null} onUnit={changeUnit} />;
 }
 
 /* ------------------------------ loading/error --------------------------- */
@@ -202,7 +211,7 @@ interface Scene {
   dispose: () => void;
 }
 
-function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggleUp: () => void }) {
+function Viewer({ model, up, onToggleUp, unit, onUnit }: { model: Model3D; up: UpAxis; onToggleUp: () => void; unit: MeshUnit | null; onUnit: (u: MeshUnit) => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<Scene | null>(null);
@@ -221,6 +230,10 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
   const density = useViewer((v) => v.density);
   const setDensity = useViewer((v) => v.setDensity);
   const [showEdges, setShowEdges] = useState(true);
+  // F-11: the reader's notes for this file, until dismissed (per model, so the next file shows its own).
+  const [notesDismissedFor, setNotesFor] = useState<string | null>(null);
+  const hint = unit === "mm" ? unitHint(model) : null;
+  const notes = notesDismissedFor === model.hash ? [] : [...(model.importNotes ?? []), ...(hint ? [hint] : [])];
   /** The span the current selection measures; the overlay re-projects it every frame. */
   const segmentRef = useRef<MeasureSegment | null>(null);
   /** The overlay's re-projection, so a new measurement can draw itself without waiting for a frame. */
@@ -928,6 +941,35 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
     useApp.getState().syncLayersFromDoc();
     useApp.getState().requestFit();
   };
+  /** F-11: the visible parts as STL or 3MF, after a warning if a slicer would object to them. */
+  const [exportMenu, setExportMenu] = useState(false);
+  const [exportUnit, setExportUnit] = useState<MeshExportUnit>("mm");
+  const exportAs = async (format: MeshExportFormat) => {
+    setExportMenu(false);
+    let parts = modelToMeshParts(model, hidden);
+    if (parts.length === 0) {
+      useApp.getState().setSaveNotice({ kind: "error", message: "Nothing to export: every part is hidden", at: Date.now() });
+      return;
+    }
+    const problems = exportProblems(parts);
+    let repairNote = "";
+    if (problems.length > 0) {
+      const list = problems.slice(0, 8).join("\n") + (problems.length > 8 ? `\n…and ${problems.length - 8} more` : "");
+      if (window.confirm(`Some parts may not print as they are:\n\n${list}\n\nRepair them before exporting? (OK repairs; Cancel offers to export them as they are)`)) {
+        const fixed = repairParts(parts);
+        parts = fixed.parts;
+        repairNote = fixed.summary.join("; ");
+      } else if (!window.confirm("Export without repairing?")) return;
+    }
+    try {
+      const bytes = await exportBytes(model, parts, format, exportUnit);
+      const is3mf = format === "3mf";
+      const saved = await saveBytesAs(exportFileName(model, format), bytes, is3mf ? { description: "3MF model", mime: "model/3mf", ext: "3mf" } : { description: "STL mesh", mime: "model/stl", ext: "stl" });
+      if (saved && repairNote) useApp.getState().setSaveNotice({ kind: "saved", message: `Exported a repaired copy — ${repairNote}`, at: Date.now() });
+    } catch (err) {
+      useApp.getState().setSaveNotice({ kind: "error", message: `Export failed: ${(err as Error).message}`, at: Date.now() });
+    }
+  };
   /** F-07: project the visible parts along a view preset (or the current camera) into a new 2D tab. */
   const [viewMenu, setViewMenu] = useState(false);
   const viewTo2d = (preset: ViewPreset | "current") => {
@@ -961,7 +1003,7 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
     .join(" ↔ ");
 
   return (
-    <div className="model-stage" ref={hostRef} data-testid="model-viewport">
+    <div className={`model-stage${notes.length > 0 ? " has-notes" : ""}`} ref={hostRef} data-testid="model-viewport">
       <canvas
         ref={canvasRef}
         className="model-canvas"
@@ -986,6 +1028,14 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
       <div ref={labelRef} className="model-measure-label" data-testid="model-measure-label" style={{ display: "none" }}>
         {spanLength}
       </div>
+      {notes.length > 0 && (
+        <div className="import-banner warn model-import-notes" data-testid="model-import-notes" role="status">
+          <span className="import-banner-summary">{notes.join(" · ")}</span>
+          <button className="btn ghost" onClick={() => setNotesFor(model.hash)} title="Dismiss">
+            ✕
+          </button>
+        </div>
+      )}
       <div className="model-toolbar" data-testid="model-toolbar">
         <ToolButton title="Isometric (1)" label="Iso" icon={ICONS.iso} onClick={() => fitAll("iso")} testId="model-view-iso" />
         <ToolButton title="Top (2)" label="Top" icon={ICONS.top} onClick={() => fitAll("top")} testId="model-view-top" />
@@ -1056,6 +1106,37 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
             </div>
           )}
         </span>
+        <span style={{ position: "relative", display: "inline-flex" }}>
+          <ToolButton
+            title="Export the visible parts as STL or 3MF, for printing or another program"
+            label="Export"
+            icon={ICONS.export}
+            active={exportMenu}
+            onClick={() => setExportMenu((v) => !v)}
+            testId="model-export"
+          />
+          {exportMenu && (
+            <div className="model-view-menu" data-testid="model-export-menu" style={{ position: "absolute", top: "100%", right: 0, zIndex: 20, display: "flex", flexDirection: "column", gap: 2, background: "var(--panel, #25262b)", border: "1px solid var(--border, #444)", borderRadius: 6, padding: 4, minWidth: 170 }}>
+              <button className="btn ghost sm" onClick={() => void exportAs("3mf")} data-testid="model-export-3mf" title="Sizes, names and colours kept; opens in PrusaSlicer, Bambu Studio, Cura and 3D Builder">
+                3MF (recommended)
+              </button>
+              <button className="btn ghost sm" onClick={() => void exportAs("stl")} data-testid="model-export-stl">
+                STL (binary)
+              </button>
+              <button className="btn ghost sm" onClick={() => void exportAs("stl-ascii")} data-testid="model-export-stl-ascii">
+                STL (text)
+              </button>
+              <label className="model-export-unit" style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", fontSize: 12 }}>
+                Units
+                <select value={exportUnit} onChange={(e) => setExportUnit(e.target.value as MeshExportUnit)} data-testid="model-export-unit">
+                  <option value="mm">mm</option>
+                  <option value="in">inch</option>
+                  <option value="m">m</option>
+                </select>
+              </label>
+            </div>
+          )}
+        </span>
         <ToolButton
           title="Show all hidden parts (Shift+H)"
           label={`Show all${hidden.size > 0 ? ` (${hidden.size})` : ""}`}
@@ -1080,6 +1161,18 @@ function Viewer({ model, up, onToggleUp }: { model: Model3D; up: UpAxis; onToggl
           <span className="model-status-part" data-testid="model-status-hidden">
             {hidden.size} hidden
           </span>
+        )}
+        {unit !== null && (
+          <label className="model-status-units" title="This format stores no units: choose what the file's numbers mean">
+            Units
+            <select value={unit} onChange={(e) => onUnit(e.target.value as MeshUnit)} data-testid="model-units">
+              {MESH_UNITS.map((u) => (
+                <option key={u} value={u}>
+                  {MESH_UNIT_LABEL[u]}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
       </div>
       {/* The corner readout: what the current picks measure. */}
@@ -1206,6 +1299,12 @@ const ICONS = {
     <svg viewBox="0 0 24 24" width="18" height="18">
       <path d="M9 9h6v6H9z" {...stroke} />
       <path d="M4 4h3M4 4v3M20 4h-3M20 4v3M4 20h3M4 20v-3M20 20h-3M20 20v-3" {...stroke} />
+    </svg>
+  ),
+  export: (
+    <svg viewBox="0 0 24 24" width="18" height="18">
+      <path d="M12 4v11M8 11l4 4 4-4" {...stroke} />
+      <path d="M5 17v3h14v-3" {...stroke} />
     </svg>
   ),
   to2d: (

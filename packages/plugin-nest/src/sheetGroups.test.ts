@@ -86,4 +86,22 @@ describe("buildSideBySideLayout", () => {
     expect(spans[1][0]).toBeGreaterThan(spans[0][1]);
     expect(Math.min(...xs((e) => e.layer === NEST_SHEET_LAYER))).toBe(0);
   });
+
+  it("with partGroups: one group per part plus one per sheet frame, a CUT x2 badge, and the tray", () => {
+    const tray = { title: "To nest", items: [{ ...place(-1, 9), outerEntities: [part("t9")], holeEntities: [] }], at: { x: 0, y: -100 } };
+    const pc = buildSideBySideLayout(sheets, placements, groups, (_s, i) => `Sheet ${i + 1}`, { partGroups: true, qtyBadge: true, tray });
+    const grs = pc.filter((c): c is Extract<Command, { type: "group-entities" }> => c.type === "group-entities");
+    // 2 sheet frames + 2 drawn parts + 1 tray part
+    expect(grs).toHaveLength(5);
+    const byId = new Map(pc.filter((c): c is Extract<Command, { type: "add-entity" }> => c.type === "add-entity").map((c) => [c.entity.id, c.entity]));
+    const partGroup = grs.find((g) => g.ids.includes("o1"))!;
+    expect(partGroup.ids.map((id) => byId.get(id)!.layer)).toEqual([NEST_PARTS_LAYER, NEST_HOLES_LAYER, NEST_LABELS_LAYER]);
+    const frame = grs.find((g) => g.name?.includes("×2"))!;
+    expect(frame.ids.some((id) => id === "o1")).toBe(false);
+    const texts = [...byId.values()].filter((e) => e.type === "text").map((e) => (e.type === "text" ? e.text : ""));
+    expect(texts).toContain("CUT ×2");
+    expect(texts.filter((t) => t.startsWith("CUT"))).toHaveLength(1); // the single sheet gets no badge
+    expect(texts).toContain("To nest");
+    expect(grs.find((g) => g.ids.includes("t9"))!.name).toBe("To nest #9");
+  });
 });

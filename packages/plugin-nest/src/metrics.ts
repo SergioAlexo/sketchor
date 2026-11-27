@@ -26,6 +26,8 @@ export interface CutTableRow {
 export interface PartGeometry {
   outer: Point[];
   holes: Point[][];
+  /** NT-01: the real material area when `outer` is only an envelope (a compound part's hull). */
+  netArea?: number;
 }
 
 export interface SheetMetrics {
@@ -66,6 +68,7 @@ function perimeter(points: Point[]): number {
 }
 
 function netArea(part: PartGeometry): number {
+  if (part.netArea !== undefined) return part.netArea;
   const holesArea = part.holes.reduce((sum, h) => sum + area(h), 0);
   return Math.max(0, area(part.outer) - holesArea);
 }

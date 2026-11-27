@@ -62,6 +62,12 @@ export interface ToolpathOptions {
   start?: Point;
   /** N-53: evenly spaced uncut bridges on every closed contour. Default off (count 0 / omitted) - output is then unchanged. */
   tabs?: { count: number; width: number; /** Arc length of the first tab centre (default: half a spacing). */ offset?: number };
+  /**
+   * N-51: common-line cutting. Where a part's (kerf-compensated) outline runs
+   * along an outline that is already cut - two parts nested one kerf apart -
+   * that stretch is not cut again. Default off - output is then unchanged.
+   */
+  commonLine?: boolean | { tolerance?: number; minLength?: number };
 }
 
 export interface CutFeature {
@@ -87,6 +93,8 @@ export interface CutFeature {
 export interface CutPlan {
   features: CutFeature[];
   warnings: string[];
+  /** N-51: length of outline left uncut because a neighbour's cut already made it, mm (0 when common-line is off). */
+  commonLineMm?: number;
 }
 
 const EPS = 1e-9;
@@ -304,23 +312,45 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
   const start = opts.start ?? { x: 0, y: 0 };
   const warnings: string[] = [];
   const tabOpts = opts.tabs && opts.tabs.count > 0 ? opts.tabs : undefined;
+  const common = opts.commonLine ? { tolerance: 0.05, minLength: Math.max(1, 2 * kerf), ...(typeof opts.commonLine === "object" ? opts.commonLine : {}) } : null;
+  // With common-line, tabs and shared stretches are split together once the cut order is known.
+  const earlyTabs = (f: CutFeature, label: string) => {
+    if (!common) applyTabs(f, label);
+  };
+
+  /** N-53: a feature's tab spans, [a, b] in arc length along its loop, unrolled so a tab wrapping the loop start has b > per. */
+  const tabIntervals = (f: CutFeature, label: string): Span[] => {
+    if (!tabOpts) return [];
+    const plan = planTabs(loopLength(f.loop), tabOpts);
+    for (const w of plan.warnings) warnings.push(`${label}: ${w}`);
+    if (plan.tabs.length === 0) return [];
+    const per = plan.perimeter;
+    const byTab = new Map<number, typeof plan.tabs>();
+    for (const t of plan.tabs) byTab.set(t.tab, [...(byTab.get(t.tab) ?? []), t]);
+    return [...byTab.values()].map((r): Span => {
+      if (r.length === 1) return { a: r[0].start, b: r[0].end, tab: true };
+      const hi = r[0].end >= per - EPS ? r[0] : r[1];
+      const lo = hi === r[0] ? r[1] : r[0];
+      return { a: hi.start, b: lo.end + per, tab: true };
+    });
+  };
 
   /** Splits a feature at its tabs (N-53). No tabs fit = left as the closed loop. */
   const applyTabs = (f: CutFeature, label: string): void => {
-    if (!tabOpts) return;
-    const plan = planTabs(loopLength(f.loop), tabOpts);
-    for (const w of plan.warnings) warnings.push(`${label}: ${w}`);
-    if (plan.tabs.length === 0) return;
-    const per = plan.perimeter;
-    // One [a, b] interval per tab, unrolled so a tab wrapping the loop start has b > per.
-    const byTab = new Map<number, typeof plan.tabs>();
-    for (const t of plan.tabs) byTab.set(t.tab, [...(byTab.get(t.tab) ?? []), t]);
-    const iv = [...byTab.values()].map((r) => {
-      if (r.length === 1) return { a: r[0].start, b: r[0].end };
-      const hi = r[0].end >= per - EPS ? r[0] : r[1];
-      const lo = hi === r[0] ? r[1] : r[0];
-      return { a: hi.start, b: lo.end + per };
-    }).sort((x, y) => x.a - y.a);
+    const iv = tabIntervals(f, label);
+    if (iv.length > 0) skipSpans(f, iv, label);
+  };
+
+  /**
+   * Leaves the spans `iv` of a feature's loop uncut (tabs, or N-51 stretches a
+   * neighbour already cut): the cut becomes runs in travel order with the head
+   * lifted across each span, starting after the span nearest the original start
+   * with the lead-in re-aimed there. Overlapping spans are merged.
+   */
+  const skipSpans = (f: CutFeature, spans: Span[], label: string): void => {
+    const per = loopLength(f.loop);
+    const iv = mergeSpans(spans, per);
+    if (iv.length === 0) return;
     const n = iv.length;
     // Start the cut at the end of the tab nearest the original start (the lead-in's chosen edge).
     const circ = (x: number) => Math.min(((x % per) + per) % per, per - (((x % per) + per) % per));
@@ -362,6 +392,7 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
       return Math.hypot(p.x - (pierce.x + t * dx), p.y - (pierce.y + t * dy));
     };
     for (const x of iv) {
+      if (!x.tab) continue; // a neighbour's cut is open already: the lead-in may cross it
       const lo = ((x.a % per) + per) % per;
       for (const c of sliceLoop(doubled, lo, lo + (x.b - x.a))) {
         for (let i = 0; i <= 8; i++) {
@@ -409,7 +440,7 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
       if (warning) warnings.push(`part #${placement.number}, hole: ${warning}`);
       const { pierce, leadIn, loop, leadInArc } = planLeadIn(comp, inside, leadInLength, leadInStyle, "hole");
       const f: CutFeature = { placementId: placement.id, partNumber: placement.number, role: "hole", pierce, leadIn, loop, ...(leadInArc ? { leadInArc } : {}) };
-      applyTabs(f, `part #${placement.number}, hole`);
+      earlyTabs(f, `part #${placement.number}, hole`);
       features.push(f);
     }
     {
@@ -418,7 +449,7 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
       if (warning) warnings.push(`part #${placement.number}, outer: ${warning}`);
       const { pierce, leadIn, loop, leadInArc } = planLeadIn(comp, outside, leadInLength, leadInStyle, "outer");
       const f: CutFeature = { placementId: placement.id, partNumber: placement.number, role: "outer", pierce, leadIn, loop, ...(leadInArc ? { leadInArc } : {}) };
-      applyTabs(f, `part #${placement.number}, outer`);
+      earlyTabs(f, `part #${placement.number}, outer`);
       features.push(f);
     }
 
@@ -488,5 +519,121 @@ export function buildCutPlan(placements: GcodePlacement[], opts: ToolpathOptions
     }
   }
 
-  return { features, warnings };
+  if (!common) return { features, warnings };
+
+  // N-51: walk the cut order; each outer outline skips what earlier outer outlines already cut.
+  let shared = 0;
+  const done: { loop: Curve[]; box: Box }[] = [];
+  const out: CutFeature[] = [];
+  for (const f of features) {
+    const label = `part #${f.partNumber}, ${f.role}`;
+    const tabs = tabIntervals(f, label);
+    if (f.role !== "outer") {
+      if (tabs.length > 0) skipSpans(f, tabs, label);
+      out.push(f);
+      continue;
+    }
+    const box = loopBox(f.loop, common.tolerance);
+    const spans = sharedSpans(f.loop, done.filter((d) => boxesTouch(d.box, box)).map((d) => d.loop), common.tolerance, common.minLength);
+    const per = loopLength(f.loop);
+    const merged = mergeSpans(spans, per);
+    const sharedLen = merged.reduce((n, x) => n + (x.b - x.a), 0);
+    done.push({ loop: f.loop, box });
+    if (sharedLen >= per - 1e-6) {
+      // Every edge was cut by neighbours: nothing left to cut on this outline.
+      shared += per;
+      continue;
+    }
+    shared += sharedLen;
+    if (merged.length > 0 || tabs.length > 0) skipSpans(f, [...merged, ...tabs], label);
+    out.push(f);
+  }
+  return { features: out, warnings, commonLineMm: shared };
+}
+
+/** A stretch of a loop, [a, b] in arc length from its start (b may pass the perimeter to wrap). `tab` = a bridge (the lead-in must not cross it). */
+interface Span {
+  a: number;
+  b: number;
+  tab?: boolean;
+}
+
+/** Sorted, non-overlapping spans; a span that wraps the loop start is kept unrolled. */
+function mergeSpans(spans: Span[], per: number): Span[] {
+  if (per <= EPS) return [];
+  const norm = spans
+    .filter((x) => x.b - x.a > EPS)
+    .map((x) => {
+      const a = ((x.a % per) + per) % per;
+      return { a, b: a + Math.min(per, x.b - x.a), tab: x.tab };
+    })
+    .sort((x, y) => x.a - y.a);
+  const out: Span[] = [];
+  for (const x of norm) {
+    const last = out[out.length - 1];
+    if (last && x.a <= last.b + 1e-9) {
+      last.b = Math.max(last.b, x.b);
+      last.tab = last.tab || x.tab;
+    } else out.push({ ...x });
+  }
+  // A last span that wraps past the start swallows the spans it reaches.
+  while (out.length > 1 && out[out.length - 1]!.b - per >= out[0]!.a - 1e-9) {
+    const first = out.shift()!;
+    const last = out[out.length - 1]!;
+    last.b = Math.max(last.b, first.b + per);
+    last.tab = last.tab || first.tab;
+  }
+  if (out.length === 1 && out[0]!.b - out[0]!.a >= per - 1e-9) return [{ a: 0, b: per, tab: out[0]!.tab }];
+  return out;
+}
+
+interface Box {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+function loopBox(loop: Curve[], pad: number): Box {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const c of loop) {
+    const pts = c.kind === "segment" ? [c.a, c.b] : [curveStart(c), curveEnd(c), { x: c.center.x - c.radius, y: c.center.y - c.radius }, { x: c.center.x + c.radius, y: c.center.y + c.radius }];
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
+}
+
+const boxesTouch = (a: Box, b: Box) => a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY;
+
+/**
+ * N-51: the stretches of `loop`'s straight edges that lie on a straight edge
+ * of one of `cut` (within `tol`, at least `minLen` long), as spans along `loop`.
+ */
+export function sharedSpans(loop: Curve[], cut: Curve[][], tol: number, minLen: number): Span[] {
+  const spans: Span[] = [];
+  let s0 = 0;
+  for (const c of loop) {
+    const len = curveLength(c);
+    if (c.kind === "segment" && len >= minLen) {
+      const ux = (c.b.x - c.a.x) / len, uy = (c.b.y - c.a.y) / len;
+      for (const other of cut) {
+        for (const d of other) {
+          if (d.kind !== "segment") continue;
+          // Both ends of d on c's line, and parallel (either direction).
+          const off = (p: Point) => (p.x - c.a.x) * -uy + (p.y - c.a.y) * ux;
+          if (Math.abs(off(d.a)) > tol || Math.abs(off(d.b)) > tol) continue;
+          const t = (p: Point) => (p.x - c.a.x) * ux + (p.y - c.a.y) * uy;
+          const lo = Math.max(0, Math.min(t(d.a), t(d.b))), hi = Math.min(len, Math.max(t(d.a), t(d.b)));
+          if (hi - lo >= minLen) spans.push({ a: s0 + lo, b: s0 + hi });
+        }
+      }
+    }
+    s0 += len;
+  }
+  return spans;
 }

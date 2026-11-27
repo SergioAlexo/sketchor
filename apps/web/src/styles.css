@@ -802,6 +802,18 @@ body {
   color: #7fe0ab;
 }
 
+/* F-11: a 3D file's import notes, over the top of the model view. */
+.model-import-notes {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 15;
+}
+.model-stage.has-notes .model-toolbar {
+  top: 42px;
+}
+
 .import-banner.warn {
   background: rgba(230, 160, 60, 0.14);
   color: #f0b968;
@@ -2024,6 +2036,11 @@ kbd.shortcut-key-fixed {
   border: 1px solid var(--border);
   border-radius: 8px;
   backdrop-filter: blur(6px);
+  /* A narrow 3D tab (side panels open) wraps the toolbar instead of cutting off its ends. */
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100% - 20px);
+  width: max-content;
 }
 
 .model-toolbar .btn.active {
@@ -2051,6 +2068,19 @@ kbd.shortcut-key-fixed {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
+}
+
+/* F-11: the unit picker for STL/OBJ/PLY is the one live control in the status pill. */
+.model-status-units {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.model-status-units select {
+  font: inherit;
+  font-size: 12px;
 }
 
 .model-status-part {
