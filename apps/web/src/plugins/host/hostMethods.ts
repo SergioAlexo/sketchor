@@ -178,6 +178,7 @@ export async function dispatchCall(ctx: HostContext, method: string, args: unkno
       assertCommands(commands);
       // Collapse the plugin's whole action into one undo step.
       if (commands.length > 0) {
+        if (bus.locked) throw new Error("Unlock editing in the toolbar to change the drawing.");
         bus.execute({ type: "batch", commands });
         // A plugin can introduce a new layer (e.g. the load planner's "Load
         // Plan"); surface it in the layer panel like any first-party edit would.
@@ -268,6 +269,9 @@ export async function dispatchCall(ctx: HostContext, method: string, args: unkno
 
     case "app.displayUnit":
       return currentDisplayUnit();
+    case "app.fitDrawing":
+      useApp.getState().requestFit();
+      return undefined;
 
     case "app.openDocumentTab": {
       const commands = args[1] ?? [];

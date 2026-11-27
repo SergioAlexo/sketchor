@@ -14,6 +14,8 @@ import {
   wholeGroupSelected,
 } from "@sketchor/core";
 import { matchesModifier } from "../keybindings";
+import { isPalletProduct, palletSupportAt } from "../plugins/builtins/palletSceneInteraction";
+import { runCommand as runPluginCommand } from "../plugins/host/registries";
 import { selectableEntities, useApp } from "../state/store";
 import { findSnap, snapMovingSelection, snapRotation } from "../viewport/snapping";
 import { worldToScreen, type View } from "../viewport/view";
@@ -101,6 +103,8 @@ type Gesture =
       baseVertices: Point[];
       /** Ids to collapse the selection to if this turns out to be a click with no drag (see class doc), else null. */
       collapseTo: EntityId[] | null;
+      palletSource?: EntityId;
+      palletSupport?: EntityId;
     }
   | { kind: "rotate-group"; ids: EntityId[]; pivot: Point; startAngle: number; rotation: number }
   /** `preview` is what the drag would commit: the dragged entity, or every entity the solver moved on a constrained sketch (T-40). */
@@ -162,6 +166,7 @@ export class SelectTool implements Tool {
     const g = this.g;
     return {
       moveOffset: g.kind === "move" ? { dx: g.dx, dy: g.dy } : null,
+      palletSupportId: g.kind === "move" ? g.palletSupport : undefined,
       rotating: g.kind === "rotate-group" ? { ids: g.ids, pivot: g.pivot, rotation: g.rotation } : null,
       gripPreview: g.kind === "grip" ? g.preview : [],
       freeSelect: g.kind === "free-select" ? { points: g.points, kind: g.fence ? "fence" : "lasso", mode: freeSelectMode(g.points) } : null,
@@ -245,6 +250,8 @@ export class SelectTool implements Tool {
       }
       app.setSelection(ids);
       if (resolved.every((id) => ids.includes(id))) {
+        const palletSource = ids.length === resolved.length && resolved.length > 1
+          ? ids.find(id => isPalletProduct(doc.get(id))) : undefined;
         this.g = {
           kind: "move",
           ids,
@@ -254,6 +261,7 @@ export class SelectTool implements Tool {
           dx: 0,
           dy: 0,
           baseVertices: selectionVertices(ctx, ids),
+          palletSource,
         };
       }
     } else {
@@ -277,11 +285,15 @@ export class SelectTool implements Tool {
     if (g.kind === "move") {
       const rawDx = world.x - g.startWorld.x;
       const rawDy = world.y - g.startWorld.y;
+      const source = g.palletSource ? ctx.doc.get(g.palletSource) : undefined;
+      const palletSupport = isPalletProduct(source) && !noSnap(e) && dist(e.screen, g.startScreen) >= 4
+        ? palletSupportAt(source, selectableEntities(), rawDx, rawDy) : undefined;
       // Snap the moved geometry itself, not the cursor: each axis is nudged so
       // some dragged vertex lands on some anchor's x / y. Hold Ctrl (or Alt) to
       // move completely free.
-      const { dx, dy } = noSnap(e) ? { dx: rawDx, dy: rawDy } : snapMovingSelection(ctx.doc, view, g.baseVertices, rawDx, rawDy, g.ids);
-      this.g = { ...g, dx, dy };
+      const { dx, dy } = noSnap(e) || palletSupport ? { dx: rawDx, dy: rawDy }
+        : snapMovingSelection(ctx.doc, view, g.baseVertices, rawDx, rawDy, g.ids);
+      this.g = { ...g, dx, dy, palletSupport };
     } else if (g.kind === "rotate-group") {
       const angle = Math.atan2(world.y - g.pivot.y, world.x - g.pivot.x);
       // Snap to 45° steps so a turned pallet still lines up; Ctrl frees it.
@@ -328,7 +340,9 @@ export class SelectTool implements Tool {
       }
     } else if (g.kind === "move") {
       const moved = dist(e.screen, g.startScreen) >= (touch ? 10 : 4);
-      if (moved && (g.dx !== 0 || g.dy !== 0)) {
+      if (moved && g.palletSource && g.palletSupport && !noSnap(e)) {
+        void runPluginCommand("pallet-planning.drop-product", [g.palletSource, g.palletSupport]).catch(error => console.warn(error));
+      } else if (moved && (g.dx !== 0 || g.dy !== 0)) {
         ctx.select.executeRaw({ type: "move-entities", ids: g.ids, dx: g.dx, dy: g.dy });
       } else if (!moved && g.collapseTo) {
         // A plain click (no drag) on one member of a bigger selection: now

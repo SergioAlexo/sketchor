@@ -96,12 +96,19 @@ export interface PalletResult {
   unplaced: UnplacedProduct[];
 }
 
+/** A stack on the drawing waiting for the operator to assign it to a pallet. */
+export interface LooseStack {
+  origin: { x: number; y: number };
+  placements: Placement[];
+}
+
 export interface PalletPlan extends PalletInput, PalletResult {
   schemaVersion: 2;
   id: string;
   revisionId: string;
   parentRevisionId: string | null;
   review: "draft" | "confirmed";
+  looseStacks?: LooseStack[];
   generation?: PalletResult & { solver: string; revisionId: string };
 }
 

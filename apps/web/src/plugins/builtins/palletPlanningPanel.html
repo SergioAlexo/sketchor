@@ -45,10 +45,10 @@
     #jobs, .job { min-width: 0; }
     #jobs .job:only-child > .job-header > [data-remove] { display: none; }
     .product-scroll { min-width: 0; overflow-x: auto; padding: 2px; }
-    .product-sheet { min-width: 389px; display: grid; gap: 5px; }
+    .product-sheet { min-width: 315px; display: grid; gap: 5px; }
     .product-columns {
       display: grid;
-      grid-template-columns: minmax(44px, 1.2fr) minmax(45px, .8fr) repeat(3, minmax(38px, 1fr)) minmax(64px, 1.2fr) minmax(70px, 1fr) 24px;
+      grid-template-columns: minmax(44px, 1.2fr) minmax(45px, .8fr) repeat(3, minmax(38px, 1fr)) minmax(64px, 1.2fr) 24px;
       align-items: center;
       gap: 4px;
     }
@@ -116,7 +116,7 @@
             <div id="jobs"></div>
           </div>
         </details>
-        <button class="primary" id="generate" type="button" data-apply>Generate pallets</button>
+        <button class="primary" id="generate" type="button" data-apply>Show products in 2D</button>
       </fieldset>
     </form>
 
@@ -125,7 +125,7 @@
         <div class="metrics">
           <span><strong id="pallet-count">0</strong> <span id="pallet-count-label">pallets</span></span>
           <span><strong id="placed-count">0</strong> placed</span>
-          <span><strong id="unplaced-count">0</strong> unplaced</span>
+          <span><strong id="unplaced-count">0</strong> <span id="unplaced-count-label">unplaced</span></span>
           <span id="review">Draft</span>
         </div>
         <div id="unplaced" hidden>
@@ -133,8 +133,8 @@
           <ul id="unplaced-list"></ul>
         </div>
         <div class="fields">
-          <div><button type="button" class="primary" id="group-scene">Make pallets from 2D</button></div>
-          <p class="note">Arrange product outlines on the drawing. Select products there for grouping and layer controls.</p>
+          <div><button type="button" id="group-scene">Regroup all from 2D</button></div>
+          <p class="note">Drag onto a highlighted product to stack. Select a group and right-click to form a pallet.</p>
         </div>
         <div id="pallet-view" class="fields" hidden>
           <label>Pallet preview <select id="pallet"></select></label>
@@ -173,7 +173,7 @@
         <div class="product-sheet">
           <div class="product-columns product-headings" aria-hidden="true">
             <span>Product</span><span>Quantity</span><span>Length</span><span>Width</span><span>Height</span>
-            <span>Unit weight (lb)</span><span>Stack up to</span>
+            <span>Unit weight (lb)</span>
           </div>
           <div class="products"></div>
         </div>
@@ -190,14 +190,10 @@
         <input aria-label="Width" name="widthMm" type="number" step="any" data-length required>
         <input aria-label="Height" name="heightMm" type="number" step="any" data-length>
         <input aria-label="Unit weight (lb)" name="weightLb" type="number" step="any">
-        <select aria-label="Stack up to" name="stackLayers">
-          <option value="1">1 layer</option><option value="2">2 layers</option><option value="3">3 layers</option>
-          <option value="4">4 layers</option>
-        </select>
         <button type="button" data-product-options aria-label="Product options" title="Product options" aria-expanded="false">⋯</button>
       </div>
       <div class="product-options" hidden>
-        <div class="grid stack-options" hidden>
+        <div class="grid">
           <label>Stack pattern <select name="stackPattern"><option value="upright">All upright</option>
             <option value="alternate">Alternate upside down</option></select></label>
           <label>Added height per layer <input name="stackHeight" type="number" step="any" min="0" data-length></label>
@@ -245,6 +241,8 @@
     let drag = null;
     let view = null;
     let rowCounter = 0;
+    let stageTimer;
+    let stagedInput = "";
     const input = (element, name) => element.querySelector('[name="' + name + '"]');
     const number = element => element.valueAsNumber;
     const mm = element => number(element) * mmPerUnit;
@@ -276,7 +274,7 @@
     function request(type, data = {}) {
       if (busy) return;
       setBusy(true);
-      status(type === "generate" ? "Generating pallets…" : "");
+      status(type === "stage" ? "Updating the 2D drawing…" : "");
       send({ type, revisionId: plan?.revisionId, ...data });
     }
 
@@ -292,14 +290,17 @@
         if (field.type === "checkbox") field.checked = Boolean(value);
         else if (value !== undefined) field.value = field.hasAttribute("data-length") ? asInput(value) : String(value);
       }
-      element.querySelector("[data-remove]").onclick = () => element.remove();
+      element.querySelector("[data-remove]").onclick = () => {
+        element.remove();
+        container.dispatchEvent(new Event("input", { bubbles: true }));
+      };
       container.append(element);
       return element;
     }
 
     function addProduct(container, row = { quantity: 1, canRotate: true }) {
       const element = addRecord("product-template", container, {
-        ...row, stackLayers: row.stack?.maxLayers || 1,
+        ...row,
         weightLb: row.weightKg === undefined ? undefined : Number((row.weightKg / KG_PER_LB).toPrecision(12)),
         stackPattern: row.stack?.pattern, stackHeight: row.stack?.addedHeightMm,
         lengthMm: Math.max(row.lengthMm ?? 0, row.measuredLengthMm ?? 0) || undefined,
@@ -309,19 +310,13 @@
       if (row.sourceUnit) element.dataset.sourceUnit = row.sourceUnit;
       if (row.sourceRowId) element.dataset.sourceRowId = row.sourceRowId;
       if (row.notes) element.dataset.legacyNotes = row.notes;
+      if (row.stack) element.dataset.legacyLayerLimit = row.stack.maxLayers;
       const optionsButton = element.querySelector("[data-product-options]");
       const productOptions = element.querySelector(".product-options");
       optionsButton.onclick = () => {
         productOptions.hidden = !productOptions.hidden;
         optionsButton.setAttribute("aria-expanded", String(!productOptions.hidden));
       };
-      const stackLayers = input(element, "stackLayers");
-      stackLayers.onchange = () => {
-        const stacked = stackLayers.value !== "1";
-        element.querySelector(".stack-options").hidden = !stacked;
-        input(element, "stackHeight").disabled = !stacked;
-      };
-      stackLayers.onchange();
       return element;
     }
 
@@ -360,7 +355,9 @@
     function capture() {
       const products = Array.from(document.querySelectorAll("#jobs .product"), element => {
         const field = name => input(element, name);
-        const stackLayers = Number(field("stackLayers").value);
+        const stackPattern = field("stackPattern").value;
+        const addedHeightMm = field("stackHeight").value ? mm(field("stackHeight")) : undefined;
+        const maxLayers = Number(element.dataset.legacyLayerLimit || $("max-layers").value);
         return {
           id: element.dataset.id,
           jobId: input(element.closest(".job"), "jobId").value,
@@ -372,10 +369,8 @@
           weightKg: field("weightLb").value ? number(field("weightLb")) * KG_PER_LB : undefined,
           notes: element.dataset.legacyNotes,
           canRotate: field("canRotate").checked,
-          stack: stackLayers > 1 ? {
-            maxLayers: stackLayers,
-            pattern: field("stackPattern").value,
-            addedHeightMm: field("stackHeight").value ? mm(field("stackHeight")) : undefined
+          stack: maxLayers > 1 && (element.dataset.legacyLayerLimit || stackPattern === "alternate" || addedHeightMm !== undefined) ? {
+            maxLayers, pattern: stackPattern, addedHeightMm
           } : undefined,
           sourceRowId: element.dataset.sourceRowId,
           sourceUnit: element.dataset.sourceUnit || $("units").value
@@ -389,6 +384,18 @@
         widthMm: mm(input(element, "widthMm"))
       }));
       return { products, rules };
+    }
+
+    function scheduleStage() {
+      clearTimeout(stageTimer);
+      stageTimer = setTimeout(() => {
+        if (!initialized || busy || !$("generate-form").checkValidity()) return;
+        const inputs = capture();
+        const signature = JSON.stringify(inputs);
+        if (signature === stagedInput || !inputs.products.length) return;
+        stagedInput = signature;
+        send({ type: "stage", input: inputs });
+      }, 400);
     }
 
     function setUnits(value) {
@@ -511,6 +518,8 @@
       $("pallet-count-label").textContent = plan.pallets.length === 1 ? "pallet" : "pallets";
       $("placed-count").textContent = placed;
       $("unplaced-count").textContent = plan.unplaced.length;
+      $("unplaced-count-label").textContent = plan.looseStacks ? "loose on drawing" : "unplaced";
+      $("group-scene").parentElement.hidden = Boolean(plan.looseStacks);
       $("review").textContent = plan.review === "confirmed" ? "Confirmed" : "Draft";
       $("fit-custom-pallets").hidden = !plan.pallets.some(pallet => pallet.baseSource === "custom" && pallet.placements.length);
       $("confirm").disabled = plan.review === "confirmed" || Boolean(plan.unplaced.length) || plan.pallets.some(pallet => !pallet.placements.length);
@@ -518,7 +527,8 @@
       const unplacedRows = new Map();
       for (const item of plan.unplaced) {
         const key = rows.get(item.rowId).productId + " · " + rows.get(item.rowId).jobId + " · "
-          + ({ manual: "Unplaced by operator", height: "Exceeds the loaded height limit", size: "No base fits with these rules" })[item.reason];
+          + ({ manual: plan.looseStacks ? "Loose on the drawing" : "Unplaced by operator",
+            height: "Exceeds the loaded height limit", size: "No base fits with these rules" })[item.reason];
         unplacedRows.set(key, (unplacedRows.get(key) || 0) + 1);
       }
       $("unplaced-list").replaceChildren(...Array.from(unplacedRows, ([label, count]) => {
@@ -575,7 +585,13 @@
       $("product-padding").value = asInput(defaultRules.productMarginMm);
     };
     $("units").onchange = () => { setUnits($("units").value); renderPlan(); };
-    bindForm("generate-form", () => request("generate", { input: capture() }));
+    $("generate-form").addEventListener("input", scheduleStage);
+    bindForm("generate-form", () => {
+      clearTimeout(stageTimer);
+      const inputs = capture();
+      stagedInput = JSON.stringify(inputs);
+      request("stage", { input: inputs });
+    });
     $("open-report").onclick = () => $("plan-file").click();
     $("report-folder").onclick = () => request("pick-report-folder");
     $("plan-file").onchange = async () => {
@@ -696,7 +712,11 @@
         plan = message.plan;
         if (plan) $("resume-drawing").hidden = true;
         palletStacks = new Map(message.stacks);
-        if (message.replaceInputs) hydrate(plan?.products || [], plan?.rules || message.openingRules);
+        if (message.replaceInputs) {
+          clearTimeout(stageTimer);
+          hydrate(plan?.products || [], plan?.rules || message.openingRules);
+          stagedInput = plan ? JSON.stringify(capture()) : "";
+        }
         if (plan && message.replaceInputs) {
           $("inputs").open = false;
           $("pallet-rules").open = false;
@@ -707,6 +727,7 @@
         renderPlan();
       }
       setBusy(false);
+      if (message.type === "error") stagedInput = "";
       status(message.message || "", message.type === "error");
     });
     let readyAttempts = 0;

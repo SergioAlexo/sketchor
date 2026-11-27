@@ -1,6 +1,6 @@
 import type { DisplayUnitInfo, PluginModule } from "@sketchor/plugin-sdk";
 import {
-  buildPalletDrawing, buildPalletReportHtml, clearPalletDrawing, editPalletPlan, generatePalletPlan,
+  buildPalletDrawing, buildPalletReportHtml, clearPalletDrawing, editPalletPlan, stagePalletProducts,
   hasPalletScene, palletSceneMatchesPlan, planFromPalletScene,
   DEFAULT_PALLET_RULES, palletReportFileName, parsePalletPlan, placementStacks, PRODUCT_COLORS, readPalletReport,
   type PalletPlan,
@@ -62,9 +62,9 @@ const plugin: PluginModule = {
       if (commands.length) await sketchor.document.apply(commands);
     };
 
-    const commit = async (next: PalletPlan, message: string, replaceInputs = false) => {
+    const commit = async (next: PalletPlan, message: string, replaceInputs = false, before = plan) => {
       if (replaceInputs || next.review === "draft") await draw(next);
-      if (plan) pushHistory(undo, plan);
+      if (before) pushHistory(undo, before);
       redo.length = 0;
       plan = next;
       sync("plan", replaceInputs, await persist(message));
@@ -78,14 +78,16 @@ const plugin: PluginModule = {
       await sketchor.ui.show(PANEL_HTML, { title: "Pallet Size Generator", width: 476, height: 760 });
     });
 
-    async function applyScene(action: Parameters<typeof planFromPalletScene>[3]) {
-      const [model, selection] = await Promise.all([sketchor.document.read(), sketchor.selection.read()]);
+    async function applyScene(action: Parameters<typeof planFromPalletScene>[3], selected?: readonly string[]) {
+      const [model, selection] = await Promise.all([sketchor.document.read(), selected ?? sketchor.selection.read()]);
       const source = plan ?? savedPlan;
-      if (!source) throw new Error("Generate or open the pallet plan for the current drawing first.");
+      if (!source) throw new Error("Enter job products or open a pallet plan first.");
+      const before = source.looseStacks && !palletSceneMatchesPlan(source, model)
+        ? planFromPalletScene(source, model, [], { type: "sync" }, source.revisionId) : source;
       const next = planFromPalletScene(source, model, selection, action, crypto.randomUUID());
       const message = next === source ? "The top unit is already on that layer." : `2D layout applied. ${next.pallets.length} pallets.`;
       if (next === source) send({ type: "status", message });
-      else await commit(next, message, !plan);
+      else await commit(next, message, !plan, before);
       sketchor.ui.notify(message);
     }
 
@@ -102,6 +104,16 @@ const plugin: PluginModule = {
     };
     await sketchor.commands.register("pallet-planning.group-selection", () =>
       enqueue(() => applyScene({ type: "group-selection" }), true));
+    await sketchor.commands.register("pallet-planning.release", () =>
+      enqueue(() => applyScene({ type: "release" }), true));
+    await sketchor.commands.register("pallet-planning.drop-product", ({ input }) =>
+      enqueue(async () => {
+        const selection = input ?? await sketchor.selection.read();
+        if (!Array.isArray(selection) || selection.length !== 2 || selection.some(id => typeof id !== "string")) {
+          throw new Error("Select the product first, then Shift-select the support.");
+        }
+        await applyScene({ type: "drop", sourceId: selection[0], targetId: selection[1] }, selection);
+      }, true));
     for (const layer of [1, 2, 3, 4] as const) {
       await sketchor.commands.register(`pallet-planning.layer-${layer}`, () =>
         enqueue(() => applyScene({ type: "layer", layer }), true));
@@ -129,16 +141,29 @@ const plugin: PluginModule = {
             throw new Error("The current drawing does not match the last pallet plan.");
           }
           plan = savedPlan;
-          sync("plan", true, "Drawing ready. Use Make pallets from 2D to apply the scene positions.");
+          sync("plan", true, "Drawing ready.");
           return;
         }
-        case "generate": {
-          const next = generatePalletPlan(msg.input, {
-            id: plan?.id ?? crypto.randomUUID(),
+        case "stage": {
+          const model = await sketchor.document.read();
+          let previous = plan && hasPalletScene(plan, model) ? plan : null;
+          if (previous && (!previous.looseStacks || !palletSceneMatchesPlan(previous, model))) {
+            previous = planFromPalletScene(previous, model, [], { type: "sync" }, crypto.randomUUID());
+          }
+          const next = stagePalletProducts(msg.input, previous, {
+            id: previous?.id ?? crypto.randomUUID(),
             revisionId: crypto.randomUUID(),
             parentRevisionId: plan?.revisionId ?? null,
           });
-          await commit(next, next.unplaced.length ? "Draft generated with unplaced products." : "Draft generated.", true);
+          const before = previous?.products.reduce((sum, row) => sum + row.quantity, 0) ?? 0;
+          const after = next.products.reduce((sum, row) => sum + row.quantity, 0);
+          const unchanged = previous === plan && plan && JSON.stringify([plan.products, plan.rules]) === JSON.stringify([next.products, next.rules]);
+          if (unchanged) {
+            send({ type: "status", message: "Products are ready on the 2D drawing." });
+          } else {
+            await commit(next, "Products are ready on the 2D drawing.");
+            if (after > before) await sketchor.app.fitDrawing();
+          }
           return;
         }
         case "pick-report-folder":
@@ -198,12 +223,18 @@ const plugin: PluginModule = {
           return;
         }
         case "save-report": {
-          if (!palletSceneMatchesPlan(plan, await sketchor.document.read())) {
-            throw new Error("The drawing has manual changes. Use Make pallets from 2D before saving the report.");
+          let reportPlan = plan;
+          const model = await sketchor.document.read();
+          if (!palletSceneMatchesPlan(reportPlan, model)) {
+            if (!reportPlan.looseStacks) {
+              throw new Error("The drawing has manual changes. Apply the 2D layout before saving the report.");
+            }
+            reportPlan = planFromPalletScene(reportPlan, model, [], { type: "sync" }, crypto.randomUUID());
+            await commit(reportPlan, "2D layout applied.");
           }
           const result = await sketchor.ui.saveReportFile(
-            palletReportFileName(plan, new Date()),
-            buildPalletReportHtml(plan, msg.unit === "in" ? "in" : "mm"),
+            palletReportFileName(reportPlan, new Date()),
+            buildPalletReportHtml(reportPlan, msg.unit === "in" ? "in" : "mm"),
           );
           send({ type: "status", message: result.saved ? `Saved ${result.name}.` : "" });
           return;

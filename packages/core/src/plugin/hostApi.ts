@@ -58,6 +58,8 @@ export interface AppApi {
   displayUnit(): Promise<DisplayUnitInfo>;
   /** Fires whenever the user changes the display unit. Returns an unsubscribe function. */
   onDisplayUnitChange(listener: (info: DisplayUnitInfo) => void): Promise<Unsubscribe>;
+  /** Frames the geometry in the current drawing. */
+  fitDrawing(): Promise<void>;
   /**
    * Requires `write-document`. Opens a NEW document tab named `name`, switches
    * to it, applies `commands` there as a single undo step and fits the view.

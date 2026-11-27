@@ -1,6 +1,6 @@
 import {
   EPS, FORK_ENTRY_SIDE, MAX_PRODUCTS, MAX_STANDARD_BASES, knownLoadedHeight, oriented, packingEdge, packingFootprint, placementStacks, supportsPlacement, unitId,
-  type Footprint, type Layer, type PalletInput, type PalletPlan, type PalletResult,
+  type Footprint, type Layer, type LooseStack, type PalletInput, type PalletPlan, type PalletResult,
   type PalletRules, type Placement, type PlannedPallet, type ProductRow, type UnplacedProduct,
 } from "./types";
 
@@ -162,17 +162,12 @@ function parsePallet(raw: unknown): PlannedPallet {
   if (pallet.baseSource !== "standard" && pallet.baseSource !== "custom" && pallet.baseSource !== "manual") {
     throw new Error("Pallet base source is invalid.");
   }
-  const origin = pallet.sceneOrigin === undefined ? undefined : record(pallet.sceneOrigin, "Pallet drawing origin");
-  const coordinate = (value: unknown) => {
-    if (typeof value !== "number" || !Number.isFinite(value)) throw new Error("Pallet drawing coordinates must be finite.");
-    return value;
-  };
   return {
     id: labelText(pallet.id, "Pallet ID", 256),
     jobId: labelText(pallet.jobId, "Pallet job"),
     base: footprint(pallet.base, "Pallet base"),
     loadedFootprint: footprint(pallet.loadedFootprint, "Loaded footprint"),
-    ...(origin ? { sceneOrigin: { x: coordinate(origin.x), y: coordinate(origin.y) } } : {}),
+    ...(pallet.sceneOrigin === undefined ? {} : { sceneOrigin: drawingOrigin(pallet.sceneOrigin) }),
     baseSource: pallet.baseSource,
     baseName: optionalText(pallet.baseName, "Pallet base name"),
     truckOrientation: truckOrientation(pallet.truckOrientation),
@@ -183,6 +178,15 @@ function parsePallet(raw: unknown): PlannedPallet {
       ? undefined : measurement(pallet.grossWeightKg, "Pallet gross weight"),
     placements: list(pallet.placements, MAX_PRODUCTS, "Pallet placements").map(parsePlacement),
   };
+}
+
+function drawingOrigin(raw: unknown): LooseStack["origin"] {
+  const origin = record(raw, "Pallet drawing origin");
+  const { x, y } = origin;
+  if (typeof x !== "number" || !Number.isFinite(x) || typeof y !== "number" || !Number.isFinite(y)) {
+    throw new Error("Pallet drawing coordinates must be finite.");
+  }
+  return { x, y };
 }
 
 function parseUnplaced(raw: unknown): UnplacedProduct {
@@ -247,7 +251,8 @@ function validatePalletGeometry(pallet: PlannedPallet, rules: PalletRules, rows:
       count = item.rowId === previous ? count + 1 : 1;
       previous = item.rowId;
       const row = rows.get(item.rowId)!;
-      if (count > (row.stack?.maxLayers ?? 1)) throw new Error(`${row.productId} exceeds its configured stacking limit.`);
+      const layerLimit = row.stack?.maxLayers ?? (item.supportId === undefined ? 1 : rules.maxLayers);
+      if (count > layerLimit) throw new Error(`${row.productId} exceeds its configured stacking limit.`);
     }
   }
   if (placements.length && rules.maxLoadedHeightMm !== undefined) {
@@ -255,6 +260,34 @@ function validatePalletGeometry(pallet: PlannedPallet, rules: PalletRules, rows:
     if (height === undefined) throw new Error(`${name} needs measured stack heights to check the loaded height limit.`);
     if (height > rules.maxLoadedHeightMm + EPS) throw new Error(`${name} exceeds the loaded height limit.`);
   }
+}
+
+function parseLooseStacks(raw: unknown, { products, rules }: PalletInput, unplaced: UnplacedProduct[]): LooseStack[] {
+  const rows = new Map(products.map(row => [row.id, row]));
+  const available = new Map(unplaced.map(item => [item.id, item.rowId]));
+  return list(raw, MAX_PRODUCTS, "Stacks on the drawing").map(value => {
+    const stack = record(value, "Stack on the drawing");
+    const origin = drawingOrigin(stack.origin);
+    const placements = list(stack.placements, rules.maxLayers, "Stacked products").map(parsePlacement);
+    const [bottom] = placements;
+    if (!bottom || bottom.layer !== 1 || bottom.xMm > EPS || bottom.yMm > EPS || placementStacks(placements).length !== 1) {
+      throw new Error("A stack on the drawing needs one bottom product and continuous layers.");
+    }
+    for (const unit of placements) {
+      if (available.get(unit.id) !== unit.rowId) throw new Error("A loose product is unknown or assigned twice.");
+      available.delete(unit.id);
+    }
+    const row = rows.get(bottom.rowId)!;
+    const base = oriented(packingFootprint(row), bottom.rotation);
+    validatePalletGeometry(
+      { id: bottom.id, jobId: row.jobId, base, loadedFootprint: base, baseSource: "manual", truckOrientation: "auto", placements },
+      {
+        ...rules, maxLengthMm: Infinity, maxWidthMm: Infinity, edgeMm: 0, productMarginMm: 0, gapMm: 0,
+        maxLoadedHeightMm: placements.length > 1 ? rules.maxLoadedHeightMm : undefined,
+      }, rows, "the loose stack",
+    );
+    return { origin, placements };
+  });
 }
 
 function parseResult(plan: Record<string, unknown>, { products, rules }: PalletInput): PalletResult {
@@ -295,6 +328,7 @@ export function parsePalletPlan(raw: unknown): PalletPlan {
   const generated = plan.generation === undefined ? undefined : record(plan.generation, "Generated layout");
   return {
     schemaVersion: 2, ...input, pallets, unplaced, review: plan.review,
+    ...(plan.looseStacks === undefined ? {} : { looseStacks: parseLooseStacks(plan.looseStacks, input, unplaced) }),
     id: labelText(plan.id, "Plan ID"),
     revisionId: labelText(plan.revisionId, "Revision ID"),
     parentRevisionId: plan.parentRevisionId === null ? null : labelText(plan.parentRevisionId, "Parent revision ID"),

@@ -51,6 +51,8 @@ export const BUILTIN_MANIFESTS: PluginManifest[] = [
       commands: [
         { id: "pallet-planning.open", title: "Pallet Size Generator" },
         { id: "pallet-planning.group-selection", title: "Pallets · Make pallet from selection" },
+        { id: "pallet-planning.drop-product", title: "Pallets · Stack on selected support" },
+        { id: "pallet-planning.release", title: "Pallets · Release products from pallet" },
         ...[1, 2, 3, 4].map(layer => ({ id: `pallet-planning.layer-${layer}`, title: `Pallets · Put top unit on layer ${layer}` })),
       ],
     },

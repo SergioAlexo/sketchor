@@ -43,6 +43,7 @@ const REQUIRED: Record<string, Permission | null> = {
   // it, nothing saved - and the host sanitises and caps what it is handed.
   "ui.highlight": null,
   "app.displayUnit": null,
+  "app.fitDrawing": null,
   "app.onDisplayUnitChange": null,
   // Creates a tab and writes a drawing into it - same power as document.apply.
   "app.openDocumentTab": "write-document",

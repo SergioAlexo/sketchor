@@ -1,5 +1,6 @@
 export * from "./types";
 export { generatePalletPlan } from "./pack";
+export { stagePalletProducts } from "./stage";
 export { parsePalletPlan, parsePalletInput } from "./validate";
 export { editPalletPlan } from "./edit";
 export { toTruckOrders, type PalletStop } from "./truck";

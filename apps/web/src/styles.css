@@ -210,7 +210,7 @@ body {
   touch-action: none;
 }
 
-.pallet-scene-tools, .pallet-scene-layers {
+.pallet-scene-tools {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -231,7 +231,7 @@ body {
   font-size: 12px;
 }
 
-.pallet-scene-layers span { margin: 0 3px; }
+.pallet-context-menu { min-width: 196px; }
 
 .statusbar {
   display: flex;

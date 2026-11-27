@@ -93,6 +93,7 @@ export interface PointerGesture {
 /** What a gesture tool wants drawn while its drag is in progress. */
 export interface ToolOverlay {
   moveOffset: { dx: number; dy: number } | null;
+  palletSupportId?: EntityId;
   rotating: { ids: EntityId[]; pivot: Point; rotation: number } | null;
   gripPreview: Entity[];
   freeSelect: { points: Point[]; kind: "lasso" | "fence"; mode: BoxSelectMode } | null;
