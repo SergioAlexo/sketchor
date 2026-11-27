@@ -103,7 +103,7 @@ it("starts 17 separate products, stacks by drop, and forms only the selected pal
   drop("B/3", "B/1");
   drop("C/6", "C/5");
   const group = ["B/1", "C/5", "A/1", "A/3", "A/5"];
-  const positions = [0, 29.11, 55.11, 63.61, 72.11];
+  const positions = [0, 27.11, 51.11, 57.61, 64.11];
   let model = draw(plan);
   for (const [i, id] of group.entries()) {
     const x = positions[i] * IN;
@@ -113,7 +113,11 @@ it("starts 17 separate products, stacks by drop, and forms only the selected pal
       { x, y: row.lengthMm }, { x, y: 0 },
     ]);
   }
-  plan = planFromPalletScene(plan, model, group.map(id => select(model, id)), { type: "group-selection" }, "first-pallet");
+  const selection = group.map(id => select(model, id));
+  const overlap = editGeometry(model, "C/5", points => points.map(p => ({ ...p, x: p.x - IN })));
+  expect(() => planFromPalletScene(plan, overlap, selection, { type: "group-selection" }, "overlap"))
+    .toThrow(/B and C overlap/);
+  plan = planFromPalletScene(plan, model, selection, { type: "group-selection" }, "first-pallet");
   expect(plan.pallets).toHaveLength(1);
   expect(plan.pallets[0].base).toEqual({ lengthMm: 82 * IN, widthMm: 75 * IN });
   expect(plan.pallets[0].placements).toHaveLength(11);
@@ -131,4 +135,57 @@ it("starts 17 separate products, stacks by drop, and forms only the selected pal
   expect(next.pallets).toHaveLength(0);
   expect(next.unplaced).toHaveLength(17);
   expect(readPalletReport(buildPalletReportHtml(next, "in"))).toEqual(next);
+
+  drop("D/2", "D/1");
+  drop("C/2", "C/1");
+  drop("C/4", "C/3");
+  model = draw(plan);
+  plan = planFromPalletScene(plan, model, [select(model, "D/1")], { type: "group-selection" }, "second-pallet");
+  const twoPallets = plan.pallets;
+  model = draw(plan);
+  for (const [i, id] of ["C/1", "C/3"].entries()) {
+    const y = 200 * IN + i * products[2].widthMm;
+    const x = 200 * IN;
+    const { lengthMm, widthMm } = products[2];
+    model = editGeometry(model, id, () => [
+      { x, y }, { x: x + lengthMm, y }, { x: x + lengthMm, y: y + widthMm }, { x, y: y + widthMm },
+    ]);
+  }
+  plan = planFromPalletScene(plan, model, ["C/1", "C/3"].map(id => select(model, id)), { type: "group-selection" }, "third-pallet");
+  expect(plan.pallets.slice(0, 2)).toEqual(twoPallets);
+  expect(plan.pallets[2].base).toEqual({ lengthMm: 75 * IN, widthMm: 53 * IN });
+  expect(plan.pallets.map(pallet => pallet.placements.length)).toEqual([11, 2, 4]);
+  expect(plan.unplaced).toEqual([]);
+  expect(palletSceneMatchesPlan(plan, draw(plan))).toBe(true);
+  expect(readPalletReport(buildPalletReportHtml(plan, "in"))).toEqual(plan);
+});
+
+it("fixes inch values entered as millimetres while keeping an existing pallet and loose stack", () => {
+  const products: ProductRow[] = [
+    { ...row, id: "D", productId: "D", quantity: 2, lengthMm: 82, widthMm: 36, heightMm: 30.75, sourceUnit: "mm" },
+    { ...row, id: "C", productId: "C", quantity: 2, lengthMm: 72, widthMm: 24, sourceUnit: "mm" },
+  ];
+  let plan = stagePalletProducts({ products, rules: DEFAULT_PALLET_RULES }, null,
+    { id: "24514", revisionId: "entered-mm", parentRevisionId: null });
+  const select = (model: DocumentReadModel, id: string) => model.entities.find(entity => entity.name === `Product ${id}`)!.id;
+  for (const id of ["D", "C"]) {
+    const model = draw(plan);
+    plan = planFromPalletScene(plan, model, [], {
+      type: "drop", sourceId: select(model, `${id}/2`), targetId: select(model, `${id}/1`),
+    }, `stack-${id}`);
+  }
+  const model = draw(plan);
+  plan = planFromPalletScene(plan, model, [select(model, "D/1")], { type: "group-selection" }, "pallet-D");
+  const fixed = planFromPalletScene(plan, draw(plan), [], { type: "interpret-inches" }, "correct-units");
+  expect(fixed.rules).toEqual(plan.rules);
+  expect(fixed.products[0]).toMatchObject({ sourceUnit: "in", lengthMm: 82 * 25.4, heightMm: 30.75 * 25.4 });
+  expect(fixed.pallets[0]).toMatchObject({ id: plan.pallets[0].id, base: { lengthMm: 85 * 25.4, widthMm: 39 * 25.4 } });
+  expect(fixed.pallets[0].placements.map(unit => [unit.id, unit.layer, unit.supportId])).toEqual([
+    ["D/1", 1, undefined], ["D/2", 2, "D/1"],
+  ]);
+  expect(fixed.looseStacks?.[0].placements.map(unit => [unit.id, unit.layer])).toEqual([["C/1", 1], ["C/2", 2]]);
+  expect(palletSceneMatchesPlan(fixed, draw(fixed))).toBe(true);
+  expect(readPalletReport(buildPalletReportHtml(fixed, "in"))).toEqual(fixed);
+  expect(() => planFromPalletScene(fixed, draw(fixed), [], { type: "interpret-inches" }, "repeat"))
+    .toThrow(/all products entered in millimetres/);
 });

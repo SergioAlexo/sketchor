@@ -37,10 +37,11 @@ const plugin: PluginModule = {
       // Keep factory rules when old local data cannot be read.
     }
     const send = (message: object) => sketchor.ui.postMessage({ panelId, ...message });
-    const sync = (type: "init" | "plan", replaceInputs: boolean, message: string, canResumeDrawing = false) => send({
+    const sync = (type: "init" | "plan", replaceInputs: boolean, message: string, canResumeDrawing = false, inputUnit?: "in") => send({
       type, plan, replaceInputs, message, canUndo: undo.length > 0, canRedo: redo.length > 0,
+      inputUnit,
       stacks: plan?.pallets.map(pallet => [pallet.id, placementStacks(pallet.placements)]) ?? [],
-      ...(type === "init" ? { unit, rules: DEFAULT_PALLET_RULES, openingRules, colors: PRODUCT_COLORS, reportFolder, canResumeDrawing } : {}),
+      ...(type === "init" ? { rules: DEFAULT_PALLET_RULES, openingRules, colors: PRODUCT_COLORS, reportFolder, canResumeDrawing } : {}),
     });
 
     const persist = async (message: string) => {
@@ -62,12 +63,12 @@ const plugin: PluginModule = {
       if (commands.length) await sketchor.document.apply(commands);
     };
 
-    const commit = async (next: PalletPlan, message: string, replaceInputs = false, before = plan) => {
+    const commit = async (next: PalletPlan, message: string, replaceInputs = false, before = plan, inputUnit?: "in") => {
       if (replaceInputs || next.review === "draft") await draw(next);
       if (before) pushHistory(undo, before);
       redo.length = 0;
       plan = next;
-      sync("plan", replaceInputs, await persist(message));
+      sync("plan", replaceInputs, await persist(message), false, inputUnit);
     };
 
     void sketchor.app.onDisplayUnitChange(info => {
@@ -207,6 +208,15 @@ const plugin: PluginModule = {
         return;
       }
       switch (msg.type) {
+        case "interpret-inches": {
+          const model = await sketchor.document.read();
+          const before = palletSceneMatchesPlan(plan, model)
+            ? plan : planFromPalletScene(plan, model, [], { type: "sync" }, plan.revisionId);
+          const next = planFromPalletScene(plan, model, [], { type: "interpret-inches" }, crypto.randomUUID());
+          await commit(next, "Product sizes corrected to inches. Pallet bases recalculated.", true, before, "in");
+          await sketchor.app.fitDrawing();
+          return;
+        }
         case "group-scene":
           await applyScene({ type: "group" });
           return;

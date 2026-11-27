@@ -21,7 +21,7 @@ interface SceneStack {
 }
 
 type SceneAction =
-  | { type: "group" | "group-selection" | "sync" | "release" }
+  | { type: "group" | "group-selection" | "sync" | "release" | "interpret-inches" }
   | { type: "layer"; layer: Layer }
   | { type: "drop"; sourceId: string; targetId: string };
 
@@ -135,6 +135,51 @@ function gap(a: Box, b: Box): number {
   return Math.hypot(dx, dy);
 }
 
+/** Add missing clearances without changing which sides of a footprint touch. */
+function addGroupClearance(plan: PalletPlan, group: SceneStack[]): SceneStack[] {
+  const clearance = plan.rules.gapMm;
+  const tolerance = Math.max(EPS, Math.min(1, clearance / 4));
+  const rows = new Map(plan.products.map(row => [row.id, row]));
+  const constraints = { x: new Map<number, number[]>(), y: new Map<number, number[]>() };
+  for (const [i, { box: a }] of group.entries()) {
+    for (let j = i + 1; j < group.length; j++) {
+      const { box: b } = group[j];
+      const gapX = Math.max(b.x - a.x - a.lengthMm, a.x - b.x - b.lengthMm);
+      const gapY = Math.max(b.y - a.y - a.widthMm, a.y - b.y - b.widthMm);
+      if (Math.max(gapX, gapY) < -tolerance) {
+        const names = [i, j].map(k => rows.get(group[k].units[0].rowId)!.productId);
+        throw new Error(`${names[0]} and ${names[1]} overlap. Move their outlines beside each other, then choose Form pallet again.`);
+      }
+      const axis = gapX >= gapY ? "x" : "y";
+      const [before, after] = a[axis] <= b[axis] ? [i, j] : [j, i];
+      const targets = constraints[axis].get(before) ?? [];
+      targets.push(after);
+      constraints[axis].set(before, targets);
+    }
+  }
+  function spaced(axis: "x" | "y", size: "lengthMm" | "widthMm"): number[] {
+    const positions = group.map(({ box }) => box[axis]);
+    const order = positions.map((_, index) => index).sort((a, b) => positions[a] - positions[b]);
+    for (const index of order) {
+      const end = positions[index] + group[index].box[size] + clearance;
+      for (const next of constraints[axis].get(index) ?? []) {
+        if (positions[next] < end - EPS) positions[next] = end;
+      }
+    }
+    return positions;
+  }
+  const x = spaced("x", "lengthMm");
+  const y = spaced("y", "widthMm");
+  return group.map((stack, i) => {
+    const dx = x[i] - stack.box.x;
+    const dy = y[i] - stack.box.y;
+    return {
+      ...stack, box: { ...stack.box, x: x[i], y: y[i] },
+      units: stack.units.map(unit => ({ ...unit, xMm: unit.xMm + dx, yMm: unit.yMm + dy })),
+    };
+  });
+}
+
 function clusters(stacks: SceneStack[], distance: number): SceneStack[][] {
   const pending = new Set(stacks);
   const groups: SceneStack[][] = [];
@@ -193,8 +238,9 @@ function changeTopLayer(
   return true;
 }
 
-function scenePallet(plan: PalletPlan, group: SceneStack[], id: string): PlannedPallet {
+function scenePallet(plan: PalletPlan, group: SceneStack[], id: string, applyClearance = false): PlannedPallet {
   const { rules } = plan;
+  if (applyClearance) group = addGroupClearance(plan, group);
   const edge = packingEdge(rules);
   const x = Math.min(...group.map(s => s.box.x)) - edge;
   const y = Math.min(...group.map(s => s.box.y)) - edge;
@@ -206,7 +252,9 @@ function scenePallet(plan: PalletPlan, group: SceneStack[], id: string): Planned
     && base.lengthMm >= extentX + edge - EPS && base.widthMm >= extentY + edge - EPS)
     .sort((a, b) => a.lengthMm * a.widthMm - b.lengthMm * b.widthMm)[0];
   const base = rules.allowCustom && fits(custom) ? custom : stock;
-  if (!base) throw new Error("A 2D group exceeds the allowed pallet size. Split it or check Pallet rules.");
+  if (!base) throw new Error(applyClearance
+    ? "The selected group exceeds the pallet size after adding the required gaps. Split the group or check Pallet rules."
+    : "A 2D group exceeds the allowed pallet size. Split it or check Pallet rules.");
   return {
     id, jobId: group[0].jobId, sceneOrigin: { x, y },
     base, loadedFootprint: base, baseSource: base === stock ? "standard" : "custom", baseName: base === stock ? stock?.name : undefined,
@@ -291,10 +339,50 @@ function reconcileManualScene(
     }
   }
   stacks.filter(stack => !stack.palletId && !forming.has(stack)).forEach(toLoose);
-  if (form.length) pallets.push(scenePallet(plan, form, `${plan.id}/scene/${revisionId}`));
+  if (form.length) pallets.push(scenePallet(plan, form, `${plan.id}/scene/${revisionId}`, true));
   for (const pallet of pallets) for (const unit of pallet.placements) placed.add(unit.id);
   const unplaced = [...looseById.values()].filter(unit => !placed.has(unit.id));
   return parsePalletPlan({ ...plan, pallets, unplaced, looseStacks, review: "draft", parentRevisionId: plan.revisionId, revisionId });
+}
+
+function interpretProductInches(plan: PalletPlan, stacks: SceneStack[], revisionId: string): PalletPlan {
+  if (!plan.looseStacks || !plan.products.every(row => row.sourceUnit === "mm")) {
+    throw new Error("This correction is available for a manual plan with all products entered in millimetres.");
+  }
+  const scale = 25.4;
+  const mm = (value: number | undefined) => value === undefined ? undefined : value * scale;
+  const products = plan.products.map(row => ({
+    ...row, sourceUnit: "in", lengthMm: row.lengthMm * scale, widthMm: row.widthMm * scale,
+    measuredLengthMm: mm(row.measuredLengthMm), measuredWidthMm: mm(row.measuredWidthMm), heightMm: mm(row.heightMm),
+    stack: row.stack && { ...row.stack, addedHeightMm: mm(row.stack.addedHeightMm) },
+  }));
+  const left = Math.min(...stacks.map(stack => stack.box.x));
+  const bottom = Math.min(...stacks.map(stack => stack.box.y));
+  const x = (value: number) => left + (value - left) * scale;
+  const y = (value: number) => bottom + (value - bottom) * scale;
+  const scaled = stacks.map(stack => ({
+    ...stack,
+    box: { x: x(stack.box.x), y: y(stack.box.y), lengthMm: stack.box.lengthMm * scale, widthMm: stack.box.widthMm * scale },
+    units: stack.units.map(unit => ({ ...unit, xMm: x(unit.xMm), yMm: y(unit.yMm) })),
+  }));
+  const draft = { ...plan, products, generation: undefined };
+  const pallets = plan.pallets.map(previous => {
+    const group = scaled.filter(stack => stack.palletId === previous.id);
+    if (!group.length) return previous;
+    return {
+      ...scenePallet(draft, group, previous.id, true),
+      truckOrientation: previous.truckOrientation, tag: previous.tag, grossWeightKg: previous.grossWeightKg,
+    };
+  });
+  const looseStacks = scaled.filter(stack => !stack.palletId).map(({ box, units }) => ({
+    origin: { x: box.x, y: box.y },
+    placements: units.map(unit => ({
+      ...unit, xMm: Math.max(0, unit.xMm - box.x), yMm: Math.max(0, unit.yMm - box.y),
+    })),
+  }));
+  return parsePalletPlan({
+    ...draft, pallets, looseStacks, review: "draft", parentRevisionId: plan.revisionId, revisionId,
+  });
 }
 
 /** Read the latest product locations from the drawing and commit the entire layout together. */
@@ -311,6 +399,7 @@ export function planFromPalletScene(
     const jobId = rows.get(bottom.rowId)!.jobId;
     stacks.push(readStack(outlines.get(bottom.id)!, placements, { id: "", jobId }, rows, model));
   }
+  if (action.type === "interpret-inches") return interpretProductInches(plan, stacks, revisionId);
   const selected = [...new Set(selection.flatMap(id => stacks.filter(stack => stack.selection.includes(id))))];
   if (action.type === "group-selection" && (!selected.length || selected.some(stack => stack.jobId !== selected[0].jobId))) {
     throw new Error("Select one or more product outlines from the same job.");

@@ -74,7 +74,7 @@
 <body>
   <main>
     <div class="bar spread">
-      <label>Units <select id="units" disabled><option value="mm">mm</option><option value="in">in</option></select></label>
+      <label>Units <select id="units" disabled><option value="in">in</option><option value="mm">mm</option></select></label>
       <button type="button" id="open-report" disabled>Open report</button>
       <button type="button" id="report-folder" disabled>Report folder…</button>
       <input type="file" id="plan-file" accept=".html,.htm,.json,text/html,application/json" hidden>
@@ -134,7 +134,11 @@
         </div>
         <div class="fields">
           <div><button type="button" id="group-scene">Regroup all from 2D</button></div>
-          <p class="note">Drag onto a highlighted product to stack. Select a group and right-click to form a pallet.</p>
+          <p class="note">Drag onto a highlighted product to stack. Select a group and right-click to form a pallet with the required spacing.</p>
+          <div id="correct-units" hidden>
+            <button type="button" id="interpret-inches">Treat entered mm values as inches</button>
+            <p class="note">Use if 72 mm was meant as 72 in. Keeps product groups and recalculates pallet bases.</p>
+          </div>
         </div>
         <div id="pallet-view" class="fields" hidden>
           <label>Pallet preview <select id="pallet"></select></label>
@@ -513,6 +517,7 @@
     function renderPlan() {
       $("results").hidden = !plan;
       if (!plan) return;
+      $("correct-units").hidden = !plan.looseStacks || !plan.products.length || !plan.products.every(row => row.sourceUnit === "mm");
       const placed = plan.pallets.reduce((count, pallet) => count + pallet.placements.length, 0);
       $("pallet-count").textContent = plan.pallets.length;
       $("pallet-count-label").textContent = plan.pallets.length === 1 ? "pallet" : "pallets";
@@ -585,6 +590,7 @@
       $("product-padding").value = asInput(defaultRules.productMarginMm);
     };
     $("units").onchange = () => { setUnits($("units").value); renderPlan(); };
+    $("interpret-inches").onclick = () => request("interpret-inches");
     $("generate-form").addEventListener("input", scheduleStage);
     bindForm("generate-form", () => {
       clearTimeout(stageTimer);
@@ -706,8 +712,11 @@
           defaultRules = message.rules;
           $("resume-drawing").hidden = !message.canResumeDrawing;
           colors = message.colors;
-          $("units").value = message.unit.unit === "in" ? "in" : "mm";
           setUnits($("units").value);
+        }
+        if (message.inputUnit) {
+          $("units").value = message.inputUnit;
+          setUnits(message.inputUnit);
         }
         plan = message.plan;
         if (plan) $("resume-drawing").hidden = true;
